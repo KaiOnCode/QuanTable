@@ -73,7 +73,9 @@ except ImportError as e:
         MISSING_DEPS.append("langgraph")
     if "plotly" in error_msg:
         MISSING_DEPS.append("plotly")
-    if "pandas" in error_msg:
+    if "pandas_ta" in error_msg or "pandas-ta" in error_msg:
+        MISSING_DEPS.append("pandas-ta")
+    elif "pandas" in error_msg:
         MISSING_DEPS.append("pandas")
 
     # 如果没有识别出具体模块，显示完整错误
@@ -1352,7 +1354,7 @@ Final Investment Decision Report
                     except Exception as e:
                         st.error(f"❌ PDF Generation Failed: {str(e)}")
                         st.info(
-                            "💡 Tip: PDF functionality requires fpdf2 library, please run: uv add fpdf2"
+                            "💡 Tip: PDF 导出依赖 fpdf2 与可用的中文字体；如环境异常，请先执行 uv sync，并确认系统已安装中文字体。"
                         )
 
             # 一句话结论

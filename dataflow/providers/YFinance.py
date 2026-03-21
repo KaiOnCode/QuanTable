@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
 import pandas as pd
+import pandas_ta as ta
 import yfinance as yf
 
 
@@ -113,12 +114,20 @@ def df_get_indicators(
     if df_prices.empty or len(df_prices) < 50:  # 确保有足够数据
         return {}
 
-    # 1. 使用 pandas-ta 计算指标
-    df_prices.ta.rsi(length=14, append=True)
-    df_prices.ta.macd(fast=12, slow=26, signal=9, append=True)
-    df_prices.ta.sma(length=20, append=True)
-    df_prices.ta.sma(length=50, append=True)
-    df_prices.ta.atr(length=20, append=True)
+    # 显式调用 pandas_ta，避免依赖 DataFrame.ta accessor 的隐式注册。
+    df_prices["RSI_14"] = ta.rsi(df_prices["close"], length=14)
+    df_prices["SMA_20"] = ta.sma(df_prices["close"], length=20)
+    df_prices["SMA_50"] = ta.sma(df_prices["close"], length=50)
+    df_prices["ATRr_20"] = ta.atr(
+        high=df_prices["high"],
+        low=df_prices["low"],
+        close=df_prices["close"],
+        length=20,
+    )
+
+    macd = ta.macd(df_prices["close"], fast=12, slow=26, signal=9)
+    if macd is not None:
+        df_prices = df_prices.join(macd)
 
     # 2. 获取最近的值
     latest = df_prices.iloc[-1]
