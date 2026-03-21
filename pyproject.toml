@@ -1,0 +1,34 @@
+[project]
+name = "intellifin-assistant"
+version = "0.1.0"
+description = "Multi-agent stock analysis system based on LangGraph"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "akshare>=1.13.0",
+    "beautifulsoup4>=4.14.2",
+    "fpdf2>=2.7.9",
+    "langchain-core>=1.0.4",
+    "langchain-openai>=1.0.2",
+    "langgraph>=1.0.2",
+    "langgraph-checkpoint>=3.0.1",
+    "langgraph-prebuilt>=1.0.2",
+    "numpy>=2.2.6",
+    "pandas>=2.3.3",
+    "pandas-ta==0.4.71b0",
+    "plotly>=6.4.0",
+    "pydantic>=2.12.4",
+    "python-dotenv>=1.2.1",
+    "requests>=2.32.5",
+    "streamlit>=1.51.0",
+    "tenacity>=9.1.2",
+    "yfinance>=0.2.66",
+]
+
+[dependency-groups]
+dev = [
+    "matplotlib",
+]
+
+[tool.uv]
+package = false

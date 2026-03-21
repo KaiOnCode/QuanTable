@@ -540,15 +540,15 @@ def main():
         
         st.markdown("### 🛠️ 解决方法：")
         st.markdown("**方法 1：安装所有依赖（推荐）**")
-        st.code("pip install -r requirements.txt", language="bash")
+        st.code("uv sync", language="bash")
         
         st.markdown("**方法 2：单独安装缺失的包**")
         if "akshare" in str(MISSING_DEPS):
-            st.code("pip install akshare", language="bash")
+            st.code("uv add akshare", language="bash")
         if "yfinance" in str(MISSING_DEPS):
-            st.code("pip install yfinance", language="bash")
+            st.code("uv add yfinance", language="bash")
         if "langchain" in str(MISSING_DEPS):
-            st.code("pip install langchain-openai langgraph", language="bash")
+            st.code("uv add langchain-openai langgraph", language="bash")
         
         st.markdown("### 📋 常见问题：")
         st.info("""
@@ -561,9 +561,9 @@ def main():
         
         **解决步骤：**
         1. 确保使用正确的 Python 环境（建议使用虚拟环境）
-        2. 运行 `pip install -r requirements.txt` 安装所有依赖
-        3. 如果问题仍然存在，尝试 `pip install --upgrade pip` 更新 pip
-        4. 重新运行应用：`streamlit run streamlit_app.py`
+        2. 运行 `uv sync` 安装所有依赖
+        3. 如果问题仍然存在，删除 `.venv` 后重新执行 `uv sync`
+        4. 重新运行应用：`uv run streamlit run streamlit_app.py`
         """)
         
         st.stop()
@@ -1180,7 +1180,7 @@ Final Investment Decision Report
                             st.success("✅ PDF Report Generated Successfully!")
                     except Exception as e:
                         st.error(f"❌ PDF Generation Failed: {str(e)}")
-                        st.info("💡 Tip: PDF functionality requires fpdf2 library, please run: pip install fpdf2")
+                        st.info("💡 Tip: PDF functionality requires fpdf2 library, please run: uv add fpdf2")
             
             # 一句话结论
             st.markdown(f"""
