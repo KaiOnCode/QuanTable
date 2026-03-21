@@ -1,19 +1,21 @@
 # dataflow/service.py
 import os
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
+
+from .portfolio_manager import PortfolioManager
+from .providers.fundamentals_akshare import df_get_fundamentals_pit
+from .providers.macro_calendar import df_get_macro_calendar
+from .providers.news_google import get_company_news  # 假设这个也按规范修改，或暂时保留
+from .providers.YFinance import (
+    df_get_fundamentals as df_get_fundamentals_live,
+)
 
 # 1. 导入新的 provider 函数
 from .providers.YFinance import (
-    df_get_prices,
     df_get_indicators,
-    df_get_fundamentals as df_get_fundamentals_live,
+    df_get_prices,
     df_get_sector_context,
 )
-
-from .providers.news_google import get_company_news  # 假设这个也按规范修改，或暂时保留
-from .portfolio_manager import PortfolioManager
-from .providers.macro_calendar import df_get_macro_calendar
-from .providers.fundamentals_akshare import df_get_fundamentals_pit
 
 ONLINE = os.getenv("ONLINE_DATA", "true").lower() == "true"
 

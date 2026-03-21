@@ -1,10 +1,10 @@
 # dataflow/providers/YFinance.py
-import yfinance as yf
-import pandas as pd
-import pandas_ta as ta
-from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional
 import math
+from datetime import datetime, timedelta
+from typing import Any, Dict, Optional
+
+import pandas as pd
+import yfinance as yf
 
 
 def _get_price_history(

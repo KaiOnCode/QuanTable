@@ -1,8 +1,8 @@
 # dataflow/providers/fundamentals_akshare.py
+from typing import Any, Dict
+
 import akshare as ak
 import pandas as pd
-from datetime import datetime
-from typing import Dict, Any, Optional
 
 
 def _is_us_stock(ticker: str) -> bool:

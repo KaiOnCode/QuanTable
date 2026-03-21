@@ -1,20 +1,20 @@
 # dataflow/providers/news_google.py
+import logging
+import random
 import re
 import time
-import random
-import logging
 import urllib.parse
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional
+from typing import Dict, List, Optional
 
 import requests
 from bs4 import BeautifulSoup
 from tenacity import (
     retry,
-    stop_after_attempt,
-    wait_exponential,
     retry_if_exception_type,
     retry_if_result,
+    stop_after_attempt,
+    wait_exponential,
 )
 
 # 使用标准日志记录模块作为备用

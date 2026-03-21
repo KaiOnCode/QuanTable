@@ -1,9 +1,10 @@
 # dataflow/providers/macro_calendar.py
-import os
-import requests
-from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional
 import logging
+import os
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
+
+import requests
 
 # 使用标准日志记录
 logger = logging.getLogger(__name__)

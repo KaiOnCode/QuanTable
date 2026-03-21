@@ -1,6 +1,7 @@
-from typing import Annotated, Optional, List
-from langgraph.graph import MessagesState, add_messages
+from typing import Annotated, List, Optional
+
 from langchain_core.messages import BaseMessage
+from langgraph.graph import MessagesState, add_messages
 
 
 class AgentState(MessagesState):

@@ -1,6 +1,6 @@
 # dataflow/portfolio_manager.py
-from typing import Dict, Any
 from datetime import datetime, timezone
+from typing import Any, Dict
 
 
 class PortfolioManager:
@@ -109,4 +109,4 @@ class PortfolioManager:
         将会话重置回“咨询模式”。
         """
         self._risk_limits = self.get_advisory_defaults()
-        print(f"[PortfolioManager] Reset to Advisory Mode.")
+        print("[PortfolioManager] Reset to Advisory Mode.")

@@ -1,5 +1,4 @@
 import yfinance as yf
-import pandas as pd
 
 ticker = "GOOG"
 start = "2025-01-01"

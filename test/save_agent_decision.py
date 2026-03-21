@@ -1,8 +1,6 @@
 import csv
 import re
 from datetime import datetime
-import uuid
-from datetime import datetime
 
 
 def parse_agent_output(text):

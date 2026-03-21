@@ -1,7 +1,7 @@
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.output_parsers import PydanticOutputParser
-from agents.utils.output_prase import *
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
+from agents.utils.output_prase import *
 
 output_parser = PydanticOutputParser(pydantic_object=TradingDecision)
 
