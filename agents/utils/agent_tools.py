@@ -46,7 +46,7 @@ def get_price(
         ts = row.get("ts", "")[:10]  # 只取日期部分
         o = row.get("o", 0)
         h = row.get("h", 0)
-        l = row.get("l", 0)
+        l = row.get("l", 0)  # noqa: E741
         c = row.get("c", 0)
         v = int(row.get("v", 0))
         output += f"{ts}\t{o:.2f}\t{h:.2f}\t{l:.2f}\t{c:.2f}\t{v:,}\n"

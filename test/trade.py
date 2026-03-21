@@ -192,7 +192,7 @@ def backtest_with_agent():
         # === 交易执行 / Order execution ===
         trade_executed = False
         realized_pnl = 0.0
-        position_value_before = position_value
+        _position_value_before = position_value
         equity_before = equity
 
         if action in ["BUY", "SELL"] and equity_before > 0:

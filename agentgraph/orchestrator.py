@@ -13,7 +13,12 @@ from agents.market_analyst import market_analyst_agent
 from agents.news_analyst import news_analyst_agent
 from agents.PM import PM_agent
 from agents.risk_analyst import risk_analyst_agent
-from agents.utils.agent_tools import *
+from agents.utils.agent_tools import (
+    get_fundamentals,
+    get_indicators,
+    get_news,
+    get_price,
+)
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 load_dotenv("properties.env")
