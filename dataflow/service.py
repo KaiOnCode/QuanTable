@@ -1,12 +1,13 @@
 # dataflow/service.py
 import os
-from typing import List, Dict, Any,Optional
+from typing import List, Dict, Any, Optional
+
 # 1. 导入新的 provider 函数
 from .providers.YFinance import (
     df_get_prices,
     df_get_indicators,
     df_get_fundamentals as df_get_fundamentals_live,
-    df_get_sector_context
+    df_get_sector_context,
 )
 
 from .providers.news_google import get_company_news  # 假设这个也按规范修改，或暂时保留
@@ -25,11 +26,11 @@ class DataService:
     # 2. 严格按照规范 v1.0 实现函数签名 [cite: 26-35]
 
     def df_get_prices(
-            self,
-            ticker: str,
-            lookback_days: int = 180,
-            # 更改：添加 end_date
-            end_date: Optional[str] = None
+        self,
+        ticker: str,
+        lookback_days: int = 180,
+        # 更改：添加 end_date
+        end_date: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         获取价格
@@ -46,7 +47,7 @@ class DataService:
         ticker: str,
         lookback_days: int = 180,
         # 更改：添加 end_date
-        end_date: Optional[str] = None
+        end_date: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         获取技术指标
@@ -60,9 +61,7 @@ class DataService:
 
     # 3. (修改) df_get_fundamentals 现在是路由器
     def df_get_fundamentals(
-            self,
-            ticker: str,
-            end_date: Optional[str] = None
+        self, ticker: str, end_date: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         获取基本面数据。
@@ -96,12 +95,12 @@ class DataService:
     # --- 以下是规范中其他需要您实现的数据源 ---
 
     def df_get_news(
-            self,
-            ticker: str,
-            window_days: int = 7,
-            max_items: int = 20,
-            # 更改：添加 end_date
-            end_date: Optional[str] = None
+        self,
+        ticker: str,
+        window_days: int = 7,
+        max_items: int = 20,
+        # 更改：添加 end_date
+        end_date: Optional[str] = None,
     ) -> List[Dict]:
         """
         获取新闻
@@ -111,10 +110,7 @@ class DataService:
         if ONLINE:
             # 更改：传递 end_date
             items = get_company_news(
-                ticker,
-                days=window_days,
-                lang=lang,
-                end_date=end_date
+                ticker, days=window_days, lang=lang, end_date=end_date
             )
             # TODO: 在这里将 items 转换为规范要求的格式
             return items[:max_items]

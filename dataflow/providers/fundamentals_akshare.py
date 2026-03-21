@@ -17,9 +17,9 @@ def _get_akshare_a_symbol(ticker: str) -> str:
     """
     (V3) 根据A股代码规则转换为 AkShare 需要的后缀。
     """
-    if ticker.startswith('6'):
+    if ticker.startswith("6"):
         return f"{ticker}.SH"
-    if ticker.startswith('00') or ticker.startswith('30'):
+    if ticker.startswith("00") or ticker.startswith("30"):
         return f"{ticker}.SZ"
     # 默认兜底
     return f"{ticker}.SH"
@@ -42,18 +42,15 @@ def _map_akshare_to_spec(report: pd.Series, is_us: bool) -> Dict[str, Any]:
         "pb": ("PB_TTM", None),
         "ps": ("PS_TTM", None),
         "ev_ebitda": ("EVEBITDA_TTM", None),
-
         # 基础指标 (A股/美股均已确认)
         "eps": ("EPSJB", "BASIC_EPS"),
         "gross_margin": ("XSMLL", "GROSS_PROFIT_RATIO"),
         "op_margin": ("OPERATING_PROFIT_MARGIN", None),  # A股保留猜测；美股不提供
-
         # 增长指标 (A股/美股均已确认)
         "eps_yoy": ("PARENTNETPROFITTZ", "BASIC_EPS_YOY"),
         "rev_yoy": ("TOTALOPERATEREVETZ", "OPERATE_INCOME_YOY"),
-
         "net_debt_to_ebitda": (None, None),
-        "sector_pe": (None, None)
+        "sector_pe": (None, None),
     }
 
     def get_val(key):
@@ -72,33 +69,25 @@ def _map_akshare_to_spec(report: pd.Series, is_us: bool) -> Dict[str, Any]:
             "ev_ebitda": get_val("ev_ebitda"),
             "eps": get_val("eps"),
             "gross_margin": get_val("gross_margin"),
-            "op_margin": get_val("op_margin")
+            "op_margin": get_val("op_margin"),
         },
-        "growth": {
-            "eps_yoy": get_val("eps_yoy"),
-            "rev_yoy": get_val("rev_yoy")
-        },
-        "balance": {
-            "net_debt_to_ebitda": get_val("net_debt_to_ebitda")
-        },
-        "sector_bench": {
-            "pe": get_val("sector_pe")
-        }
+        "growth": {"eps_yoy": get_val("eps_yoy"), "rev_yoy": get_val("rev_yoy")},
+        "balance": {"net_debt_to_ebitda": get_val("net_debt_to_ebitda")},
+        "sector_bench": {"pe": get_val("sector_pe")},
     }
 
     # 清理空字典
     data["ttm"] = {k: v for k, v in data["ttm"].items() if v is not None}
     data["growth"] = {k: v for k, v in data["growth"].items() if v is not None}
     data["balance"] = {k: v for k, v in data["balance"].items() if v is not None}
-    data["sector_bench"] = {k: v for k, v in data["sector_bench"].items() if v is not None}
+    data["sector_bench"] = {
+        k: v for k, v in data["sector_bench"].items() if v is not None
+    }
 
     return {k: v for k, v in data.items() if v}
 
 
-def df_get_fundamentals_pit(
-        ticker: str,
-        end_date: str
-) -> Dict[str, Any]:
+def df_get_fundamentals_pit(ticker: str, end_date: str) -> Dict[str, Any]:
     """
     V4 修复版：
     1. (A股) V3 逻辑已正确 (e.g., "600519.SH", "按报告期")。
@@ -106,7 +95,7 @@ def df_get_fundamentals_pit(
     3. (美股) V4 保持 .O 的重试逻辑。
     """
     try:
-        end_date_dt = pd.to_datetime(end_date.split('T')[0])
+        end_date_dt = pd.to_datetime(end_date.split("T")[0])
         is_us = _is_us_stock(ticker)
 
         # AkShare 文档确认，日期列均为 'REPORT_DATE'
@@ -142,7 +131,9 @@ def df_get_fundamentals_pit(
 
         # 检查 None
         if df is None:
-            print(f"[akshare] AkShare 为 {symbol} (indicator={indicator}) 返回了 None。")
+            print(
+                f"[akshare] AkShare 为 {symbol} (indicator={indicator}) 返回了 None。"
+            )
             return {}
 
         # 检查 empty 和 日期列

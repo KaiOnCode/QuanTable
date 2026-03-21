@@ -13,5 +13,3 @@ output_name = f"{ticker.replace('.', '')}.csv"
 mtr.to_csv(output_name, index=False, encoding="utf-8-sig")
 
 print("已保存为：", output_name)
-
-

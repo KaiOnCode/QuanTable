@@ -28,7 +28,7 @@ class PortfolioManager:
         return {
             "max_pos_pct": 1.0,  # 占位
             "max_drawdown_pct": 1.0,  # 占位
-            "meta": {"ignore_in_analysis": True, "advisory": True}
+            "meta": {"ignore_in_analysis": True, "advisory": True},
         }
 
     def get_position(self, ticker: str) -> Dict[str, Any]:
@@ -37,7 +37,7 @@ class PortfolioManager:
         - 如果未找到，返回规范要求的“中性默认”。
         - 如果找到，返回真实持仓并附上 meta (ignore=false)。
         """
-        now_iso = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+        now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         position_data = self._positions.get(ticker)
 
         if not position_data:
@@ -48,15 +48,15 @@ class PortfolioManager:
                 "avg_cost": None,
                 "meta": {
                     "ignore_in_analysis": True,  # 忽略对分析的影响
-                    "asof": now_iso
-                }
+                    "asof": now_iso,
+                },
             }
 
         # 否则，返回真实持仓
         real_position = position_data.copy()
         real_position["meta"] = {
             "ignore_in_analysis": False,  # 这是一个真实持仓，必须分析
-            "asof": now_iso
+            "asof": now_iso,
         }
         return real_position
 
@@ -80,9 +80,11 @@ class PortfolioManager:
             self._positions[ticker] = {
                 "side": side,
                 "qty_pct": qty_pct,
-                "avg_cost": avg_cost
+                "avg_cost": avg_cost,
             }
-        print(f"[PortfolioManager] Position updated for {ticker}: {self._positions.get(ticker)}")
+        print(
+            f"[PortfolioManager] Position updated for {ticker}: {self._positions.get(ticker)}"
+        )
 
     def update_risk_limits(self, max_pos_pct: float, max_drawdown_pct: float):
         """
@@ -95,10 +97,12 @@ class PortfolioManager:
             "max_drawdown_pct": max_drawdown_pct,  # 这就是客户能接受的最大亏损
             "meta": {
                 "ignore_in_analysis": False,  # 必须分析
-                "advisory": False  # 必须进行 sizing
-            }
+                "advisory": False,  # 必须进行 sizing
+            },
         }
-        print(f"[PortfolioManager] Risk limits updated (Sizing Mode): {self._risk_limits}")
+        print(
+            f"[PortfolioManager] Risk limits updated (Sizing Mode): {self._risk_limits}"
+        )
 
     def reset_to_advisory_mode(self):
         """
