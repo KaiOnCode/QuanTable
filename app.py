@@ -4,9 +4,12 @@ IntelliFin Assistant - CLI 入口
 股票分析多智能体系统的命令行界面
 """
 
+import argparse
 import os
 import sys
-import argparse
+
+import pandas as pd
+
 from agentgraph.orchestrator import IntelliFin_Assistant
 
 
@@ -57,7 +60,7 @@ def main():
         print("❌ 错误: 请在 properties.env 中配置有效的 OPENAI_API_KEY")
         sys.exit(1)
 
-    print(f"🚀 IntelliFin Assistant 启动中...")
+    print("🚀 IntelliFin Assistant 启动中...")
     print(f"📊 分析股票: {args.ticker.upper()}")
     print("-" * 60)
 
@@ -98,7 +101,7 @@ def main():
         # 生成可视化
         if args.visualize:
             agent.visualize()
-            print(f"\n✅ 工作流可视化图已保存到: graph.png")
+            print("\n✅ 工作流可视化图已保存到: graph.png")
 
         print("\n✨ 分析完成！")
 

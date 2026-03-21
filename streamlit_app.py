@@ -4,14 +4,14 @@ IntelliFin Assistant - Streamlit Web 界面
 """
 
 import os
+import re
 import sys
-import streamlit as st
+from datetime import datetime, timedelta
+
 import pandas as pd
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
+import streamlit as st
 from dotenv import load_dotenv
-import json
-import re
 
 # 加载配置
 load_dotenv("properties.env")
@@ -54,9 +54,9 @@ IMPORT_ERROR_MSG = ""
 try:
     from agentgraph.orchestrator import IntelliFin_Assistant
     from dataflow.providers.YFinance import (
-        df_get_prices,
-        df_get_indicators,
         df_get_fundamentals,
+        df_get_indicators,
+        df_get_prices,
     )
 except ImportError as e:
     DEPENDENCIES_OK = False

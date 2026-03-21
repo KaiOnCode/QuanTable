@@ -2,12 +2,6 @@ import os
 import sys
 
 from dotenv import load_dotenv
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-load_dotenv("properties.env")
-os.environ["LANGCHAIN_TRACING_V2"] = os.getenv("LANGCHAIN_TRACING_V2", "false")
-os.environ["LANGCHAIN_API_KEY"] = os.getenv("LANGCHAIN_API_KEY", "")
-
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
@@ -20,6 +14,11 @@ from agents.news_analyst import news_analyst_agent
 from agents.PM import PM_agent
 from agents.risk_analyst import risk_analyst_agent
 from agents.utils.agent_tools import *
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+load_dotenv("properties.env")
+os.environ["LANGCHAIN_TRACING_V2"] = os.getenv("LANGCHAIN_TRACING_V2", "false")
+os.environ["LANGCHAIN_API_KEY"] = os.getenv("LANGCHAIN_API_KEY", "")
 
 
 def create_tool_node_wrapper(node_name: str, tools):
