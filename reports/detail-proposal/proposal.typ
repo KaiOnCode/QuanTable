@@ -72,9 +72,9 @@ Agentic-Quant is a multi-agent stock analysis framework built on LangGraph. Five
 
 == Background and Motivation
 
-Large language models have introduced new ways to analyze financial markets. Unlike rule-based or statistical models, LLMs can read earnings reports, news articles, and analyst commentary, then produce structured reasoning in natural language. Recent studies show that LLM-based systems can generate stock signals with measurable alpha over market benchmarks @fatouros2024marketsenseai.
+Large language models have introduced new ways to analyze financial markets. Unlike rule-based or statistical models, LLMs can read earnings reports, news articles, and analyst commentary, then produce structured reasoning in natural language. Recent studies show that LLM-based systems can generate stock signals with measurable alpha over market benchmarks @fatouros_can_2025.
 
-However, a thorough investment decision involves multiple distinct tasks: reading price charts, tracking news, reviewing company fundamentals, assessing risk, and making a final call. Asking a single model to handle all of these creates a bottleneck --- the model must switch between roles, hold excessive context, and cannot specialize. Multi-agent systems solve this by assigning each task to a dedicated agent @xiao2024tradingagents @yu2024fincon. Role specialization and parallel execution lead to better results and more transparent reasoning.
+However, a thorough investment decision involves multiple distinct tasks: reading price charts, tracking news, reviewing company fundamentals, assessing risk, and making a final call. Asking a single model to handle all of these creates a bottleneck --- the model must switch between roles, hold excessive context, and cannot specialize. Multi-agent systems solve this by assigning each task to a dedicated agent @xiao_tradingagents:_2025 @yu_fincon:_2024. Role specialization and parallel execution lead to better results and more transparent reasoning.
 
 Agentic-Quant adopts this approach using LangGraph, a graph-based workflow engine that supports parallel branching, conditional routing, and tool integration. The framework runs five agents in a structured pipeline and has produced working results. This proposal describes the current state and outlines five extensions toward a complete trading assistant.
 
@@ -103,33 +103,33 @@ This project addresses the above gaps through five objectives:
 
 == Multi-Agent Systems for Financial Analysis
 
-Several recent systems apply multi-agent architectures to trading. TradingAgents @xiao2024tradingagents assigns roles --- fundamental analyst, sentiment analyst, technical analyst --- to separate LLM agents, with Bull and Bear researchers debating market conditions before a fund manager makes the final call. Experiments show improvements in cumulative return and Sharpe ratio over single-agent baselines.
+Several recent systems apply multi-agent architectures to trading. TradingAgents @xiao_tradingagents:_2025 assigns roles --- fundamental analyst, sentiment analyst, technical analyst --- to separate LLM agents, with Bull and Bear researchers debating market conditions before a fund manager makes the final call. Experiments show improvements in cumulative return and Sharpe ratio over single-agent baselines.
 
-FinCon @yu2024fincon, presented at NeurIPS 2024, uses a manager-analyst hierarchy modeled on real investment firms. It introduces _conceptual verbal reinforcement_: agents update beliefs from past outcomes and propagate them to relevant peers. A risk-control component critiques decisions at the episode level. The system generalizes across single-stock trading and portfolio management.
+FinCon @yu_fincon:_2024, presented at NeurIPS 2024, uses a manager-analyst hierarchy modeled on real investment firms. It introduces _conceptual verbal reinforcement_: agents update beliefs from past outcomes and propagate them to relevant peers. A risk-control component critiques decisions at the episode level. The system generalizes across single-stock trading and portfolio management.
 
-TradingGroup @tian2025tradinggroup deploys five agents (news sentiment, financial report, forecasting, style preference, and trading decision) with a self-reflection loop that distills past successes and failures. Backtests on five stock datasets outperform rule-based, ML, RL, and other LLM-based methods. FinMem @yu2023finmem adds a layered memory module aligned with human cognitive structures, enabling agents to retain critical information beyond typical context windows.
+TradingGroup @tian_tradinggroup:_2025 deploys five agents (news sentiment, financial report, forecasting, style preference, and trading decision) with a self-reflection loop that distills past successes and failures. Backtests on five stock datasets outperform rule-based, ML, RL, and other LLM-based methods. FinMem @yu_finmem:_2023 adds a layered memory module aligned with human cognitive structures, enabling agents to retain critical information beyond typical context windows.
 
 These systems share a common design principle: decompose the analysis task by role, let each agent specialize, and aggregate results through a central decision-maker. Agentic-Quant follows the same pattern.
 
 == LLM-Driven Quantitative Trading
 
-MarketSenseAI @fatouros2024marketsenseai uses GPT-4 with chain-of-thought prompting to analyze trends, news, fundamentals, and macroeconomic factors. Testing on S\&P 100 stocks over 15 months yielded 10--30\% excess alpha and up to 72\% cumulative returns. The study shows that structured reasoning, not just raw prediction, is key to LLM effectiveness in finance.
+MarketSenseAI @fatouros_can_2025 uses GPT-4 with chain-of-thought prompting to analyze trends, news, fundamentals, and macroeconomic factors. Testing on S\&P 100 stocks over 15 months yielded 10--30\% excess alpha and up to 72\% cumulative returns. The study shows that structured reasoning, not just raw prediction, is key to LLM effectiveness in finance.
 
-BloombergGPT @wu2023bloomberggpt demonstrates the value of domain-specific training: a 50-billion-parameter model trained on 363 billion tokens of financial data outperforms general-purpose models on financial NLP tasks. FinGPT @yang2023fingpt takes the opposite approach --- open-source and lightweight, using low-rank adaptation to specialize general models at low cost. Both directions inform the model selection strategy for Agentic-Quant's agents.
+BloombergGPT @wu_bloomberggpt:_2023 demonstrates the value of domain-specific training: a 50-billion-parameter model trained on 363 billion tokens of financial data outperforms general-purpose models on financial NLP tasks. FinGPT @yang_fingpt:_2025 takes the opposite approach --- open-source and lightweight, using low-rank adaptation to specialize general models at low cost. Both directions inform the model selection strategy for Agentic-Quant's agents.
 
-A survey covering over fifty studies @fu2025newquant identifies key challenges for production deployment: temporal data leakage in evaluation, hallucinated facts, limited data coverage, and high inference costs. These concerns directly shape Agentic-Quant's emphasis on data grounding, structured output validation, and cost-aware model selection.
+A survey covering over fifty studies @fu_new_2025 identifies key challenges for production deployment: temporal data leakage in evaluation, hallucinated facts, limited data coverage, and high inference costs. These concerns directly shape Agentic-Quant's emphasis on data grounding, structured output validation, and cost-aware model selection.
 
 == Agent Orchestration and Decision Visualization
 
-AGORA @zhang2025agora, presented at ACL 2025, provides a graph-based orchestration engine for LLM agents. Its evaluation reveals that simpler reasoning methods like chain-of-thought often match more complex approaches at lower cost --- a practical insight for agent design. FinAgent @zhang2024finagent, from KDD 2024, is a multimodal agent combining numerical, textual, and visual data with tool augmentation and a dual-level reflection module, achieving over 36\% improvement on profit metrics across six datasets.
+AGORA @zhang_unifying_2025, presented at ACL 2025, provides a graph-based orchestration engine for LLM agents. Its evaluation reveals that simpler reasoning methods like chain-of-thought often match more complex approaches at lower cost --- a practical insight for agent design. FinAgent @zhang_multimodal_2024, from KDD 2024, is a multimodal agent combining numerical, textual, and visual data with tool augmentation and a dual-level reflection module, achieving over 36\% improvement on profit metrics across six datasets.
 
-On explainability, de la Rica Escudero et al. @delarica2024xai apply SHAP and LIME to explain portfolio decisions made by deep RL agents in real time. Tatsat and Shater @tatsat2025blackbox go further with mechanistic interpretability, reverse-engineering LLM internals to understand financial reasoning. Wang et al. @wang2024finin show that modeling interactions _among_ news items --- rather than treating each independently --- captures temporal dynamics that simple sentiment scoring misses. These findings motivate Agentic-Quant's decision-flow visualization: making the full reasoning chain from data to decision visible and auditable.
+On explainability, de la Rica Escudero et al. @de-la-rica-escudero_explainable_2025 apply SHAP and LIME to explain portfolio decisions made by deep RL agents in real time. Tatsat and Shater @tatsat_beyond_2025 go further with mechanistic interpretability, reverse-engineering LLM internals to understand financial reasoning. Wang et al. @wang_modeling_2024 show that modeling interactions _among_ news items --- rather than treating each independently --- captures temporal dynamics that simple sentiment scoring misses. These findings motivate Agentic-Quant's decision-flow visualization: making the full reasoning chain from data to decision visible and auditable.
 
 == Human-in-the-Loop and Autonomous Trading
 
-Alpha-GPT 2.0 @yuan2024alphagpt, from HKUST and IDEA Research, introduces an iterative human-AI collaboration framework for quantitative investment. Rather than full automation, it lets human researchers guide AI in alpha mining while AI results inspire human insight. The paper argues that purely automated approaches face diminishing returns.
+Alpha-GPT 2.0 @yuan_alpha-gpt_2024, from HKUST and IDEA Research, introduces an iterative human-AI collaboration framework for quantitative investment. Rather than full automation, it lets human researchers guide AI in alpha mining while AI results inspire human insight. The paper argues that purely automated approaches face diminishing returns.
 
-A comprehensive survey @pippas2025rl covering 167 publications on reinforcement learning in quantitative finance maps RL concepts to investing language and evaluates multi-agent RL approaches for portfolio management. This body of work provides the baseline against which LLM-based systems like Agentic-Quant can be compared. A broader survey on LLM agents in finance @dong2025survey identifies coordination-aware multi-agent systems as an under-explored direction --- precisely the gap Agentic-Quant aims to fill.
+A comprehensive survey @pippas_evolution_2025 covering 167 publications on reinforcement learning in quantitative finance maps RL concepts to investing language and evaluates multi-agent RL approaches for portfolio management. This body of work provides the baseline against which LLM-based systems like Agentic-Quant can be compared. A broader survey on LLM agents in finance @dong_large_2025 identifies coordination-aware multi-agent systems as an under-explored direction --- precisely the gap Agentic-Quant aims to fill.
 
 // ═══════════════════════════════════════════
 //  3  System Design and Current Implementation
@@ -201,17 +201,17 @@ The Streamlit-based frontend offers three functions: stock analysis with configu
 
 Currently all context lives in an in-memory Python dictionary and is lost after each run. The planned upgrade introduces a SQLite-based storage layer that persists agent reports, tool call logs with timestamps, PM decisions with reasoning, and per-ticker decision history.
 
-A `ContextStore` abstraction will support swapping between in-memory (development) and SQLite (production) backends without changing application code. With persistent context, the system can replay any past analysis session, retrieve the last _N_ decisions for a given ticker, and remain queryable after restart @yu2023finmem.
+A `ContextStore` abstraction will support swapping between in-memory (development) and SQLite (production) backends without changing application code. With persistent context, the system can replay any past analysis session, retrieve the last _N_ decisions for a given ticker, and remain queryable after restart @yu_finmem:_2023.
 
 == Human-in-the-Loop Approval Mechanism
 
-In the current pipeline, the PM's decision is final. For a practical trading assistant, certain actions require human verification --- especially large position changes, trades against conflicting signals, or decisions based on sparse data @yuan2024alphagpt.
+In the current pipeline, the PM's decision is final. For a practical trading assistant, certain actions require human verification --- especially large position changes, trades against conflicting signals, or decisions based on sparse data @yuan_alpha-gpt_2024.
 
 The HITL module will define trigger policies (e.g., position change above a threshold, analyst disagreement above a tolerance). Flagged decisions are routed to a human reviewer who can approve, reject, or modify parameters. All outcomes are logged and fed back for policy refinement.
 
 == Broker Mock Engine and Backtesting Loop
 
-To close the gap between analysis and execution, a simulated broker engine will handle basic order types (market and limit), maintain virtual account balances and positions, and track profit/loss over time. The engine exposes a standard gateway interface modeled on real broker APIs (e.g., Moomoo OpenAPI), simplifying future migration to live trading @yang2024finrobot.
+To close the gap between analysis and execution, a simulated broker engine will handle basic order types (market and limit), maintain virtual account balances and positions, and track profit/loss over time. The engine exposes a standard gateway interface modeled on real broker APIs (e.g., Moomoo OpenAPI), simplifying future migration to live trading @yang_finrobot:_2024.
 
 This creates a full cycle: agents analyze, PM decides, broker executes, results feed back for the next round. The backtesting loop can also evaluate how well past decisions would have performed, providing a concrete measure of system quality.
 
@@ -221,7 +221,7 @@ The system will integrate with WhatsApp and Telegram via their respective APIs. 
 
 == Decision-Flow Visualization
 
-Each analysis session produces a chain of intermediate outputs: data retrievals, agent reports, risk assessments, and a final decision. The visualization module will render this chain as an interactive flow diagram in the Streamlit interface, showing how each agent's analysis contributed to the final call. This serves as both an audit trail for users and a debugging tool for developers @delarica2024xai @tatsat2025blackbox.
+Each analysis session produces a chain of intermediate outputs: data retrievals, agent reports, risk assessments, and a final decision. The visualization module will render this chain as an interactive flow diagram in the Streamlit interface, showing how each agent's analysis contributed to the final call. This serves as both an audit trail for users and a debugging tool for developers @de-la-rica-escudero_explainable_2025 @tatsat_beyond_2025.
 
 // ═══════════════════════════════════════════
 //  5  Technical Stack
@@ -281,4 +281,4 @@ Each analysis session produces a chain of intermediate outputs: data retrievals,
 // ═══════════════════════════════════════════
 //  References
 // ═══════════════════════════════════════════
-#bibliography("refs.bib", title: "References", style: "ieee")
+#bibliography("citations.bib", title: "References", style: "ieee")
