@@ -1,0 +1,32 @@
+graph LR
+    START(["START"])
+
+    MA["Market\nAnalyst"]
+    NA["News\nAnalyst"]
+    FA["Fundamentals\nAnalyst"]
+    RA["Risk\nAnalyst"]
+    PM["PM\nAgent"]
+
+    HITL["HITL\nReview"]:::planned
+    BM["Broker\nMock"]:::planned
+    NF["Notification"]:::planned
+    CS[("Context Store\n(SQLite)")]:::planned
+
+    START --> MA
+    START --> NA
+    START --> FA
+
+    MA --> RA
+    NA --> RA
+    FA --> RA
+
+    RA --> PM
+    PM -.-> HITL
+    HITL -- approve --> BM
+    HITL -. alert .-> NF
+    BM -. feedback .-> START
+
+    CS <-.-> RA
+    CS <-.-> PM
+
+    classDef planned stroke-dasharray: 5 5
