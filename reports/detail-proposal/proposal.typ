@@ -54,14 +54,16 @@
 #counter(page).update(1)
 
 // ═══════════════════════════════════════════
-//  Abstract
+//  Abstract (Revised Version)
 // ═══════════════════════════════════════════
 #heading(numbering: none)[Abstract]
 
-Agentic-Quant is a multi-agent stock analysis framework built on LangGraph. Five AI agents --- market analyst, news analyst, fundamentals analyst, risk analyst, and portfolio manager --- work in a structured pipeline to produce trading recommendations from real-time market data. The system already supports data retrieval from Yahoo Finance and Google News, technical charting, historical backtesting, and a Streamlit-based web interface. This proposal describes five planned extensions: persistent context management, a human-in-the-loop approval mechanism, a simulated broker engine, multi-channel notification, and decision-flow visualization. Together, these additions aim to turn Agentic-Quant from a single-query advisory tool into a continuously running, auditable trading assistant.
+Current large language model (LLM) frameworks for financial analysis often operate as stateless, single-turn systems, leading to a significant loss of historical context and a lack of verifiable execution loops. While existing multi-agent architectures provide role specialization, they frequently function as isolated advisory tools that fail to evaluate past performance or manage high-risk decisions requiring human oversight. This proposal introduces *Agentic-Quant*, a comprehensive multi-agent framework built on LangGraph designed to bridge the gap between autonomous reasoning and practical quantitative trading.
+
+The system coordinates five specialized AI agents—market analyst, news analyst, fundamentals analyst, risk analyst, and portfolio manager—within a structured, graph-based pipeline. Beyond simple data retrieval from Yahoo Finance and Google News, Agentic-Quant implements a persistent context layer using SQLite to maintain a continuous "institutional memory" of agent reports and past decisions. To ensure safety and reliability, the framework incorporates a human-in-the-loop (HITL) approval mechanism that routes high-risk or conflicting signals to human reviewers via integrated WhatsApp and Telegram channels. Furthermore, a simulated broker engine is integrated to execute virtual trades and provide empirical feedback, transforming the system from a theoretical advisor into a closed-loop trading assistant. Combined with decision-flow visualization for end-to-end auditability, Agentic-Quant offers a scalable and interpretable solution for LLM-driven quantitative investment.
 
 #v(0.5em)
-*Keywords:* Multi-Agent System, LangGraph, LLM-driven Quantitative Analysis, Decision-Flow Visualization, Autonomous Trading, Human-in-the-Loop
+*Keywords:* Multi-Agent System, LangGraph, LLM-driven Quantitative Analysis, Persistent Context, Human-in-the-Loop, Broker Simulation, Decision-Flow Visualization
 
 // ═══════════════════════════════════════════
 //  1  Introduction
@@ -86,13 +88,16 @@ Most LLM-based financial tools operate as stateless, single-turn systems: the us
 
 == Research Objectives
 
-This project addresses the above gaps through five objectives:
+This project aims to address the limitations of stateless, advisory-only LLM financial tools by developing a comprehensive, multi-agent trading assistant. The research is structured around eight core objectives:
 
-+ Build a persistent context layer that retains agent reports, tool logs, and past decisions across sessions.
-+ Implement a human-in-the-loop mechanism that routes high-risk or conflicting decisions to human review.
-+ Develop a broker simulation engine that executes virtual trades and feeds results back to the agents.
-+ Integrate messaging channels (WhatsApp, Telegram) for mobile monitoring and approval.
-+ Create a decision-flow visualization that traces how each agent contributes to the final recommendation.
++ *Develop a multi-source data ingestion engine* that integrates disparate financial streams, including real-time market metrics from Yahoo Finance, global news sentiment from Google News, and historical point-in-time fundamental data.
++ *Architect a modular multi-agent orchestration framework* using LangGraph to distribute specialized analytical tasks—market, news, fundamentals, and risk analysis—across a collaborative team of autonomous LLM agents.
++ *Build an interactive web-based dashboard* to provide users with intuitive access to agent-driven insights, technical visualizations, and historical backtesting performance.
++ *Construct a persistent context layer* that retains agent reports, tool logs, and past decisions across sessions, enabling the system to maintain long-term "institutional memory" and multi-session reasoning.
++ *Implement a human-in-the-loop (HITL) gatekeeping mechanism* that identifies high-risk or conflicting decisions and routes them to human review for safety and policy refinement.
++ *Develop a high-fidelity broker simulation engine* that executes virtual trades based on agent decisions and feeds performance outcomes back into the system to close the execution-feedback loop.
++ *Integrate multi-channel notification systems* via Telegram and WhatsApp APIs to facilitate real-time market alerts and remote human-in-the-loop approval requests.
++ *Create an interactive decision-flow visualization module* that traces the entire reasoning chain—from raw data retrieval to final broker execution—to ensure system interpretability and auditability.
 
 // ═══════════════════════════════════════════
 //  2  Literature Review
@@ -157,19 +162,23 @@ The five agents serve distinct roles:
 
 Each agent runs as a LangGraph node backed by an LLM (currently OpenAI-compatible models). Agents that need external data access tools through LangGraph's `ToolNode` mechanism.
 
-== Data Pipeline
+== Data Pipeline and State Persistence
 
-A unified `DataService` class provides three data sources:
+Agentic-Quant employs a unified `DataService` architecture designed to handle multi-modal data streams and maintain a continuous feedback loop. The pipeline integrates three primary external categories with an internal persistence layer:
 
-- *Yahoo Finance* for real-time prices, technical indicators, and basic financials.
-- *Google News* for news headlines and article links.
-- *AkShare* for historical point-in-time fundamental data, with a focus on China A-shares.
+- *External Market & News Data:* Real-time price action and technical indicators (SMA, RSI, MACD) are ingested via Yahoo Finance. News sentiment and event relevance are parsed from Google News headlines. For deeper fundamental analysis, historical point-in-time data and sector-wide metrics are retrieved through AkShare.
+- *Internal Execution Feedback:* Unlike stateless systems, the pipeline incorporates a feedback channel from the Broker Mock Engine. Execution results, including realized profit/loss and slippage, are fed back into the state to inform subsequent agent reasoning.
+- *Persistent Context Store:* All ingested data, intermediate agent reports, and final decisions are persisted in a SQLite-based storage layer. This `ContextStore` allows the system to perform context-aware retrieval, where agents can reference previous analysis cycles for the same ticker to ensure temporal consistency in their recommendations.
 
-A macro calendar module is in early development for economic event tracking. Retrieval failures trigger fallback logic; additional providers (e.g., Alpha Vantage) are planned as backup sources.
+The data flow is governed by robust fallback logic; retrieval failures in one provider trigger automatic shifts to backup sources, ensuring the high availability required for continuous monitoring.
 
-== Web Interface
+== Web Dashboard and Human Interaction
 
-The Streamlit-based frontend offers three functions: stock analysis with configurable parameters, historical backtesting with performance charts (Plotly), and technical chart overlays with selectable indicators. Results can be exported as PDF reports.
+The frontend, built on Streamlit, serves as an integrated command center for autonomous analysis and supervised execution. Its functionality is divided into three core modules:
+
+- *Analysis & Strategy Visualization:* Users can configure stock analysis parameters and view real-time technical charts powered by Plotly. The dashboard includes a *Decision-Flow Visualization* module, which renders the LangGraph reasoning chain as an interactive diagram, allowing users to audit exactly how news sentiment or fundamental shifts influenced the final PM decision.
+- *HITL Approval Gateway:* To manage high-risk scenarios, the interface features a dedicated Human-in-the-Loop (HITL) panel. Decisions flagged by the Risk Analyst—due to conflicting signals or large position changes—are held in a "Pending" state. Reviewers can approve, reject, or manually adjust trade parameters directly through the UI or via linked messaging channels.
+- *Performance & Session Management:* The interface provides a historical view of all past sessions stored in the `ContextStore`. Users can replay past decision cycles, evaluate backtesting performance with interactive equity curves, and export comprehensive analysis summaries as PDF reports.
 
 // ═══════════════════════════════════════════
 //  4  Proposed Enhancements
