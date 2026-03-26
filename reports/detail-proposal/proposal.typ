@@ -1,5 +1,3 @@
-#import "@preview/fletcher:0.5.8" as fletcher: diagram, edge, node
-
 // ── Page & typography ──
 #set page(paper: "a4", margin: (x: 2.5cm, y: 2.5cm))
 #set text(size: 11pt)
@@ -141,27 +139,8 @@ A comprehensive survey @pippas_evolution_2025 covering 167 publications on reinf
 Agentic-Quant uses LangGraph's `StateGraph` to orchestrate five agents. @fig-workflow shows the pipeline. Three analyst agents run in parallel; the risk analyst and PM run sequentially after all upstream reports are available.
 
 #figure(
-  diagram(
-    node-stroke: 0.7pt,
-    node-inset: 8pt,
-    spacing: (18mm, 14mm),
-    node((0, 1), [*START*], corner-radius: 3pt, fill: luma(240)),
-    node((1, 0), [Market \ Analyst], corner-radius: 3pt),
-    node((1, 1), [News \ Analyst], corner-radius: 3pt),
-    node((1, 2), [Fundamentals \ Analyst], corner-radius: 3pt),
-    node((2, 1), [Risk \ Analyst], corner-radius: 3pt, fill: luma(240)),
-    node((3, 1), [PM \ Agent], corner-radius: 3pt, fill: luma(240)),
-    node((4, 1), [*END*], corner-radius: 3pt, fill: luma(240)),
-    edge((0, 1), (1, 0), "-|>"),
-    edge((0, 1), (1, 1), "-|>"),
-    edge((0, 1), (1, 2), "-|>"),
-    edge((1, 0), (2, 1), "-|>"),
-    edge((1, 1), (2, 1), "-|>"),
-    edge((1, 2), (2, 1), "-|>"),
-    edge((2, 1), (3, 1), "-|>"),
-    edge((3, 1), (4, 1), "-|>"),
-  ),
-  caption: [Agent workflow. Three analysts run in parallel; the risk analyst waits for all reports before proceeding to the PM.],
+  image("architecture.pdf", width: 100%),
+  caption: [Target system architecture. Solid borders and arrows show existing components; dashed elements indicate planned enhancements.],
 ) <fig-workflow>
 
 The shared state holds the stock ticker, analysis date, current position, and per-agent message histories. Agents read from and write to this state but do not call each other directly. This keeps them loosely coupled and independently modifiable.
