@@ -139,7 +139,7 @@ A comprehensive survey @pippas_evolution_2025 covering 167 publications on reinf
 Agentic-Quant uses LangGraph's `StateGraph` to orchestrate five agents. @fig-workflow shows the pipeline. Three analyst agents run in parallel; the risk analyst and PM run sequentially after all upstream reports are available.
 
 #figure(
-  image("./architecture.svg", width: 100%),
+  image("architecture.pdf", width: 100%),
   caption: [Target system architecture. Solid borders and arrows show existing components; dashed elements indicate planned enhancements.],
 ) <fig-workflow>
 

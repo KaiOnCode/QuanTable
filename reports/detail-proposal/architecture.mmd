@@ -1,16 +1,22 @@
+---
+config:
+  layout: dagre
+  themeVariables:
+    fontSize: 26px
+---
 graph LR
     START(["START"])
 
-    MA["Market\nAnalyst"]
-    NA["News\nAnalyst"]
-    FA["Fundamentals\nAnalyst"]
-    RA["Risk\nAnalyst"]
-    PM["PM\nAgent"]
+    MA["Market</br>Analyst"]
+    NA["News</br>Analyst"]
+    FA["Fundamentals</br>Analyst"]
+    RA["Risk</br>Analyst"]
+    PM["PM</br>Agent"]
 
-    HITL["HITL\nReview"]:::planned
-    BM["Broker\nMock"]:::planned
+    HITL["HITL</br>Review"]:::planned
+    BM["Broker</br>Mock"]:::planned
     NF["Notification"]:::planned
-    CS[("Context Store\n(SQLite)")]:::planned
+    CS[("Context Store</br>(SQLite)")]:::planned
 
     START --> MA
     START --> NA
