@@ -1,20 +1,20 @@
 # dataflow/providers/news_google.py
+import logging
+import random
 import re
 import time
-import random
-import logging
 import urllib.parse
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional
+from typing import Dict, List, Optional
 
 import requests
 from bs4 import BeautifulSoup
 from tenacity import (
     retry,
-    stop_after_attempt,
-    wait_exponential,
     retry_if_exception_type,
     retry_if_result,
+    stop_after_attempt,
+    wait_exponential,
 )
 
 # 使用标准日志记录模块作为备用
@@ -26,25 +26,25 @@ def parse_relative_date_to_iso(date_str: str) -> str:
     now = datetime.now()
     dt = now
     try:
-        num_match = re.search(r'\d+', date_str)
+        num_match = re.search(r"\d+", date_str)
         if not num_match:
-            if '天前' in date_str or 'day' in date_str:
+            if "天前" in date_str or "day" in date_str:
                 dt = now - timedelta(days=1)
-            elif '小时前' in date_str or 'hour' in date_str:
+            elif "小时前" in date_str or "hour" in date_str:
                 dt = now - timedelta(hours=1)
         else:
             num = int(num_match.group(0))
-            if '分钟前' in date_str or 'minute' in date_str:
+            if "分钟前" in date_str or "minute" in date_str:
                 dt = now - timedelta(minutes=num)
-            elif '小时前' in date_str or 'hour' in date_str:
+            elif "小时前" in date_str or "hour" in date_str:
                 dt = now - timedelta(hours=num)
-            elif '天前' in date_str or 'day' in date_str:
+            elif "天前" in date_str or "day" in date_str:
                 dt = now - timedelta(days=num)
-            elif '周前' in date_str or 'week' in date_str:
+            elif "周前" in date_str or "week" in date_str:
                 dt = now - timedelta(weeks=num)
             else:
                 try:
-                    dt = datetime.strptime(date_str, '%b %d, %Y')
+                    dt = datetime.strptime(date_str, "%b %d, %Y")
                 except ValueError:
                     dt = now
     except Exception as e:
@@ -59,8 +59,11 @@ def is_rate_limited(response):
 
 
 @retry(
-    retry=(retry_if_result(is_rate_limited) | retry_if_exception_type(
-        requests.exceptions.ConnectionError) | retry_if_exception_type(requests.exceptions.Timeout)),
+    retry=(
+        retry_if_result(is_rate_limited)
+        | retry_if_exception_type(requests.exceptions.ConnectionError)
+        | retry_if_exception_type(requests.exceptions.Timeout)
+    ),
     wait=wait_exponential(multiplier=1, min=4, max=60),
     stop=stop_after_attempt(5),
 )
@@ -74,11 +77,11 @@ def make_request(url, headers):
 
 # --- 核心功能函数 (最终版) ---
 def get_company_news(
-        ticker_or_query: str,
-        days: int = 7,
-        lang: str = "en",
-        # 更改：添加可选的 end_date 参数 (ISO 格式字符串)
-        end_date: Optional[str] = None
+    ticker_or_query: str,
+    days: int = 7,
+    lang: str = "en",
+    # 更改：添加可选的 end_date 参数 (ISO 格式字符串)
+    end_date: Optional[str] = None,
 ) -> List[Dict]:
     query = urllib.parse.quote_plus(f"{ticker_or_query} stock")
 
@@ -86,7 +89,7 @@ def get_company_news(
     end_date_dt: datetime
     if end_date:
         try:
-            end_date_dt = datetime.fromisoformat(end_date.rstrip('Z'))
+            end_date_dt = datetime.fromisoformat(end_date.rstrip("Z"))
         except ValueError:
             logger.warning(f"无法解析 news end_date: {end_date}. 回退到当前时间。")
             end_date_dt = datetime.now()
@@ -105,7 +108,7 @@ def get_company_news(
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/120.0.0.0 Safari/537.36"
         ),
-        "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7"
+        "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7",
     }
 
     hl = "en-US" if lang == "en" else "zh-CN"
@@ -125,12 +128,17 @@ def get_company_news(
         )
 
         try:
-            logger.info(f"Scraping Google News page {page + 1} for query: {ticker_or_query} (lang={lang})")
+            logger.info(
+                f"Scraping Google News page {page + 1} for query: {ticker_or_query} (lang={lang})"
+            )
             response = make_request(url, headers)
 
             soup = BeautifulSoup(response.content, "html.parser")
 
-            if "Our systems have detected unusual traffic" in response.text or "Before you continue" in response.text:
+            if (
+                "Our systems have detected unusual traffic" in response.text
+                or "Before you continue" in response.text
+            ):
                 logger.error("!!! Google 拦截了请求 (CAPTCHA) !!! 停止抓取。")
                 break
 
@@ -143,11 +151,13 @@ def get_company_news(
             for el in results_on_page:
                 try:
                     link_el = el.find("a", href=True)
-                    if not link_el: continue
+                    if not link_el:
+                        continue
                     link_href = link_el["href"]
 
                     title_el = el.select_one("div.MBeuO, div.mCBkyc")
-                    if not title_el: continue
+                    if not title_el:
+                        continue
                     title_text = title_el.get_text()
 
                     snippet_el = el.select_one(".GI74Re, .s3v9rd")
@@ -161,13 +171,15 @@ def get_company_news(
 
                     iso_timestamp = parse_relative_date_to_iso(date_text_str)
 
-                    news_results.append({
-                        "url": link_href,
-                        "title": title_text,
-                        "summary": snippet_text,
-                        "published_at": iso_timestamp,
-                        "source": source_text,
-                    })
+                    news_results.append(
+                        {
+                            "url": link_href,
+                            "title": title_text,
+                            "summary": snippet_text,
+                            "published_at": iso_timestamp,
+                            "source": source_text,
+                        }
+                    )
                 except Exception as e:
                     logger.warning(f"处理单个结果条目时出错: {e}", exc_info=False)
                     continue
@@ -179,11 +191,15 @@ def get_company_news(
             page += 1
 
         except requests.exceptions.HTTPError as e:
-            logger.error(f"HTTP 错误: {e.response.status_code}. Google 可能已屏蔽。停止抓取。")
+            logger.error(
+                f"HTTP 错误: {e.response.status_code}. Google 可能已屏蔽。停止抓取。"
+            )
             break
         except Exception as e:
             logger.error(f"抓取期间发生意外错误: {e}", exc_info=True)
             break
 
-    logger.info(f"抓取完成。共找到 {len(news_results)} 条新闻 (查询: {ticker_or_query})")
+    logger.info(
+        f"抓取完成。共找到 {len(news_results)} 条新闻 (查询: {ticker_or_query})"
+    )
     return news_results

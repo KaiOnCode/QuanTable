@@ -1,12 +1,11 @@
+import csv
 import time
 
-import pandas as pd
 import numpy as np
-import csv
-
-from agentgraph.orchestrator import IntelliFin_Assistant
+import pandas as pd
 from nlp_test.save_agent_decision import save_agent_csv
 
+from agentgraph.orchestrator import IntelliFin_Assistant
 
 # ================== 参数设置 / Parameters ==================
 INITIAL_CASH = 100000.0
@@ -34,11 +33,21 @@ def init_csv_files():
     # 交易明细文件
     with open(TRADES_FILE, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            "trade_id", "date", "time", "ticker", "side",
-            "quantity", "price", "fee", "slippage",
-            "trade_value", "realized_pnl"
-        ])
+        writer.writerow(
+            [
+                "trade_id",
+                "date",
+                "time",
+                "ticker",
+                "side",
+                "quantity",
+                "price",
+                "fee",
+                "slippage",
+                "trade_value",
+                "realized_pnl",
+            ]
+        )
     # trade_id：交易编号
     # date、time：成交日期和时间
     # ticker：股票代码
@@ -53,59 +62,79 @@ def init_csv_files():
     # 每日组合状态文件
     with open(PORTFOLIO_FILE, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            "date", "ticker", "close", "cash",
-            "position_shares", "position_value",
-            "equity", "unrealized_pnl", "cum_realized_pnl",
-            "trade_executed", "current_position_pct_input",
-            "target_position_pct_output", "action"
-        ])
-    #date：日期
-    #ticker：股票代码
-    #close：当天收盘价
-    #cash：当天收盘后账户现金
-    #position_shares：持有的股数，多头为正，空头为负（非常关键）
-    #position_value：持仓市值 = position_shares * close
-    #equity：总权益 = 现金 + 持仓市值（如果持空，持仓市值为负）
-    #unrealized_pnl：浮动盈亏（基于 avg_cost）
-    #cum_realized_pnl：累积已实现盈亏
-    #trade_executed：当天是否有成交（0/1）
-    #current_position_pct_input：当天传给 Agent 的仓位比例（单位：百分比）
-    #target_position_pct_output：Agent 输出的目标仓位比例，已经缩放到 -1~1 之间的数
-    #action：Agent 的动作（BUY / SELL / HOLD）
+        writer.writerow(
+            [
+                "date",
+                "ticker",
+                "close",
+                "cash",
+                "position_shares",
+                "position_value",
+                "equity",
+                "unrealized_pnl",
+                "cum_realized_pnl",
+                "trade_executed",
+                "current_position_pct_input",
+                "target_position_pct_output",
+                "action",
+            ]
+        )
+    # date：日期
+    # ticker：股票代码
+    # close：当天收盘价
+    # cash：当天收盘后账户现金
+    # position_shares：持有的股数，多头为正，空头为负（非常关键）
+    # position_value：持仓市值 = position_shares * close
+    # equity：总权益 = 现金 + 持仓市值（如果持空，持仓市值为负）
+    # unrealized_pnl：浮动盈亏（基于 avg_cost）
+    # cum_realized_pnl：累积已实现盈亏
+    # trade_executed：当天是否有成交（0/1）
+    # current_position_pct_input：当天传给 Agent 的仓位比例（单位：百分比）
+    # target_position_pct_output：Agent 输出的目标仓位比例，已经缩放到 -1~1 之间的数
+    # action：Agent 的动作（BUY / SELL / HOLD）
+
 
 # ========== 实时写入函数 / append row to csv ==========
 def append_trade_row(row: dict):
     with open(TRADES_FILE, "a", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            row["trade_id"],
-            row["date"],
-            row["time"],
-            row["ticker"],
-            row["side"],
-            row["quantity"],
-            row["price"],
-            row["fee"],
-            row["slippage"],
-            row["trade_value"],
-            row["realized_pnl"],
-        ])
+        writer.writerow(
+            [
+                row["trade_id"],
+                row["date"],
+                row["time"],
+                row["ticker"],
+                row["side"],
+                row["quantity"],
+                row["price"],
+                row["fee"],
+                row["slippage"],
+                row["trade_value"],
+                row["realized_pnl"],
+            ]
+        )
 
 
 def append_portfolio_row(row: dict):
     with open(PORTFOLIO_FILE, "a", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            row["date"], row["ticker"], row["close"],
-            row["cash"], row["position_shares"],
-            row["position_value"], row["equity"],
-            row["unrealized_pnl"], row["cum_realized_pnl"],
-            row["trade_executed"],
-            row["current_position_pct_input"],
-            row["target_position_pct_output"],
-            row["action"]
-        ])
+        writer.writerow(
+            [
+                row["date"],
+                row["ticker"],
+                row["close"],
+                row["cash"],
+                row["position_shares"],
+                row["position_value"],
+                row["equity"],
+                row["unrealized_pnl"],
+                row["cum_realized_pnl"],
+                row["trade_executed"],
+                row["current_position_pct_input"],
+                row["target_position_pct_output"],
+                row["action"],
+            ]
+        )
 
 
 # ========== 回测主流程 / Backtest ==========
@@ -115,8 +144,8 @@ def backtest_with_agent():
     prices = prices.loc[START_DATE:END_DATE].copy()
 
     cash = INITIAL_CASH
-    position = 0             # 持仓股数：多头>0，空头<0
-    avg_cost = 0.0           # 单股平均成本价（不带方向符号）
+    position = 0  # 持仓股数：多头>0，空头<0
+    avg_cost = 0.0  # 单股平均成本价（不带方向符号）
     cum_realized_pnl = 0.0
     trade_id = 1
 
@@ -136,7 +165,9 @@ def backtest_with_agent():
 
         # 智能体的输入是百分比，例如 1 表示 1%
         current_position_pct *= 100.0
-        print("Agent input:", date_iso, "current_position_pct(%) =", current_position_pct)
+        print(
+            "Agent input:", date_iso, "current_position_pct(%) =", current_position_pct
+        )
 
         result = trade_agent.run(TICKER, date_iso, current_position_pct)
         action = str(result.get("Action", "HOLD")).upper()
@@ -144,8 +175,16 @@ def backtest_with_agent():
         # raw 和 target的区别，raw是百分比，target是-1到1的数
         target_pos_pct = raw_target_pct / 100.0
         target_pos_pct = max(min(target_pos_pct, 1.0), -1.0)
-        print("Agent output:", date_iso, "action =", action,
-              "raw_target_pct =", raw_target_pct, "=> target_pos_pct =", target_pos_pct)
+        print(
+            "Agent output:",
+            date_iso,
+            "action =",
+            action,
+            "raw_target_pct =",
+            raw_target_pct,
+            "=> target_pos_pct =",
+            target_pos_pct,
+        )
 
         pm_report = result.get("PM_report", "")
         save_agent_csv(TICKER, date_iso, pm_report, action, target_pos_pct)
@@ -153,7 +192,7 @@ def backtest_with_agent():
         # === 交易执行 / Order execution ===
         trade_executed = False
         realized_pnl = 0.0
-        position_value_before = position_value
+        _position_value_before = position_value
         equity_before = equity
 
         if action in ["BUY", "SELL"] and equity_before > 0:
@@ -166,7 +205,11 @@ def backtest_with_agent():
                 side = "BUY" if trade_shares > 0 else "SELL"
 
                 # 滑点：买入加价，卖出减价
-                exec_price = close_price * (1 + SLIPPAGE) if side == "BUY" else close_price * (1 - SLIPPAGE)
+                exec_price = (
+                    close_price * (1 + SLIPPAGE)
+                    if side == "BUY"
+                    else close_price * (1 - SLIPPAGE)
+                )
 
                 # 带符号的成交金额：买入为正（现金流出），卖出为负（现金流入）
                 signed_trade_value = exec_price * trade_shares
@@ -194,7 +237,9 @@ def backtest_with_agent():
                         total_before = abs(pos_before)
                         total_after = abs(pos_before + trade_shares)
 
-                        total_cost = avg_cost * total_before + exec_price * abs(trade_shares)
+                        total_cost = avg_cost * total_before + exec_price * abs(
+                            trade_shares
+                        )
                         avg_cost = total_cost / total_after
                         position = pos_before + trade_shares
 
@@ -228,19 +273,21 @@ def backtest_with_agent():
                 cash -= fee
 
                 # 写入交易明细
-                append_trade_row({
-                    "trade_id": trade_id,
-                    "date": current_date.strftime("%Y-%m-%d"),
-                    "time": "15:59:00",
-                    "ticker": TICKER,
-                    "side": side,
-                    "quantity": abs(trade_shares),
-                    "price": round(exec_price, 4),
-                    "fee": round(fee, 4),
-                    "slippage": round(slippage_cost, 4),
-                    "trade_value": round(exec_price * abs(trade_shares), 4),
-                    "realized_pnl": round(realized_pnl, 4)
-                })
+                append_trade_row(
+                    {
+                        "trade_id": trade_id,
+                        "date": current_date.strftime("%Y-%m-%d"),
+                        "time": "15:59:00",
+                        "ticker": TICKER,
+                        "side": side,
+                        "quantity": abs(trade_shares),
+                        "price": round(exec_price, 4),
+                        "fee": round(fee, 4),
+                        "slippage": round(slippage_cost, 4),
+                        "trade_value": round(exec_price * abs(trade_shares), 4),
+                        "realized_pnl": round(realized_pnl, 4),
+                    }
+                )
                 trade_executed = True
                 trade_id += 1
 
@@ -257,27 +304,28 @@ def backtest_with_agent():
             unrealized_pnl = 0.0
 
         # 写入每日组合状态
-        append_portfolio_row({
-            "date": current_date.strftime("%Y-%m-%d"),
-            "ticker": TICKER,
-            "close": round(close_price, 4),
-            "cash": round(cash, 4),
-            "position_shares": position,
-            "position_value": round(position_value_after, 4),
-            "equity": round(equity_after, 4),
-            "unrealized_pnl": round(unrealized_pnl, 4),
-            "cum_realized_pnl": round(cum_realized_pnl, 4),
-            "trade_executed": int(trade_executed),
-            # 注意：current_position_pct 这里仍然是“百分比”形式（例如 100 = 100%）
-            "current_position_pct_input": round(current_position_pct, 4),
-            # 输出的是 -1~1 范围的小数比例，便于区分多空
-            "target_position_pct_output": round(target_pos_pct, 4),
-            "action": action
-        })
+        append_portfolio_row(
+            {
+                "date": current_date.strftime("%Y-%m-%d"),
+                "ticker": TICKER,
+                "close": round(close_price, 4),
+                "cash": round(cash, 4),
+                "position_shares": position,
+                "position_value": round(position_value_after, 4),
+                "equity": round(equity_after, 4),
+                "unrealized_pnl": round(unrealized_pnl, 4),
+                "cum_realized_pnl": round(cum_realized_pnl, 4),
+                "trade_executed": int(trade_executed),
+                # 注意：current_position_pct 这里仍然是“百分比”形式（例如 100 = 100%）
+                "current_position_pct_input": round(current_position_pct, 4),
+                # 输出的是 -1~1 范围的小数比例，便于区分多空
+                "target_position_pct_output": round(target_pos_pct, 4),
+                "action": action,
+            }
+        )
 
     print("Backtest finished — daily CSV updated incrementally.")
 
 
 if __name__ == "__main__":
     backtest_with_agent()
-

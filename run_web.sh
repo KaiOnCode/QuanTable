@@ -4,16 +4,18 @@
 echo "🚀 启动 IntelliFin Assistant Web 界面..."
 echo ""
 
-# 检查虚拟环境
-if [ ! -d "venv" ]; then
-    echo "❌ 未找到虚拟环境，正在创建..."
-    python3 -m venv venv
-    echo "✅ 虚拟环境创建完成"
-    echo ""
-    echo "📦 安装依赖..."
-    ./venv/bin/pip install -r requirements.txt
-    ./venv/bin/pip install streamlit plotly
-    echo "✅ 依赖安装完成"
+# 检查 uv
+if ! command -v uv >/dev/null 2>&1; then
+    echo "❌ 未检测到 uv，请先安装 uv 后再运行本脚本。"
+    echo "安装说明: https://docs.astral.sh/uv/getting-started/installation/"
+    exit 1
+fi
+
+# 首次初始化项目环境
+if [ ! -d ".venv" ]; then
+    echo "📦 未找到项目环境，正在初始化..."
+    uv sync || exit 1
+    echo "✅ 项目环境初始化完成"
     echo ""
 fi
 
@@ -28,5 +30,5 @@ fi
 echo "🌐 正在启动 Web 服务器..."
 echo "浏览器将自动打开 http://localhost:8501"
 echo ""
-./venv/bin/streamlit run streamlit_app.py
+uv run streamlit run streamlit_app.py
 
