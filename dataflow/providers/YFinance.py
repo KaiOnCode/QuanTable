@@ -1,18 +1,19 @@
 # dataflow/providers/YFinance.py
-import yfinance as yf
+import math
+from datetime import datetime, timedelta
+from typing import Any, Dict, Optional
+
 import pandas as pd
 import pandas_ta as ta
-from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional
-import math
+import yfinance as yf
 
 
 def _get_price_history(
-        ticker: str,
-        lookback_days: int,
-        interval: str = "1d",
-        # 更改：接受一个可选的 datetime 对象
-        end_date_dt: Optional[datetime] = None
+    ticker: str,
+    lookback_days: int,
+    interval: str = "1d",
+    # 更改：接受一个可选的 datetime 对象
+    end_date_dt: Optional[datetime] = None,
 ) -> pd.DataFrame:
     """辅助函数：获取原始价格历史并清理"""
     t = yf.Ticker(ticker)
@@ -22,39 +23,48 @@ def _get_price_history(
     start_date = end_date - timedelta(days=lookback_days)
 
     # +100天是为了给技术指标计算留足缓冲期
-    df = t.history(start=start_date - timedelta(days=100), end=end_date, interval=interval)
+    df = t.history(
+        start=start_date - timedelta(days=100), end=end_date, interval=interval
+    )
 
     if df is None or df.empty:
         return pd.DataFrame()
 
-    df = df.rename(columns={
-        "Open": "open", "High": "high", "Low": "low", "Close": "close", "Volume": "volume"
-    })
+    df = df.rename(
+        columns={
+            "Open": "open",
+            "High": "high",
+            "Low": "low",
+            "Close": "close",
+            "Volume": "volume",
+        }
+    )
     df.index = pd.to_datetime(df.index).tz_localize(None)
     df = df[["open", "high", "low", "close", "volume"]].reset_index(names="date")
     return df
+
 
 def df_get_prices(
     ticker: str,
     lookback_days: int,
     # 更改：添加可选的 end_date 参数 (ISO 格式字符串)
-    end_date: Optional[str] = None
+    end_date: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     在线获取OHLCV - 匹配 agent_design v1.0 规范 [cite: 127, 138]
     """
     t = yf.Ticker(ticker)
     try:
-        tz = t.info.get('exchangeTimezoneName', 'America/New_York')
+        tz = t.info.get("exchangeTimezoneName", "America/New_York")
     except Exception:
-        tz = 'America/New_York'  # 兜底
+        tz = "America/New_York"  # 兜底
 
     # 更改：解析 end_date 字符串
     end_date_dt: Optional[datetime] = None
     if end_date:
         try:
             # 假设 end_date 是 "YYYY-MM-DDTHH:MM:SSZ" 格式
-            end_date_dt = datetime.fromisoformat(end_date.rstrip('Z'))
+            end_date_dt = datetime.fromisoformat(end_date.rstrip("Z"))
         except ValueError:
             print(f"[yfinance] 无法解析 end_date: {end_date}. 回退到最新时间。")
 
@@ -64,31 +74,29 @@ def df_get_prices(
 
     # 更改：cutoff_date 现在基于 end_date
     cutoff_date = (end_date_dt or datetime.utcnow()) - timedelta(days=lookback_days)
-    df = df[df['date'] >= cutoff_date]
+    df = df[df["date"] >= cutoff_date]
 
     rows = []
     for row in df.itertuples():
-        rows.append({
-            "ts": row.date.isoformat() + "Z",  # 匹配规范 [cite: 144]
-            "o": row.open,
-            "h": row.high,
-            "l": row.low,
-            "c": row.close,
-            "v": row.volume
-        })
+        rows.append(
+            {
+                "ts": row.date.isoformat() + "Z",  # 匹配规范 [cite: 144]
+                "o": row.open,
+                "h": row.high,
+                "l": row.low,
+                "c": row.close,
+                "v": row.volume,
+            }
+        )
 
-    return {
-        "ticker": ticker,
-        "tz": tz,
-        "rows": rows
-    }
+    return {"ticker": ticker, "tz": tz, "rows": rows}
 
 
 def df_get_indicators(
     ticker: str,
     lookback_days: int,
     # 更改：添加可选的 end_date 参数
-    end_date: Optional[str] = None
+    end_date: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     计算并获取技术指标 - 匹配 agent_design v1.0 规范
@@ -97,7 +105,7 @@ def df_get_indicators(
     end_date_dt: Optional[datetime] = None
     if end_date:
         try:
-            end_date_dt = datetime.fromisoformat(end_date.rstrip('Z'))
+            end_date_dt = datetime.fromisoformat(end_date.rstrip("Z"))
         except ValueError:
             print(f"[yfinance] 无法解析 end_date: {end_date}. 回退到最新时间。")
 
@@ -106,12 +114,20 @@ def df_get_indicators(
     if df_prices.empty or len(df_prices) < 50:  # 确保有足够数据
         return {}
 
-    # 1. 使用 pandas-ta 计算指标
-    df_prices.ta.rsi(length=14, append=True)
-    df_prices.ta.macd(fast=12, slow=26, signal=9, append=True)
-    df_prices.ta.sma(length=20, append=True)
-    df_prices.ta.sma(length=50, append=True)
-    df_prices.ta.atr(length=20, append=True)
+    # 显式调用 pandas_ta，避免依赖 DataFrame.ta accessor 的隐式注册。
+    df_prices["RSI_14"] = ta.rsi(df_prices["close"], length=14)
+    df_prices["SMA_20"] = ta.sma(df_prices["close"], length=20)
+    df_prices["SMA_50"] = ta.sma(df_prices["close"], length=50)
+    df_prices["ATRr_20"] = ta.atr(
+        high=df_prices["high"],
+        low=df_prices["low"],
+        close=df_prices["close"],
+        length=20,
+    )
+
+    macd = ta.macd(df_prices["close"], fast=12, slow=26, signal=9)
+    if macd is not None:
+        df_prices = df_prices.join(macd)
 
     # 2. 获取最近的值
     latest = df_prices.iloc[-1]
@@ -120,15 +136,22 @@ def df_get_indicators(
     # 3. 计算支撑/阻力 (简易实现)
     # TODO: 替换为更复杂的算法，例如 pivot points
     window_df = df_prices.iloc[-30:]  # 近30天
-    support = window_df['low'].min()
-    resistance = window_df['high'].max()
+    support = window_df["low"].min()
+    resistance = window_df["high"].max()
 
     # 4. 检查 MACD 信号线交叉 [cite: 50]
     signal_cross = False
-    if not (math.isnan(latest['MACD_12_26_9']) or math.isnan(latest['MACDs_12_26_9']) or
-            math.isnan(prev['MACD_12_26_9']) or math.isnan(prev['MACDs_12_26_9'])):
+    if not (
+        math.isnan(latest["MACD_12_26_9"])
+        or math.isnan(latest["MACDs_12_26_9"])
+        or math.isnan(prev["MACD_12_26_9"])
+        or math.isnan(prev["MACDs_12_26_9"])
+    ):
         # 简易金叉检测
-        if latest['MACD_12_26_9'] > latest['MACDs_12_26_9'] and prev['MACD_12_26_9'] < prev['MACDs_12_26_9']:
+        if (
+            latest["MACD_12_26_9"] > latest["MACDs_12_26_9"]
+            and prev["MACD_12_26_9"] < prev["MACDs_12_26_9"]
+        ):
             signal_cross = True  # Bullish cross
         # 简易死叉检测
         # if latest['MACD_12_26_9'] < latest['MACDs_12_26_9'] and prev['MACD_12_26_9'] > prev['MACDs_12_26_9']:
@@ -136,29 +159,25 @@ def df_get_indicators(
 
     # 5. 组装成规范要求的JSON [cite: 48-55]
     indicators = {
-        "rsi14": latest.get('RSI_14'),
-        "macd": {
-            "hist": latest.get('MACDh_12_26_9'),
-            "signal_cross": signal_cross
-        },
-        "ma": {
-            "sma20": latest.get('SMA_20'),
-            "sma50": latest.get('SMA_50')
-        },
-        "atr20": latest.get('ATRr_20'),
-        "levels": {
-            "support": support,
-            "resistance": resistance
-        },
+        "rsi14": latest.get("RSI_14"),
+        "macd": {"hist": latest.get("MACDh_12_26_9"), "signal_cross": signal_cross},
+        "ma": {"sma20": latest.get("SMA_20"), "sma50": latest.get("SMA_50")},
+        "atr20": latest.get("ATRr_20"),
+        "levels": {"support": support, "resistance": resistance},
         "breakout": {
             # TODO: 实现突破逻辑 [cite: 54]
             "level": None,
-            "distance_pct": None
-        }
+            "distance_pct": None,
+        },
     }
     # 清理 None 和 NaN
-    indicators = {k: v for k, v in indicators.items() if v is not None and not (isinstance(v, float) and math.isnan(v))}
+    indicators = {
+        k: v
+        for k, v in indicators.items()
+        if v is not None and not (isinstance(v, float) and math.isnan(v))
+    }
     return indicators
+
 
 def df_get_fundamentals(ticker: str) -> dict:
     """
@@ -179,25 +198,23 @@ def df_get_fundamentals(ticker: str) -> dict:
 
         data = {
             "ttm": {
-                "pe": info.get('trailingPE'),
-                "pb": info.get('priceToBook'),
-                "ps": info.get('priceToSalesTrailing12Months'),
-                "ev_ebitda": info.get('enterpriseToEbitda'),
-                "eps": info.get('trailingEps'),
-                "gross_margin": to_pct('grossMargins'),
-                "op_margin": to_pct('operatingMargins')
+                "pe": info.get("trailingPE"),
+                "pb": info.get("priceToBook"),
+                "ps": info.get("priceToSalesTrailing12Months"),
+                "ev_ebitda": info.get("enterpriseToEbitda"),
+                "eps": info.get("trailingEps"),
+                "gross_margin": to_pct("grossMargins"),
+                "op_margin": to_pct("operatingMargins"),
             },
             "growth": {
-            # 'earningsGrowth' 对应 EPS YOY, 'revenueGrowth' 对应 Rev YOY
-            "eps_yoy": to_pct('earningsGrowth'),
-            "rev_yoy": to_pct('revenueGrowth')
+                # 'earningsGrowth' 对应 EPS YOY, 'revenueGrowth' 对应 Rev YOY
+                "eps_yoy": to_pct("earningsGrowth"),
+                "rev_yoy": to_pct("revenueGrowth"),
             },
-            "balance": {
-                "net_debt_to_ebitda": info.get('netDebtToEbitda')
-            },
+            "balance": {"net_debt_to_ebitda": info.get("netDebtToEbitda")},
             "sector_bench": {
-                "pe": info.get('sectorPERatio')  # yfinance 似乎没有行业 PB/PS
-            }
+                "pe": info.get("sectorPERatio")  # yfinance 似乎没有行业 PB/PS
+            },
         }
 
         # 清理空字典
@@ -220,8 +237,8 @@ def df_get_sector_context(ticker: str) -> Dict[str, Any]:
             return {}
 
         return {
-            "industry": info.get('industry'),
-            "style": None  # 'style' (e.g., "growth_duration") 不是 yfinance 的标准字段
+            "industry": info.get("industry"),
+            "style": None,  # 'style' (e.g., "growth_duration") 不是 yfinance 的标准字段
         }
     except Exception as e:
         print(f"[yfinance] Error fetching sector context for {ticker}: {e}")

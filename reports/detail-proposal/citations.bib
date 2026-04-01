@@ -1,0 +1,737 @@
+
+@misc{xiao_tradingagents:_2025,
+  title = {{TradingAgents}: {Multi}-{Agents} {LLM} {Financial}
+  {Trading} {Framework}},
+  shorttitle = {{TradingAgents}},
+  url = {http://arxiv.org/abs/2412.20138},
+  doi = {10.48550/arXiv.2412.20138},
+  abstract = {Significant progress has been made in automated
+    problem-solving using societies of agents powered by large language
+    models (LLMs). In finance, efforts have largely focused on
+    single-agent systems handling specific tasks or multi-agent
+    frameworks independently gathering data. However, the multi-agent
+    systems' potential to replicate real-world trading firms'
+    collaborative dynamics remains underexplored. TradingAgents
+    proposes a novel stock trading framework inspired by trading firms,
+    featuring LLM-powered agents in specialized roles such as
+    fundamental analysts, sentiment analysts, technical analysts, and
+    traders with varied risk profiles. The framework includes Bull and
+    Bear researcher agents assessing market conditions, a risk
+    management team monitoring exposure, and traders synthesizing
+    insights from debates and historical data to make informed
+    decisions. By simulating a dynamic, collaborative trading
+    environment, this framework aims to improve trading performance.
+    Detailed architecture and extensive experiments reveal its
+    superiority over baseline models, with notable improvements in
+    cumulative returns, Sharpe ratio, and maximum drawdown,
+    highlighting the potential of multi-agent LLM frameworks in
+    financial trading. TradingAgents is available at
+  https://github.com/TauricResearch/TradingAgents.},
+  urldate = {2026-03-25},
+  publisher = {arXiv},
+  author = {Xiao, Yijia and Sun, Edward and Luo, Di and Wang, Wei},
+  month = jun,
+  year = {2025},
+  note = {arXiv:2412.20138},
+  keywords = {Quantitative Finance - Trading and Market
+    Microstructure, Computer Science - Artificial Intelligence,
+    Computer Science - Computational Engineering, Finance, and Science,
+  Computer Science - Machine Learning},
+}
+
+@misc{yu_fincon:_2024,
+  title = {{FinCon}: {A} {Synthesized} {LLM} {Multi}-{Agent} {System}
+    with {Conceptual} {Verbal} {Reinforcement} for {Enhanced}
+  {Financial} {Decision} {Making}},
+  shorttitle = {{FinCon}},
+  url = {http://arxiv.org/abs/2407.06567},
+  doi = {10.48550/arXiv.2407.06567},
+  abstract = {Large language models (LLMs) have demonstrated notable
+    potential in conducting complex tasks and are increasingly utilized
+    in various financial applications. However, high-quality sequential
+    financial investment decision-making remains challenging. These
+    tasks require multiple interactions with a volatile environment for
+    every decision, demanding sufficient intelligence to maximize
+    returns and manage risks. Although LLMs have been used to develop
+    agent systems that surpass human teams and yield impressive
+    investment returns, opportunities to enhance multi-sourced
+    information synthesis and optimize decision-making outcomes through
+    timely experience refinement remain unexplored. Here, we introduce
+    the FinCon, an LLM-based multi-agent framework with CONceptual
+    verbal reinforcement tailored for diverse FINancial tasks. Inspired
+    by effective real-world investment firm organizational structures,
+    FinCon utilizes a manager-analyst communication hierarchy. This
+    structure allows for synchronized cross-functional agent
+    collaboration towards unified goals through natural language
+    interactions and equips each agent with greater memory capacity
+    than humans. Additionally, a risk-control component in FinCon
+    enhances decision quality by episodically initiating a
+    self-critiquing mechanism to update systematic investment beliefs.
+    The conceptualized beliefs serve as verbal reinforcement for the
+    future agent's behavior and can be selectively propagated to the
+    appropriate node that requires knowledge updates. This feature
+    significantly improves performance while reducing unnecessary
+    peer-to-peer communication costs. Moreover, FinCon demonstrates
+    strong generalization capabilities in various financial tasks,
+  including single stock trading and portfolio management.},
+  urldate = {2026-03-25},
+  publisher = {arXiv},
+  author = {Yu, Yangyang and Yao, Zhiyuan and Li, Haohang and Deng,
+    Zhiyang and Cao, Yupeng and Chen, Zhi and Suchow, Jordan W. and
+    Liu, Rong and Cui, Zhenyu and Xu, Zhaozhuo and Zhang, Denghui and
+    Subbalakshmi, Koduvayur and Xiong, Guojun and He, Yueru and Huang,
+  Jimin and Li, Dong and Xie, Qianqian},
+  month = nov,
+  year = {2024},
+  note = {arXiv:2407.06567},
+  keywords = {Computer Science - Computation and Language},
+}
+
+@misc{tian_tradinggroup:_2025,
+  title = {{TradingGroup}: {A} {Multi}-{Agent} {Trading} {System}
+  with {Self}-{Reflection} and {Data}-{Synthesis}},
+  shorttitle = {{TradingGroup}},
+  url = {http://arxiv.org/abs/2508.17565},
+  doi = {10.48550/arXiv.2508.17565},
+  abstract = {Recent advancements in large language models (LLMs)
+    have enabled powerful agent-based applications in finance,
+    particularly for sentiment analysis, financial report
+    comprehension, and stock forecasting. However, existing systems
+    often lack inter-agent coordination, structured self-reflection,
+    and access to high-quality, domain-specific post-training data such
+    as data from trading activities including both market conditions
+    and agent decisions. These data are crucial for agents to
+    understand the market dynamics, improve the quality of
+    decision-making and promote effective coordination. We introduce
+    TradingGroup, a multi-agent trading system designed to address
+    these limitations through a self-reflective architecture and an
+    end-to-end data-synthesis pipeline. TradingGroup consists of
+    specialized agents for news sentiment analysis, financial report
+    interpretation, stock trend forecasting, trading style adaptation,
+    and a trading decision making agent that merges all signals and
+    style preferences to produce buy, sell or hold decisions.
+    Specifically, we design self-reflection mechanisms for the stock
+    forecasting, style, and decision-making agents to distill past
+    successes and failures for similar reasoning in analogous future
+    scenarios and a dynamic risk-management model to offer configurable
+    dynamic stop-loss and take-profit mechanisms. In addition,
+    TradingGroup embeds an automated data-synthesis and annotation
+    pipeline that generates high-quality post-training data for further
+    improving the agent performance through post-training. Our
+    backtesting experiments across five real-world stock datasets
+    demonstrate TradingGroup's superior performance over rule-based,
+    machine learning, reinforcement learning, and existing LLM-based
+  trading strategies.},
+  urldate = {2026-03-25},
+  publisher = {arXiv},
+  author = {Tian, Feng and Salim, Flora D. and Xue, Hao},
+  month = aug,
+  year = {2025},
+  note = {arXiv:2508.17565},
+  keywords = {Computer Science - Artificial Intelligence},
+}
+
+@misc{yu_finmem:_2023,
+  title = {{FinMem}: {A} {Performance}-{Enhanced} {LLM} {Trading}
+  {Agent} with {Layered} {Memory} and {Character} {Design}},
+  shorttitle = {{FinMem}},
+  url = {http://arxiv.org/abs/2311.13743},
+  doi = {10.48550/arXiv.2311.13743},
+  abstract = {Recent advancements in Large Language Models (LLMs)
+    have exhibited notable efficacy in question-answering (QA) tasks
+    across diverse domains. Their prowess in integrating extensive web
+    knowledge has fueled interest in developing LLM-based autonomous
+    agents. While LLMs are efficient in decoding human instructions and
+    deriving solutions by holistically processing historical inputs,
+    transitioning to purpose-driven agents requires a supplementary
+    rational architecture to process multi-source information,
+    establish reasoning chains, and prioritize critical tasks.
+    Addressing this, we introduce {\textbackslash}textsc\{FinMem\}, a
+    novel LLM-based agent framework devised for financial
+    decision-making. It encompasses three core modules: Profiling, to
+    customize the agent's characteristics; Memory, with layered message
+    processing, to aid the agent in assimilating hierarchical financial
+    data; and Decision-making, to convert insights gained from memories
+    into investment decisions. Notably,
+    {\textbackslash}textsc\{FinMem\}'s memory module aligns closely
+    with the cognitive structure of human traders, offering robust
+    interpretability and real-time tuning. Its adjustable cognitive
+    span allows for the retention of critical information beyond human
+    perceptual limits, thereby enhancing trading outcomes. This
+    framework enables the agent to self-evolve its professional
+    knowledge, react agilely to new investment cues, and continuously
+    refine trading decisions in the volatile financial environment. We
+    first compare {\textbackslash}textsc\{FinMem\} with various
+    algorithmic agents on a scalable real-world financial dataset,
+    underscoring its leading trading performance in stocks. We then
+    fine-tuned the agent's perceptual span and character setting to
+    achieve a significantly enhanced trading performance. Collectively,
+    {\textbackslash}textsc\{FinMem\} presents a cutting-edge LLM agent
+  framework for automated trading, boosting cumulative investment returns.},
+  urldate = {2026-03-25},
+  publisher = {arXiv},
+  author = {Yu, Yangyang and Li, Haohang and Chen, Zhi and Jiang,
+    Yuechen and Li, Yang and Zhang, Denghui and Liu, Rong and Suchow,
+  Jordan W. and Khashanah, Khaldoun},
+  month = dec,
+  year = {2023},
+  note = {arXiv:2311.13743},
+  keywords = {Quantitative Finance - Computational Finance, Computer
+    Science - Artificial Intelligence, Computer Science - Computational
+  Engineering, Finance, and Science, Computer Science - Machine Learning},
+}
+
+@article{fatouros_can_2025,
+  title = {Can {Large} {Language} {Models} beat wall street?
+    {Evaluating} {GPT}-4’s impact on financial decision-making with
+  {MarketSenseAI}},
+  volume = {37},
+  issn = {0941-0643, 1433-3058},
+  shorttitle = {Can {Large} {Language} {Models} beat wall street?},
+  url = {https://link.springer.com/10.1007/s00521-024-10613-4},
+  doi = {10.1007/s00521-024-10613-4},
+  language = {en},
+  number = {30},
+  urldate = {2026-03-25},
+  journal = {Neural Computing and Applications},
+  author = {Fatouros, George and Metaxas, Kostas and Soldatos, John
+  and Kyriazis, Dimosthenis},
+  month = oct,
+  year = {2025},
+  pages = {24893--24918},
+}
+
+@misc{wu_bloomberggpt:_2023,
+  title = {{BloombergGPT}: {A} {Large} {Language} {Model} for {Finance}},
+  shorttitle = {{BloombergGPT}},
+  url = {http://arxiv.org/abs/2303.17564},
+  doi = {10.48550/arXiv.2303.17564},
+  abstract = {The use of NLP in the realm of financial technology is
+    broad and complex, with applications ranging from sentiment
+    analysis and named entity recognition to question answering. Large
+    Language Models (LLMs) have been shown to be effective on a variety
+    of tasks; however, no LLM specialized for the financial domain has
+    been reported in literature. In this work, we present BloombergGPT,
+    a 50 billion parameter language model that is trained on a wide
+    range of financial data. We construct a 363 billion token dataset
+    based on Bloomberg's extensive data sources, perhaps the largest
+    domain-specific dataset yet, augmented with 345 billion tokens from
+    general purpose datasets. We validate BloombergGPT on standard LLM
+    benchmarks, open financial benchmarks, and a suite of internal
+    benchmarks that most accurately reflect our intended usage. Our
+    mixed dataset training leads to a model that outperforms existing
+    models on financial tasks by significant margins without
+    sacrificing performance on general LLM benchmarks. Additionally, we
+    explain our modeling choices, training process, and evaluation
+    methodology. We release Training Chronicles (Appendix C) detailing
+  our experience in training BloombergGPT.},
+  urldate = {2026-03-25},
+  publisher = {arXiv},
+  author = {Wu, Shijie and Irsoy, Ozan and Lu, Steven and
+    Dabravolski, Vadim and Dredze, Mark and Gehrmann, Sebastian and
+  Kambadur, Prabhanjan and Rosenberg, David and Mann, Gideon},
+  month = dec,
+  year = {2023},
+  note = {arXiv:2303.17564},
+  keywords = {Computer Science - Machine Learning, Computer Science -
+    Artificial Intelligence, Computer Science - Computation and
+  Language, Quantitative Finance - General Finance},
+}
+
+@misc{yang_fingpt:_2025,
+  title = {{FinGPT}: {Open}-{Source} {Financial} {Large} {Language} {Models}},
+  shorttitle = {{FinGPT}},
+  url = {http://arxiv.org/abs/2306.06031},
+  doi = {10.48550/arXiv.2306.06031},
+  abstract = {Large language models (LLMs) have shown the potential
+    of revolutionizing natural language processing tasks in diverse
+    domains, sparking great interest in finance. Accessing high-quality
+    financial data is the first challenge for financial LLMs (FinLLMs).
+    While proprietary models like BloombergGPT have taken advantage of
+    their unique data accumulation, such privileged access calls for an
+    open-source alternative to democratize Internet-scale financial
+    data. In this paper, we present an open-source large language
+    model, FinGPT, for the finance sector. Unlike proprietary models,
+    FinGPT takes a data-centric approach, providing researchers and
+    practitioners with accessible and transparent resources to develop
+    their FinLLMs. We highlight the importance of an automatic data
+    curation pipeline and the lightweight low-rank adaptation technique
+    in building FinGPT. Furthermore, we showcase several potential
+    applications as stepping stones for users, such as robo-advising,
+    algorithmic trading, and low-code development. Through
+    collaborative efforts within the open-source AI4Finance community,
+    FinGPT aims to stimulate innovation, democratize FinLLMs, and
+    unlock new opportunities in open finance. Two associated code repos
+    are https://github.com/AI4Finance-Foundation/FinGPT and
+  https://github.com/AI4Finance-Foundation/FinNLP},
+  urldate = {2026-03-25},
+  publisher = {arXiv},
+  author = {Yang, Hongyang and Liu, Xiao-Yang and Wang, Christina Dan},
+  month = nov,
+  year = {2025},
+  note = {arXiv:2306.06031},
+  keywords = {Quantitative Finance - Statistical Finance, Computer
+    Science - Computation and Language, Computer Science - Machine
+  Learning, Quantitative Finance - Trading and Market Microstructure},
+}
+
+@misc{fu_new_2025,
+  title = {The {New} {Quant}: {A} {Survey} of {Large} {Language}
+  {Models} in {Financial} {Prediction} and {Trading}},
+  shorttitle = {The {New} {Quant}},
+  url = {http://arxiv.org/abs/2510.05533},
+  doi = {10.48550/arXiv.2510.05533},
+  abstract = {Large language models are reshaping quantitative
+    investing by turning unstructured financial information into
+    evidence-grounded signals and executable decisions. This survey
+    synthesizes research with a focus on equity return prediction and
+    trading, consolidating insights from domain surveys and more than
+    fifty primary studies. We propose a task-centered taxonomy that
+    spans sentiment and event extraction, numerical and economic
+    reasoning, multimodal understanding, retrieval-augmented
+    generation, time series prompting, and agentic systems that
+    coordinate tools for research, backtesting, and execution. We
+    review empirical evidence for predictability, highlight design
+    patterns that improve faithfulness such as retrieval first
+    prompting and tool-verified numerics, and explain how signals feed
+    portfolio construction under exposure, turnover, and capacity
+    controls. We assess benchmarks and datasets for prediction and
+    trading and outline desiderata-for time safe and economically
+    meaningful evaluation that reports costs, latency, and capacity. We
+    analyze challenges that matter in production, including temporal
+    leakage, hallucination, data coverage and structure, deployment
+    economics, interpretability, governance, and safety. The survey
+    closes with recommendations for standardizing evaluation, building
+    auditable pipelines, and advancing multilingual and cross-market
+    research so that language-driven systems deliver robust and
+  risk-controlled performance in practice.},
+  urldate = {2026-03-25},
+  publisher = {arXiv},
+  author = {Fu, Weilong},
+  month = oct,
+  year = {2025},
+  note = {arXiv:2510.05533},
+  keywords = {Quantitative Finance - Portfolio Management},
+}
+
+@inproceedings{zhang_unifying_2025,
+  address = {Vienna, Austria},
+  title = {Unifying {Language} {Agent} {Algorithms} with
+  {Graph}-based {Orchestration} {Engine} for {Reproducible} {Agent} {Research}},
+  url = {https://aclanthology.org/2025.acl-demo.11},
+  doi = {10.18653/v1/2025.acl-demo.11},
+  language = {en},
+  urldate = {2026-03-25},
+  booktitle = {Proceedings of the 63rd {Annual} {Meeting} of the
+    {Association} for {Computational} {Linguistics} ({Volume} 3:
+  {System} {Demonstrations})},
+  publisher = {Association for Computational Linguistics},
+  author = {Zhang, Qianqian and Liao, Jiajia and Ying, Heting and Ma,
+    Yibo and Shen, Haozhan and Li, Jingcheng and Liu, Peng and Zhang,
+  Lu and Fang, Chunxin and Lee, Kyusong and Xu, Ruochen and Zhao, Tiancheng},
+  year = {2025},
+  pages = {107--117},
+}
+
+@inproceedings{zhang_multimodal_2024,
+  address = {Barcelona Spain},
+  title = {A {Multimodal} {Foundation} {Agent} for {Financial}
+  {Trading}: {Tool}-{Augmented}, {Diversified}, and {Generalist}},
+  isbn = {9798400704901},
+  shorttitle = {A {Multimodal} {Foundation} {Agent} for {Financial} {Trading}},
+  url = {https://dl.acm.org/doi/10.1145/3637528.3671801},
+  doi = {10.1145/3637528.3671801},
+  language = {en},
+  urldate = {2026-03-25},
+  booktitle = {Proceedings of the 30th {ACM} {SIGKDD} {Conference} on
+  {Knowledge} {Discovery} and {Data} {Mining}},
+  publisher = {ACM},
+  author = {Zhang, Wentao and Zhao, Lingxuan and Xia, Haochong and
+    Sun, Shuo and Sun, Jiaze and Qin, Molei and Li, Xinyi and Zhao,
+    Yuqing and Zhao, Yilei and Cai, Xinyu and Zheng, Longtao and Wang,
+  Xinrun and An, Bo},
+  month = aug,
+  year = {2024},
+  pages = {4314--4325},
+}
+
+@inproceedings{dong_large_2025,
+  address = {Suzhou, China},
+  title = {Large {Language} {Model} {Agents} in {Finance}: {A}
+  {Survey} {Bridging} {Research}, {Practice}, and {Real}-{World} {Deployment}},
+  shorttitle = {Large {Language} {Model} {Agents} in {Finance}},
+  url = {https://aclanthology.org/2025.findings-emnlp.972},
+  doi = {10.18653/v1/2025.findings-emnlp.972},
+  language = {en},
+  urldate = {2026-03-25},
+  booktitle = {Findings of the {Association} for {Computational}
+  {Linguistics}: {EMNLP} 2025},
+  publisher = {Association for Computational Linguistics},
+  author = {Dong, Yifei and Wu, Fengyi and Zhang, Kunlin and Dai,
+  Yilong and Zhang, Sanjian and Ye, Wanghao and Chen, Sihan and Cheng, Zhi-Qi},
+  year = {2025},
+  pages = {17889--17907},
+}
+
+@article{pippas_evolution_2025,
+  title = {The {Evolution} of {Reinforcement} {Learning} in
+  {Quantitative} {Finance}: {A} {Survey}},
+  volume = {57},
+  issn = {0360-0300, 1557-7341},
+  shorttitle = {The {Evolution} of {Reinforcement} {Learning} in
+  {Quantitative} {Finance}},
+  url = {https://dl.acm.org/doi/10.1145/3733714},
+  doi = {10.1145/3733714},
+  abstract = {Reinforcement Learning (RL) has experienced significant
+    advancement over the past decade, prompting a growing interest in
+    applications within finance. This survey critically evaluates 167
+    publications, exploring diverse RL applications and frameworks in
+    finance. Financial markets, marked by their complexity, multi-agent
+    nature, information asymmetry, and inherent randomness, serve as an
+    intriguing test-bed for RL. Traditional finance offers certain
+    solutions, and RL advances these with a more dynamic approach,
+    incorporating machine learning methods, including transfer
+    learning, meta-learning, and multi-agent solutions. This survey
+    dissects key RL components through the lens of Quantitative
+    Finance. We uncover emerging themes, propose areas for future
+  research, and critique the strengths and weaknesses of existing methods.},
+  language = {en},
+  number = {11},
+  urldate = {2026-03-25},
+  journal = {ACM Computing Surveys},
+  author = {Pippas, Nikolaos and Ludvig, Elliot A. and Turkay, Cagatay},
+  month = nov,
+  year = {2025},
+  pages = {1--51},
+}
+
+@article{de-la-rica-escudero_explainable_2025,
+  title = {Explainable post hoc portfolio management financial policy
+  of a {Deep} {Reinforcement} {Learning} agent},
+  volume = {20},
+  issn = {1932-6203},
+  url = {https://dx.plos.org/10.1371/journal.pone.0315528},
+  doi = {10.1371/journal.pone.0315528},
+  abstract = {Financial portfolio management investment policies
+    computed quantitatively by modern portfolio theory techniques like
+    the Markowitz model rely on a set of assumptions that are not
+    supported by data in high volatility markets such as the
+    technological sector or cryptocurrencies. Hence, quantitative
+    researchers are looking for alternative models to tackle this
+    problem. Concretely, portfolio management (PM) is a problem that
+    has been successfully addressed recently by Deep Reinforcement
+    Learning (DRL) approaches. In particular, DRL algorithms train an
+    agent by estimating the distribution of the expected reward of
+    every action performed by an agent given any financial state in a
+    simulator, also called gymnasium. However, these methods rely on
+    Deep Neural Networks model to represent such a distribution, that
+    although they are universal approximator models, capable of
+    representing this distribution over time, they cannot explain its
+    behaviour, given by a set of parameters that are not interpretable.
+    Critically, financial investors policies require predictions to be
+    interpretable, to assess whether they follow a reasonable
+    behaviour, so DRL agents are not suited to follow a particular
+    policy or explain their actions. In this work, driven by the
+    motivation of making DRL explainable, we developed a novel
+    Explainable DRL (XDRL) approach for PM, integrating the Proximal
+    Policy Optimization (PPO) DRL algorithm with the model agnostic
+    explainable machine learning techniques of feature importance, SHAP
+    and LIME to enhance transparency in prediction time. By executing
+    our methodology, we can interpret in prediction time the actions of
+    the agent to assess whether they follow the requisites of an
+    investment policy or to assess the risk of following the agent’s
+    suggestions. We empirically illustrate it by successfully
+    identifying key features influencing investment decisions, which
+    demonstrate the ability to explain the agent actions in prediction
+    time. We propose the first explainable post hoc PM financial policy
+  of a DRL agent.},
+  language = {en},
+  number = {1},
+  urldate = {2026-03-25},
+  journal = {PLOS ONE},
+  author = {de-la-Rica-Escudero, Alejandra and Garrido-Merchán,
+  Eduardo C. and Coronado-Vaca, María},
+  editor = {Saleem, Dr. Naeem},
+  month = jan,
+  year = {2025},
+  pages = {e0315528},
+}
+
+@misc{tatsat_beyond_2025,
+  title = {Beyond the {Black} {Box}: {Interpretability} of {LLMs} in {Finance}},
+  shorttitle = {Beyond the {Black} {Box}},
+  url = {http://arxiv.org/abs/2505.24650},
+  doi = {10.48550/arXiv.2505.24650},
+  abstract = {Large Language Models (LLMs) exhibit remarkable
+    capabilities across a spectrum of tasks in financial services,
+    including report generation, chatbots, sentiment analysis,
+    regulatory compliance, investment advisory, financial knowledge
+    retrieval, and summarization. However, their intrinsic complexity
+    and lack of transparency pose significant challenges, especially in
+    the highly regulated financial sector, where interpretability,
+    fairness, and accountability are critical. As far as we are aware,
+    this paper presents the first application in the finance domain of
+    understanding and utilizing the inner workings of LLMs through
+    mechanistic interpretability, addressing the pressing need for
+    transparency and control in AI systems. Mechanistic
+    interpretability is the most intuitive and transparent way to
+    understand LLM behavior by reverse-engineering their internal
+    workings. By dissecting the activations and circuits within these
+    models, it provides insights into how specific features or
+    components influence predictions - making it possible not only to
+    observe but also to modify model behavior. In this paper, we
+    explore the theoretical aspects of mechanistic interpretability and
+    demonstrate its practical relevance through a range of financial
+    use cases and experiments, including applications in trading
+    strategies, sentiment analysis, bias, and hallucination detection.
+    While not yet widely adopted, mechanistic interpretability is
+    expected to become increasingly vital as adoption of LLMs
+    increases. Advanced interpretability tools can ensure AI systems
+    remain ethical, transparent, and aligned with evolving financial
+    regulations. In this paper, we have put special emphasis on how
+    these techniques can help unlock interpretability requirements for
+    regulatory and compliance purposes - addressing both current needs
+  and anticipating future expectations from financial regulators globally.},
+  urldate = {2026-03-25},
+  publisher = {arXiv},
+  author = {Tatsat, Hariom and Shater, Ariye},
+  month = may,
+  year = {2025},
+  note = {arXiv:2505.24650},
+  keywords = {Computer Science - Computational Engineering, Finance,
+    and Science, Computer Science - Machine Learning, Quantitative
+  Finance - Statistical Finance},
+}
+
+@inproceedings{wang_modeling_2024,
+  address = {Miami, Florida, USA},
+  title = {Modeling {News} {Interactions} and {Influence} for
+  {Financial} {Market} {Prediction}},
+  url = {https://aclanthology.org/2024.findings-emnlp.189},
+  doi = {10.18653/v1/2024.findings-emnlp.189},
+  language = {en},
+  urldate = {2026-03-25},
+  booktitle = {Findings of the {Association} for {Computational}
+  {Linguistics}: {EMNLP} 2024},
+  publisher = {Association for Computational Linguistics},
+  author = {Wang, Mengyu and Cohen, Shay B and Ma, Tiejun},
+  year = {2024},
+  pages = {3302--3314},
+}
+
+@misc{yuan_alpha-gpt_2024,
+  title = {Alpha-{GPT} 2.0: {Human}-in-the-{Loop} {AI} for
+  {Quantitative} {Investment}},
+  shorttitle = {Alpha-{GPT} 2.0},
+  url = {http://arxiv.org/abs/2402.09746},
+  doi = {10.48550/arXiv.2402.09746},
+  abstract = {Recently, we introduced a new paradigm for alpha mining
+    in the realm of quantitative investment, developing a new
+    interactive alpha mining system framework, Alpha-GPT. This system
+    is centered on iterative Human-AI interaction based on large
+    language models, introducing a Human-in-the-Loop approach to alpha
+    discovery. In this paper, we present the next-generation Alpha-GPT
+    2.0 {\textbackslash}footnote\{Draft. Work in progress\}, a
+    quantitative investment framework that further encompasses crucial
+    modeling and analysis phases in quantitative investment. This
+    framework emphasizes the iterative, interactive research between
+    humans and AI, embodying a Human-in-the-Loop strategy throughout
+    the entire quantitative investment pipeline. By assimilating the
+    insights of human researchers into the systematic alpha research
+    process, we effectively leverage the Human-in-the-Loop approach,
+  enhancing the efficiency and precision of quantitative investment research.},
+  urldate = {2026-03-25},
+  publisher = {arXiv},
+  author = {Yuan, Hang and Wang, Saizhuo and Guo, Jian},
+  month = feb,
+  year = {2024},
+  note = {arXiv:2402.09746},
+  keywords = {Quantitative Finance - Computational Finance, Computer
+  Science - Artificial Intelligence},
+}
+
+@misc{yang_finrobot:_2024,
+  title = {{FinRobot}: {An} {Open}-{Source} {AI} {Agent} {Platform}
+  for {Financial} {Applications} using {Large} {Language} {Models}},
+  shorttitle = {{FinRobot}},
+  url = {http://arxiv.org/abs/2405.14767},
+  doi = {10.48550/arXiv.2405.14767},
+  abstract = {As financial institutions and professionals increasingly
+    incorporate Large Language Models (LLMs) into their workflows,
+    substantial barriers, including proprietary data and specialized
+    knowledge, persist between the finance sector and the AI community.
+    These challenges impede the AI community's ability to enhance
+    financial tasks effectively. Acknowledging financial analysis's
+    critical role, we aim to devise financial-specialized LLM-based
+    toolchains and democratize access to them through open-source
+    initiatives, promoting wider AI adoption in financial
+    decision-making. In this paper, we introduce FinRobot, a novel
+    open-source AI agent platform supporting multiple financially
+    specialized AI agents, each powered by LLM. Specifically, the
+  platform consists of four major layers: 1) the Financial AI Agents
+  layer that formulates Financial Chain-of-Thought (CoT) by breaking
+sophisticated financial problems down into logical sequences; 2) the
+Financial LLM Algorithms layer dynamically configures appropriate
+model application strategies for specific tasks; 3) the LLMOps and
+DataOps layer produces accurate models by applying
+training/fine-tuning techniques and using task-relevant data; 4) the
+Multi-source LLM Foundation Models layer that integrates various LLMs
+and enables the above layers to access them directly. Finally,
+FinRobot provides hands-on for both professional-grade analysts and
+laypersons to utilize powerful AI techniques for advanced financial
+analysis. We open-source FinRobot at
+{\textbackslash}url\{https://github.com/AI4Finance-Foundation/FinRobot\}.},
+urldate = {2026-03-25},
+publisher = {arXiv},
+author = {Yang, Hongyang and Zhang, Boyu and Wang, Neng and Guo,
+Cheng and Zhang, Xiaoli and Lin, Likun and Wang, Junlin and Zhou,
+Tianyu and Guan, Mao and Zhang, Runjia and Wang, Christina Dan},
+month = may,
+year = {2024},
+note = {arXiv:2405.14767},
+keywords = {Quantitative Finance - Statistical Finance, Computer
+Science - Computation and Language, Computer Science - Machine
+Learning, Quantitative Finance - Trading and Market Microstructure},
+}
+
+@misc{li_alphafin:_2024,
+title = {{AlphaFin}: {Benchmarking} {Financial} {Analysis} with
+{Retrieval}-{Augmented} {Stock}-{Chain} {Framework}},
+shorttitle = {{AlphaFin}},
+url = {http://arxiv.org/abs/2403.12582},
+doi = {10.48550/arXiv.2403.12582},
+abstract = {The task of financial analysis primarily encompasses two
+key areas: stock trend prediction and the corresponding financial
+question answering. Currently, machine learning and deep learning
+algorithms (ML\&DL) have been widely applied for stock trend
+predictions, leading to significant progress. However, these methods
+fail to provide reasons for predictions, lacking interpretability and
+reasoning processes. Also, they can not integrate textual information
+such as financial news or reports. Meanwhile, large language models
+(LLMs) have remarkable textual understanding and generation ability.
+But due to the scarcity of financial training datasets and limited
+integration with real-time knowledge, LLMs still suffer from
+hallucinations and are unable to keep up with the latest information.
+To tackle these challenges, we first release AlphaFin datasets,
+combining traditional research datasets, real-time financial data,
+and handwritten chain-of-thought (CoT) data. It has a positive impact
+on training LLMs for completing financial analysis. We then use
+AlphaFin datasets to benchmark a state-of-the-art method, called
+Stock-Chain, for effectively tackling the financial analysis task,
+which integrates retrieval-augmented generation (RAG) techniques.
+Extensive experiments are conducted to demonstrate the effectiveness
+of our framework on financial analysis.},
+urldate = {2026-03-25},
+publisher = {arXiv},
+author = {Li, Xiang and Li, Zhenyu and Shi, Chen and Xu, Yong and Du,
+Qing and Tan, Mingkui and Huang, Jun and Lin, Wei},
+month = mar,
+year = {2024},
+note = {arXiv:2403.12582},
+keywords = {Computer Science - Computation and Language},
+}
+
+@inproceedings{kirtac_enhanced_2024,
+address = {Bangkok, Thailand},
+title = {Enhanced {Financial} {Sentiment} {Analysis} and {Trading}
+{Strategy} {Development} {Using} {Large} {Language} {Models}},
+url = {https://aclanthology.org/2024.wassa-1.1},
+doi = {10.18653/v1/2024.wassa-1.1},
+language = {en},
+urldate = {2026-03-25},
+booktitle = {Proceedings of the 14th {Workshop} on {Computational}
+{Approaches} to {Subjectivity}, {Sentiment}, \& {Social} {Media} {Analysis}},
+publisher = {Association for Computational Linguistics},
+author = {Kirtac, Kemal and Germano, Guido},
+year = {2024},
+pages = {1--10},
+}
+
+@misc{to_rag-it:_2025,
+title = {{RAG}-{IT}: {Retrieval}-{Augmented} {Instruction} {Tuning}
+for {Automated} {Financial} {Analysis} -- {A} {Case} {Study} for the
+{Semiconductor} {Sector}},
+shorttitle = {{RAG}-{IT}},
+url = {http://arxiv.org/abs/2412.08179},
+doi = {10.48550/arXiv.2412.08179},
+abstract = {Financial analysis relies heavily on the interpretation
+of earnings reports to assess company performance and guide
+decision-making. Traditional methods for generating such analyzes
+require significant financial expertise and are often time-consuming.
+With the rapid advancement of Large Language Models (LLMs),
+domain-specific adaptations have emerged for financial tasks such as
+sentiment analysis and entity recognition. This paper introduces
+RAG-IT (Retrieval-Augmented Instruction Tuning), a novel framework
+designed to automate the generation of earnings report analysis
+through an LLM fine-tuned specifically for the financial domain. Our
+approach integrates retrieval augmentation with instruction-based
+fine-tuning to enhance factual accuracy, contextual relevance, and
+domain adaptability. We construct a sector-specific financial
+instruction dataset derived from semiconductor industry documents to
+guide the LLM adaptation to specialized financial reasoning. Using
+NVIDIA, AMD, and Broadcom as representative companies, our case study
+demonstrates that RAG-IT substantially improves a general-purpose
+open-source LLM and achieves performance comparable to commercial
+systems like GPT-3.5 on financial report generation tasks. This
+research highlights the potential of retrieval-augmented instruction
+tuning to streamline and elevate financial analysis automation,
+advancing the broader field of intelligent financial reporting.},
+urldate = {2026-03-25},
+publisher = {arXiv},
+author = {To, Hai-Thien and Bui, Tien-Cuong and Le, Van-Duc},
+month = dec,
+year = {2025},
+note = {arXiv:2412.08179},
+keywords = {Quantitative Finance - Statistical Finance, Computer
+Science - Artificial Intelligence},
+}
+
+@article{delgadillo_finsosent:_2024,
+title = {{FinSoSent}: {Advancing} {Financial} {Market} {Sentiment}
+{Analysis} through {Pretrained} {Large} {Language} {Models}},
+volume = {8},
+issn = {2504-2289},
+shorttitle = {{FinSoSent}},
+url = {https://www.mdpi.com/2504-2289/8/8/87},
+doi = {10.3390/bdcc8080087},
+abstract = {Predicting the directions of financial markets has been
+performed using a variety of approaches, and the large volume of
+unstructured data generated by traders and other stakeholders on
+social media microblog platforms provides unique opportunities for
+analyzing financial markets using additional perspectives. Pretrained
+large language models (LLMs) have demonstrated very good performance
+on a variety of sentiment analysis tasks in different domains.
+However, it is known that sentiment analysis is a very
+domain-dependent NLP task that requires knowledge of the domain
+ontology, and this is particularly the case with the financial
+domain, which uses its own unique vocabulary. Recent developments in
+NLP and deep learning including LLMs have made it possible to
+generate actionable financial sentiments using multiple sources
+including financial news, company fundamentals, technical indicators,
+as well social media microblogs posted on platforms such as
+StockTwits and X (formerly Twitter). We developed a financial social
+media sentiment analyzer (FinSoSent), which is a domain-specific
+large language model for the financial domain that was pretrained on
+financial news articles and fine-tuned and tested using several
+financial social media corpora. We conducted a large number of
+experiments using different learning rates, epochs, and batch sizes
+to yield the best performing model. Our model outperforms current
+state-of-the-art FSA models based on over 860 experiments,
+demonstrating the efficacy and effectiveness of FinSoSent. We also
+conducted experiments using ensemble models comprising FinSoSent and
+the other current state-of-the-art FSA models used in this research,
+and a slight performance improvement was obtained based on majority
+voting. Based on the results obtained across all models in these
+experiments, the significance of this study is that it highlights the
+fact that, despite the recent advances of LLMs, sentiment analysis
+even in domain-specific contexts remains a difficult research problem.},
+language = {en},
+number = {8},
+urldate = {2026-03-25},
+journal = {Big Data and Cognitive Computing},
+author = {Delgadillo, Josiel and Kinyua, Johnson and Mutigwe, Charles},
+month = aug,
+year = {2024},
+pages = {87},
+}
+

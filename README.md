@@ -1,6 +1,5 @@
 # IntelliFin Assistant - 智能股票分析系统
 
-
 基于 LangGraph 的多智能体股票分析系统，5个专业AI智能体协同工作，提供全面投资建议。
 
 ## ✨ 核心特性
@@ -22,10 +21,11 @@
 
 ```bash
 cd /path/to/your/project
-python3.12 -m venv venv
-source venv/bin/activate
-python -m pip install --upgrade pip
-pip install -r requirements.txt
+
+# 如未安装 uv，可先执行：
+# curl -LsSf https://astral.sh/uv/install.sh | sh
+
+uv sync
 ```
 
 ### 2. 配置 API Key
@@ -39,34 +39,36 @@ OPENAI_MODEL=gpt-4o-mini
 
 ### 3. 启动应用
 
-**Streamlit Web界面（传统）**
+#### Streamlit Web界面（传统）
+
 ```bash
 ./run_web.sh
-# 或: streamlit run streamlit_app.py
+# 或: uv run streamlit run streamlit_app.py
 ```
-浏览器打开 http://localhost:8501
 
+浏览器打开 <http://localhost:8501>
 
-**命令行模式**
+#### 命令行模式
+
 ```bash
-python app.py AAPL              # 基础分析
-python app.py TSLA --visualize  # 带图表
-python app.py NVDA --output report.txt  # 保存报告
+uv run python app.py AAPL              # 基础分析
+uv run python app.py TSLA --visualize  # 带图表
+uv run python app.py NVDA --output report.txt  # 保存报告
 ```
 
 ## 📊 使用说明
 
-**Streamlit前端界面**：
+### Streamlit前端界面
+
 - 输入股票代码 → 选择分析模式 → 配置图表选项
 - 开始分析
 - 支持历史记录查看和报告导出
-
 
 **CLI输出**：方向(Bullish/Bearish/Neutral) + 时间范围 + 置信度 + 详细分析
 
 ## 🏗️ 项目结构
 
-```
+```text
 ├── agentgraph/          # LangGraph工作流编排
 ├── agents/              # 5个AI智能体
 ├── dataflow/            # 数据服务层
@@ -78,10 +80,9 @@ python app.py NVDA --output report.txt  # 保存报告
 
 ## 🔧 工作流程
 
-```
+```text
 START → [市场/新闻/基本面分析师 并行] → [风险分析师] → [PM决策] → END
 ```
-
 
 ## ⚠️ 注意事项
 
@@ -92,7 +93,7 @@ START → [市场/新闻/基本面分析师 并行] → [风险分析师] → [P
 ## 🐛 常见问题
 
 | 问题 | 解决方案 |
-|------|---------|
+| ---- | -------- |
 | 未找到配置文件 | 确保 `properties.env` 包含有效的 `OPENAI_API_KEY` |
 | 分析失败/超时 | 检查网络、API Key、API配额 |
 | 股票代码无效 | 使用美股代码（AAPL、TSLA等） |
@@ -104,4 +105,3 @@ START → [市场/新闻/基本面分析师 并行] → [风险分析师] → [P
 ---
 
 **免责声明**：本系统提供的分析仅供参考，不构成投资建议。投资有风险，决策需谨慎。
-
