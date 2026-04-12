@@ -54,6 +54,7 @@
 - `uv run ruff check .` 通过。
 - `uv run ruff format --check .` 通过。
 - `uv run basedpyright` 未通过，当前发现 `78 errors / 0 warnings`。
+- `uv run basedpyright --baselinefile bugs/basedpyright/baseline.json` 通过，说明历史类型问题已完成隔离。
 - 主要历史问题集中在这些区域：
   - `agentgraph/orchestrator.py`
   - `agentgraph/state.py`
@@ -66,7 +67,7 @@
   - `test/trade.py`
   - `utils/pdf_generator.py`
 
-> 这意味着“项目级质量门禁”已经建立，但“全仓库 0-warning / 0-error”还没有达成；后续实施时需要决定是先清 baseline，还是将 Broker Phase 的新增代码与历史问题做范围隔离。
+> 这意味着“项目级质量门禁”已经建立，但“全仓库 0-warning / 0-error”还没有达成；当前采用 `bugs/basedpyright/baseline.json` 隔离历史债务，并用带 baseline 的命令作为增量开发 gate。
 
 ---
 
@@ -108,7 +109,7 @@
 
 **阻塞项**
 
-- [ ] 仓库级 `basedpyright` baseline 仍为红色，进入正式实现前需要先明确“先清 baseline”还是“按 Phase 隔离修复”
+- [ ] 无 Phase 1 特有阻塞；历史类型债务已通过 `bugs/basedpyright/baseline.json` 隔离
 
 ### Phase 2 撮合引擎 + Broker 接口
 
@@ -229,6 +230,8 @@
 - [x] 将工程规约与质量门禁回写到 `impl_plan_final.md`
 - [x] 将 `pyright` / `basedpyright` / `pytest` / `ruff` 项目级配置补入 `pyproject.toml`
 - [x] 完成首轮 `ruff` / `basedpyright` 基线检查
+- [x] 生成 `bugs/basedpyright/baseline.json` 并完成历史类型问题隔离
+- [x] 将历史类型问题按工具基线 + AI 可检索索引归档到 `bugs/basedpyright/`
 - [x] `ruff check .` 通过
 - [x] `ruff format --check .` 通过
 - [ ] `basedpyright` 通过
