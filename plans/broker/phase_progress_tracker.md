@@ -138,7 +138,7 @@
 
 ### Phase 2 撮合引擎 + Broker 接口
 
-**状态**: `Not Started`
+**状态**: `In Progress`
 
 **本阶段目标**
 
@@ -150,15 +150,46 @@
 **当前证据**
 
 - `test/trade.py` 已包含可迁移的多空统一 PnL 与执行逻辑，可作为参考实现来源。
-- 但当前仍是脚本，不是标准接口，也没有订单状态机和回调 hooks。
+- 已新增：
+  - `broker/gateway.py`
+  - `broker/engine.py`
+  - `broker/risk_checks.py`
+  - `test/test_broker_engine.py`
+- `MockBrokerEngine` 现已具备这些可观察行为：
+  - `BrokerGateway` 公共查询接口：`get_account()` / `get_position()` / `get_positions()` / `get_order()` / `get_orders()` / `get_fills()`
+  - 市价单按 `close ± slippage` 立即成交
+  - 限价买单先挂起，后续 `on_bar()` 在价格触及时成交
+  - 多空统一持仓更新已覆盖“开多、加多、平多、反手”所需的核心符号语义
+  - 下单前风控已覆盖资金不足（含滑点+手续费）与 `max_position_pct`
+- 事件 hooks / 事件日志、总仓位上限、更多订单生命周期场景仍待后续切片完成。
 
 **TDD 执行记录**
 
-- [ ] RED: 市价买入立即成交测试
-- [ ] GREEN: 最小 `place_order()` + `get_account()` 实现
-- [ ] RED: 限价未触发 / 触发测试
-- [ ] GREEN: `on_bar()` 与待成交订单处理
-- [ ] REFACTOR: 提取共享撮合逻辑与风控校验
+- [x] RED -> GREEN: `test_market_buy_order_fills_immediately_and_updates_account_state`
+- [x] RED -> GREEN: 最小 `BrokerGateway` / `MockBrokerEngine.place_order()` / `get_account()` / `get_position()` / `get_fills()`
+- [x] RED -> GREEN: `test_limit_buy_order_stays_pending_until_a_future_bar_touches_the_limit`
+- [x] RED -> GREEN: `on_bar()` + pending limit order trigger
+- [x] RED -> GREEN: `test_market_sell_can_close_an_existing_long_position`
+- [x] RED -> GREEN: 从 `test/trade.py` 提炼多空统一持仓更新逻辑，覆盖平仓与反手语义
+- [x] RED -> GREEN: `test_market_buy_is_rejected_when_cash_cannot_cover_slippage_and_fees`
+- [x] RED -> GREEN: 风控资金检查改为按市场单预计成交价（含滑点）+ 手续费估算
+- [x] RED -> GREEN: `test_market_buy_is_rejected_when_it_would_breach_max_position_pct`
+- [x] RED -> GREEN: 单票仓位上限 `max_position_pct` 前置校验
+- [x] REFACTOR: 提取 `_calculate_next_position()`，把持仓符号语义收敛到引擎内部
+- [ ] RED: 限价卖单 / 取消订单行为测试
+- [ ] RED: 做空开仓 / 回补行为测试
+- [ ] RED: `allow_short=False` 的拒单测试
+
+**验证结果**
+
+- [x] `uv run pytest test/test_broker_models.py test/test_broker_engine.py -q`
+- [x] `uv run basedpyright --baselinefile bugs/basedpyright/baseline.json`
+- [x] `uv run ruff check .`
+- [x] `uv run ruff format --check .`
+
+**阻塞项**
+
+- [ ] 无外部阻塞；剩余工作主要是继续按 TDD 补齐 Phase 2 其余行为切片
 
 ### Phase 3 账本 + 交易日志
 
@@ -258,6 +289,12 @@
 - [x] 生成 `bugs/basedpyright/baseline.json` 并完成历史类型问题隔离
 - [x] 将历史类型问题按工具基线 + AI 可检索索引归档到 `bugs/basedpyright/`
 - [x] `ruff check .` 通过
+- [x] 启动 Phase 2：完成 `BrokerGateway` / `MockBrokerEngine` / `PreTradeRiskChecker` 的首批 TDD 切片
+- [x] 完成 Phase 2 首批公共行为测试：市价买入、限价挂单触发、平多、资金不足拒单、单票仓位上限拒单
+- [x] `uv run pytest test/test_broker_models.py test/test_broker_engine.py -q` 通过
+- [x] `uv run basedpyright --baselinefile bugs/basedpyright/baseline.json` 通过
+- [x] `uv run ruff check .` 通过（含 Phase 2 增量）
+- [x] `uv run ruff format --check .` 通过（含 Phase 2 增量）
 - [x] `ruff format --check .` 通过
 - [x] 新建 `broker/__init__.py` / `broker/models.py` / `broker/config.py` / `broker/events.py`
 - [x] 新建 `test/test_broker_models.py` 与 `test/conftest.py`
