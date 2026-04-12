@@ -8,7 +8,7 @@
 
 ## 1 当前基线
 
-当前分支已经具备 Broker 集成前的主链路与若干可复用资产，但正式 Broker 模块尚未开始落地。
+当前分支已经具备 Broker 集成前的主链路与若干可复用资产；截至 `2026-04-13`，`broker/` 顶层包的 **Phase 1 数据模型层** 已完成落地，Phase 2+ 尚未开始。
 
 ### 已存在的可复用基础
 
@@ -20,7 +20,7 @@
 
 ### 当前关键缺口
 
-- 仓库中还没有 `broker/` 顶层包，Phase 1-3 的主体代码均未创建。
+- `broker/` 顶层包已创建，但目前仅包含 Phase 1 的 `models.py` / `config.py` / `events.py`；`gateway.py` / `engine.py` / `risk_checks.py` / `ledger.py` 仍未开始。
 - `agentgraph/state.py` 尚无 `execution_report`、`execution_enabled`、`session_id` 等执行层字段。
 - `agentgraph/orchestrator.py` 仍是 `PM_agent -> END`，Phase 4 的执行闭环未接入。
 - 项目级 `pyright` / `ruff` / `pytest` 约束现已写入 `pyproject.toml`，但仓库的 `basedpyright` 基线仍为红色，存在历史类型错误待消化。
@@ -75,7 +75,7 @@
 
 | Phase | 状态 | 当前判断 | 下一步最小 TDD 切片 | 完成门禁 |
 | --- | --- | --- | --- | --- |
-| Phase 1 数据模型层 | Not Started | `broker/` 目录不存在 | 先写 `Order` / `OrderStatus` 的失败测试，再实现最小模型 | Phase 1 测试 + `basedpyright` + `ruff` 全绿 |
+| Phase 1 数据模型层 | Completed | `broker/` Phase 1 已落地，含模型/配置/事件和 pytest 覆盖 | Phase 2 起点：先写市价买入立即成交的失败测试，再实现最小 `place_order()` | `uv run pytest test/test_broker_models.py -q` + `basedpyright --baselinefile` + `ruff` 全绿 |
 | Phase 2 撮合引擎 + Broker 接口 | Not Started | 只有 `test/trade.py` 的脚本级执行逻辑可复用 | 先写市价买入成交的行为测试，再抽出最小 `MockBrokerEngine` | Phase 2 测试 + 质量门禁全绿 |
 | Phase 3 账本 + 交易日志 | Not Started | 无 `ledger.py`，`PortfolioManager` 也无 broker 同步口 | 先写记录单笔 fill 的失败测试，再实现最小账本 | Phase 3 测试 + 质量门禁全绿 |
 | Phase 4 主工作流集成 | Not Started | 目前仍是 `PM_agent -> END` | 先写 execution node 接入状态更新的失败测试 | Phase 4 测试 + 图结构验证 + 质量门禁全绿 |
@@ -87,29 +87,54 @@
 
 ### Phase 1 数据模型层
 
-**状态**: `Not Started`
+**状态**: `Completed`
 
 **本阶段目标**
 
-- 建立 `broker/models.py`
-- 建立 `broker/config.py`
-- 建立 `broker/events.py`
-- 补齐 `Order` / `Fill` / `Position` / `AccountSnapshot` / `ExecutionReport`
+- [x] 建立 `broker/models.py`
+- [x] 建立 `broker/config.py`
+- [x] 建立 `broker/events.py`
+- [x] 补齐 `Order` / `Fill` / `Position` / `AccountSnapshot` / `ExecutionReport`
+- [x] 建立 `broker/__init__.py` 统一导出 Phase 1 公共类型
+- [x] 建立 `test/test_broker_models.py` 与 `test/conftest.py`
 
 **当前证据**
 
-- 当前仓库没有 `broker/` 目录。
-- 计划中 Phase 1 的设计已明确，但尚无正式实现。
+- 已创建 `broker/` 顶层包，并落地这些文件：
+  - `broker/__init__.py`
+  - `broker/models.py`
+  - `broker/config.py`
+  - `broker/events.py`
+- `broker/models.py` 已包含：
+  - 枚举：`OrderSide` / `OrderType` / `OrderStatus`
+  - 模型：`Order` / `Fill` / `Position` / `AccountSnapshot` / `ExecutionReport`
+- `ExecutionReport` 已按计划保留 `pm_action` / `pm_report_summary`，全部模型均保留 `session_id` 预留字段。
+- `BrokerConfig` 已使用 `BaseSettings` 落地；为此已补充项目依赖 `pydantic-settings`。
+- 已建立 Phase 1 pytest 用例，覆盖订单默认行为、模型约束、嵌套执行报告、事件默认值与配置默认值。
 
 **TDD 执行记录**
 
-- [ ] RED: 为最小订单模型写第一个失败测试
-- [ ] GREEN: 用最小 Pydantic 模型让测试通过
-- [ ] REFACTOR: 提取共享字段与枚举
+- [x] RED -> GREEN: `Order` 默认 `NEW` 状态、自动生成 `id` / UTC 时间戳
+- [x] RED -> GREEN: `LIMIT` 订单缺少 `limit_price` 时校验失败
+- [x] RED -> GREEN: `Order.qty` 必须为正数
+- [x] RED -> GREEN: `Fill` 自动补 UTC 时间戳与 `session_id`
+- [x] RED -> GREEN: `Position` 从 `shares` 符号推导 `side`
+- [x] RED -> GREEN: `AccountSnapshot` + `ExecutionReport` 嵌套模型与 `pm_action` / `pm_report_summary`
+- [x] RED -> GREEN: `BrokerEvent` 默认 `details` 独立且不共享可变状态
+- [x] RED -> GREEN: `BrokerConfig` 默认值与显式覆盖行为
+- [x] REFACTOR: 增加 `test/conftest.py`，让标准 `uv run pytest ...` 可导入本地 `broker` 包
+- [x] REFACTOR: 补充 `pydantic-settings` 依赖，使 `BrokerConfig(BaseSettings)` 与类型检查一致
+
+**验证结果**
+
+- [x] `uv run pytest test/test_broker_models.py -q`
+- [x] `uv run basedpyright --baselinefile bugs/basedpyright/baseline.json`
+- [x] `uv run ruff check .`
+- [x] `uv run ruff format --check .`
 
 **阻塞项**
 
-- [ ] 无 Phase 1 特有阻塞；历史类型债务已通过 `bugs/basedpyright/baseline.json` 隔离
+- [x] 无 Phase 1 特有阻塞；历史类型债务已通过 `bugs/basedpyright/baseline.json` 隔离
 
 ### Phase 2 撮合引擎 + Broker 接口
 
@@ -234,5 +259,9 @@
 - [x] 将历史类型问题按工具基线 + AI 可检索索引归档到 `bugs/basedpyright/`
 - [x] `ruff check .` 通过
 - [x] `ruff format --check .` 通过
-- [ ] `basedpyright` 通过
-- [ ] 当前基线：`78 errors / 0 warnings`
+- [x] 新建 `broker/__init__.py` / `broker/models.py` / `broker/config.py` / `broker/events.py`
+- [x] 新建 `test/test_broker_models.py` 与 `test/conftest.py`
+- [x] 为 `BrokerConfig(BaseSettings)` 补充 `pydantic-settings` 依赖
+- [x] 完成 Phase 1 数据模型层的 TDD 切片并全部转绿
+- [x] `basedpyright --baselinefile bugs/basedpyright/baseline.json` 通过
+- [x] Phase 1 当前增量质量门禁：`0 errors / 0 warnings / 0 notes`

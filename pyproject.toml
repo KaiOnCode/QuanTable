@@ -18,6 +18,7 @@ dependencies = [
     "pandas-ta>=0.4.71b0",
     "plotly>=6.4.0",
     "pydantic>=2.12.4",
+    "pydantic-settings>=2.13.1",
     "python-dotenv>=1.2.1",
     "requests>=2.32.5",
     "streamlit>=1.51.0",
