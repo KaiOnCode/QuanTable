@@ -1,4 +1,5 @@
 from broker.config import BrokerConfig
+from broker.events import BrokerEvent
 from broker.models import (
     AccountSnapshot,
     ExecutionReport,
@@ -9,7 +10,6 @@ from broker.models import (
     OrderType,
     Position,
 )
-from broker.events import BrokerEvent
 
 __all__ = [
     "AccountSnapshot",
