@@ -1,12 +1,15 @@
 import os
 import sys
+from typing import Any
 
 from dotenv import load_dotenv
+from pydantic import SecretStr
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 
+from agentgraph.execution_node import create_execution_node
 from agentgraph.state import AgentState
 from agents.fundamentals_analyst import fundamentals_analyst_agent
 from agents.market_analyst import market_analyst_agent
@@ -19,6 +22,7 @@ from agents.utils.agent_tools import (
     get_news,
     get_price,
 )
+from broker.gateway import BrokerGateway
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 load_dotenv("properties.env")
@@ -84,21 +88,28 @@ def should_continue(node_name: str):
 
 
 class IntelliFin_Assistant:
-    def __init__(self):
-        # self.llm = ChatOpenAI(
-        #     model="deepseek-v3-250324",
-        #     openai_api_key="",
-        #     openai_api_base="",
-        #     )
-        self.llm = ChatOpenAI(
-            model=os.getenv("OPENAI_MODEL", "deepseek-chat"),
-            api_key=os.getenv("OPENAI_API_KEY"),
-            base_url=os.getenv("OPENAI_API_BASE"),
-        )
+    def __init__(
+        self,
+        llm: Any | None = None,
+        broker: BrokerGateway | None = None,
+        tool_nodes: dict[str, Any] | None = None,
+        agent_nodes: dict[str, Any] | None = None,
+        execution_node: Any | None = None,
+    ):
+        self.llm = llm
+        if self.llm is None and agent_nodes is None:
+            api_key = os.getenv("OPENAI_API_KEY")
+            # The default runtime still uses the configured chat model.
+            self.llm = ChatOpenAI(
+                model=os.getenv("OPENAI_MODEL", "deepseek-chat"),
+                api_key=SecretStr(api_key) if api_key else None,
+                base_url=os.getenv("OPENAI_API_BASE"),
+            )
 
-        self.tool_nodes = self._create_tool_nodes()
-        self.agent_nodes = self._create_agent_nodes()
-
+        self.tool_nodes: dict[str, Any] = tool_nodes or self._create_tool_nodes()
+        self.agent_nodes: dict[str, Any] = agent_nodes or self._create_agent_nodes()
+        self.execution_node = execution_node
+        self.broker = broker
         wf = StateGraph(AgentState)
 
         for node_name, node in self.tool_nodes.items():
@@ -129,22 +140,44 @@ class IntelliFin_Assistant:
         wf.add_edge(START, "market_analyst")
         wf.add_edge(START, "news_analyst")
         wf.add_edge(START, "fundamentals_analyst")
-        wf.add_edge("PM_agent", END)
+        if self.broker is None:
+            wf.add_edge("PM_agent", END)
+        else:
+            execution_node_impl: Any = self.execution_node
+            if execution_node_impl is None:
+                execution_node_impl = create_execution_node(self.broker)
+            wf.add_node(
+                "execution_node",
+                execution_node_impl,
+            )
+            wf.add_edge("PM_agent", "execution_node")
+            wf.add_edge("execution_node", END)
 
         # 初始化内存，在图运行时存储状态（状态持久化）
         checkpoint = MemorySaver()  # 可拓展redis,mongoDB
         self.wf = wf.compile(checkpointer=checkpoint)
 
-    def run(self, ticker: str, date: str = None, current_position_pct: float = 0.0):
+    def run(
+        self,
+        ticker: str,
+        date: str | None = None,
+        current_position_pct: float = 0.0,
+        *,
+        execution_enabled: bool = False,
+        session_id: str = "",
+    ):
         # 初始化状态
         initial_state = {
             "ticker": ticker,
             "date": date,
             "current_position_pct": current_position_pct,
+            "execution_enabled": execution_enabled,
+            "session_id": session_id,
         }
+        thread_id = session_id or "42"
         return self.wf.invoke(
             initial_state,
-            config={"configurable": {"thread_id": "42"}},  # 相当于会话id
+            config={"configurable": {"thread_id": thread_id}},  # 相当于会话id
         )
 
     def visualize(self):

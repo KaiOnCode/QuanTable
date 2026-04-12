@@ -1,3 +1,4 @@
+from broker.backtest_runner import BacktestResult, BacktestRunner
 from broker.config import BrokerConfig
 from broker.engine import BarData, MockBrokerEngine
 from broker.events import BrokerEvent
@@ -18,6 +19,8 @@ from broker.risk_checks import PreTradeRiskChecker
 __all__ = [
     "AccountSnapshot",
     "BarData",
+    "BacktestResult",
+    "BacktestRunner",
     "BrokerEvent",
     "BrokerGateway",
     "BrokerConfig",

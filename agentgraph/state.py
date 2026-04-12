@@ -57,6 +57,20 @@ class AgentState(MessagesState):
         "PM Agent的最终裁决目标持仓百分比，例如 50意为50%，范围为 0~100",
     ] = ""
 
+    # ========== 新增：执行层字段 (Gap C 核心) ==========
+    execution_report: Annotated[Optional[str], "本轮执行报告（JSON序列化）"]
+    execution_enabled: Annotated[bool, "是否启用自动执行"]
+
+    # ========== 新增：会话追踪 (Gap A 预留) ==========
+    session_id: Annotated[Optional[str], "会话ID，用于持久化追踪"]
+
+    # ========== Gap B 预留：HITL 审批（注释形式，合并时由 Gap B 团队取消注释） ==========
+    # approval_status: Annotated[Optional[str], "审批状态: auto_approved/pending/approved/rejected/modified"] = "auto_approved"
+    # modified_target_pct: Annotated[Optional[float], "审批修改后的目标仓位"] = None
+
+    # ========== Gap E 预留：决策流审计（注释形式） ==========
+    # execution_events: Annotated[Optional[str], "执行层事件列表（JSON序列化）"] = ""
+
     # ========== 可选：流程控制标记 ==========
     # 用于标记各阶段完成状态（可选，LangGraph会自动管理依赖）
     # market_analyst_done: Annotated[bool, "市场分析师是否完成"] = False

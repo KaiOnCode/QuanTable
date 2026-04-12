@@ -1,11 +1,60 @@
-from typing import Annotated, Optional
+from collections.abc import Callable
+from typing import Annotated, Any, Optional, Protocol
 
 from langchain_core.tools import tool
 
 from dataflow.service import DataService
 
-# 创建 DataService 实例
-_data_service = DataService()
+
+class ToolDataService(Protocol):
+    def df_get_prices(
+        self,
+        ticker: str,
+        lookback_days: int = 180,
+        end_date: Optional[str] = None,
+    ) -> dict[str, Any]: ...
+
+    def df_get_indicators(
+        self,
+        ticker: str,
+        lookback_days: int = 180,
+        end_date: Optional[str] = None,
+    ) -> dict[str, Any]: ...
+
+    def df_get_fundamentals(
+        self,
+        ticker: str,
+        end_date: Optional[str] = None,
+    ) -> dict[str, Any]: ...
+
+    def df_get_news(
+        self,
+        ticker: str,
+        window_days: int = 7,
+        max_items: int = 20,
+        end_date: Optional[str] = None,
+    ) -> list[dict[str, Any]]: ...
+
+
+_data_service_factory: Callable[[], ToolDataService] = DataService
+_data_service: ToolDataService | None = None
+
+
+def configure_data_service_factory(factory: Callable[[], ToolDataService]) -> None:
+    global _data_service_factory, _data_service
+    _data_service_factory = factory
+    _data_service = None
+
+
+def reset_data_service_factory() -> None:
+    configure_data_service_factory(DataService)
+
+
+def get_data_service() -> ToolDataService:
+    global _data_service
+    if _data_service is None:
+        _data_service = _data_service_factory()
+    return _data_service
 
 
 @tool
@@ -26,7 +75,7 @@ def get_price(
     返回:
         str: 包含指定股票代码在指定天数范围内的股价数据的格式化字符串。
     """
-    result = _data_service.df_get_prices(symbol, lookback_days, end_date=end_date)
+    result = get_data_service().df_get_prices(symbol, lookback_days, end_date=end_date)
 
     # 检查是否获取到数据
     if not result or not result.get("rows"):
@@ -72,7 +121,9 @@ def get_indicators(
     返回:
         str: 包含指定股票代码技术指标的格式化字符串。
     """
-    result = _data_service.df_get_indicators(symbol, lookback_days, end_date=end_date)
+    result = get_data_service().df_get_indicators(
+        symbol, lookback_days, end_date=end_date
+    )
 
     # 检查是否获取到数据
     if not result:
@@ -155,7 +206,7 @@ def get_fundamentals(
     返回:
         str: 包含指定股票代码基本面数据的格式化字符串。
     """
-    result = _data_service.df_get_fundamentals(symbol, end_date=end_date)
+    result = get_data_service().df_get_fundamentals(symbol, end_date=end_date)
 
     # 检查是否获取到数据
     if not result:
@@ -258,7 +309,7 @@ def get_news(
     返回:
         str: 包含指定股票代码新闻数据的格式化字符串。
     """
-    result = _data_service.df_get_news(
+    result = get_data_service().df_get_news(
         symbol, window_days=window_days, end_date=end_date
     )
 

@@ -1,6 +1,6 @@
 # dataflow/service.py
 import os
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from .portfolio_manager import PortfolioManager
 from .providers.fundamentals_akshare import df_get_fundamentals_pit
@@ -17,13 +17,22 @@ from .providers.YFinance import (
     df_get_sector_context,
 )
 
+if TYPE_CHECKING:
+    from broker.gateway import BrokerGateway
+    from broker.models import Position
+
 ONLINE = os.getenv("ONLINE_DATA", "true").lower() == "true"
 
 
 class DataService:
-    def __init__(self, fallback_local_root: str = "data"):
+    def __init__(
+        self,
+        fallback_local_root: str = "data",
+        broker: "BrokerGateway | None" = None,
+    ):
         self.local_root = fallback_local_root
         self.portfolio_manager = PortfolioManager()
+        self._broker = broker
 
     # 2. 严格按照规范 v1.0 实现函数签名 [cite: 26-35]
 
@@ -143,6 +152,10 @@ class DataService:
         获取当前持仓 [cite: 34]
         TODO: 这可能需要连接到内部的持仓管理模块，暂时返回空仓
         """
+        if self._broker is not None:
+            position = self._broker.get_position(ticker)
+            if position is not None:
+                return self._convert_broker_position(position)
         return self.portfolio_manager.get_position(ticker)
 
     def df_get_risk_limits(self) -> Dict[str, Any]:
@@ -151,3 +164,16 @@ class DataService:
         TODO: 这应该从配置或上层读取，暂时硬编码
         """
         return self.portfolio_manager.get_risk_limits()
+
+    def _convert_broker_position(self, position: "Position") -> Dict[str, Any]:
+        account = self._broker.get_account() if self._broker is not None else None
+        position_value = position.shares * position.avg_cost + position.unrealized_pnl
+        qty_pct = position_value / account.equity if account and account.equity else 0.0
+        return {
+            "side": position.side.lower(),
+            "qty_pct": qty_pct,
+            "avg_cost": position.avg_cost,
+            "meta": {
+                "ignore_in_analysis": False,
+            },
+        }

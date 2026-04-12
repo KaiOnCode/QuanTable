@@ -67,6 +67,9 @@ class MockBrokerEngine(BrokerGateway):
             positions=positions,
         )
 
+    def get_latest_price(self, ticker: str) -> float | None:
+        return self._get_reference_price(ticker)
+
     def get_positions(self) -> list[Position]:
         return [
             self._build_position_view(position)
