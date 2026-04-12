@@ -6,7 +6,7 @@ import pytest
 
 from broker.config import BrokerConfig
 from broker.engine import MockBrokerEngine
-from broker.ledger import TradeLedger
+from broker.ledger import InMemoryLedgerBackend, TradeLedger
 from broker.models import (
     AccountSnapshot,
     Fill,
@@ -92,6 +92,90 @@ def test_trade_ledger_records_daily_snapshot_and_exposes_portfolio_export() -> N
     assert portfolio.loc[0, "position_count"] == 1
 
 
+def test_trade_ledger_rehydrates_trades_and_snapshots_from_shared_backend() -> None:
+    backend = InMemoryLedgerBackend()
+    writer = TradeLedger(backend=backend)
+    account = AccountSnapshot(
+        cash=98_998.4995,
+        equity=99_998.4995,
+        positions=[
+            Position(
+                ticker="AAPL",
+                shares=10,
+                avg_cost=100.05,
+                unrealized_pnl=-0.5,
+            )
+        ],
+    )
+    writer.record_fill(
+        fill=Fill(
+            order_id="order-1",
+            fill_price=100.05,
+            fill_qty=10,
+            fee=1.0005,
+            slippage=0.5,
+        ),
+        position=account.positions[0],
+        account=account,
+    )
+    writer.record_daily_snapshot("2026-04-13", account)
+
+    reader = TradeLedger(backend=backend)
+
+    trades = reader.to_trades_dataframe()
+    portfolio = reader.to_portfolio_dataframe()
+
+    assert len(trades) == 1
+    assert trades.loc[0, "ticker"] == "AAPL"
+    assert trades.loc[0, "price"] == pytest.approx(100.05)
+    assert len(portfolio) == 1
+    assert portfolio.loc[0, "date"] == "2026-04-13"
+    assert portfolio.loc[0, "equity"] == pytest.approx(99_998.4995)
+
+
+def test_trade_ledger_exports_csv_from_persisted_backend_records(tmp_path) -> None:
+    backend = InMemoryLedgerBackend()
+    writer = TradeLedger(backend=backend)
+    account = AccountSnapshot(
+        cash=98_998.4995,
+        equity=99_998.4995,
+        positions=[
+            Position(
+                ticker="AAPL",
+                shares=10,
+                avg_cost=100.05,
+                unrealized_pnl=-0.5,
+            )
+        ],
+    )
+    writer.record_fill(
+        fill=Fill(
+            order_id="order-1",
+            fill_price=100.05,
+            fill_qty=10,
+            fee=1.0005,
+            slippage=0.5,
+        ),
+        position=account.positions[0],
+        account=account,
+    )
+    writer.record_daily_snapshot("2026-04-13", account)
+
+    reader = TradeLedger(backend=backend)
+    trades_path = tmp_path / "trades.csv"
+    portfolio_path = tmp_path / "portfolio.csv"
+
+    reader.to_csv(str(trades_path), str(portfolio_path))
+
+    trades_text = trades_path.read_text()
+    portfolio_text = portfolio_path.read_text()
+
+    assert "order_id,timestamp,ticker,side" in trades_text
+    assert "AAPL,BUY,10.0,100.05" in trades_text
+    assert "date,timestamp,cash,equity" in portfolio_text
+    assert "2026-04-13" in portfolio_text
+
+
 def test_trade_ledger_computes_core_metrics_from_snapshots_and_round_trip_fills() -> (
     None
 ):
@@ -153,19 +237,22 @@ def test_trade_ledger_computes_core_metrics_from_snapshots_and_round_trip_fills(
     )
     ledger.record_daily_snapshot("2026-01-03", account_after_exit)
 
+    trades = ledger.to_trades_dataframe()
     metrics = ledger.compute_metrics()
 
     expected_total_return = account_after_exit.equity / 100_000.0 - 1
     expected_max_drawdown = (100_000.0 - account_after_entry.equity) / 100_000.0
 
+    assert trades.loc[0, "realized_pnl"] == pytest.approx(-1.5005)
+    assert trades.loc[1, "realized_pnl"] == pytest.approx(97.30055)
     assert metrics["number_of_trades"] == 2
     assert metrics["total_return"] == pytest.approx(expected_total_return)
     assert metrics["max_drawdown"] == pytest.approx(expected_max_drawdown)
     assert metrics["win_rate"] == pytest.approx(0.5)
-    assert metrics["avg_win"] == pytest.approx(97.85055)
-    assert metrics["avg_loss"] == pytest.approx(-1.0005)
-    assert metrics["profit_factor"] == pytest.approx(97.8016491754123)
-    assert metrics["payoff_ratio"] == pytest.approx(97.8016491754123)
+    assert metrics["avg_win"] == pytest.approx(97.30055)
+    assert metrics["avg_loss"] == pytest.approx(-1.5005)
+    assert metrics["profit_factor"] == pytest.approx(64.84541819393536)
+    assert metrics["payoff_ratio"] == pytest.approx(64.84541819393536)
     assert metrics["annualized_return"] > metrics["total_return"]
     assert metrics["sharpe_ratio"] > 0
     assert metrics["max_drawdown_duration"] == pytest.approx(1.0)

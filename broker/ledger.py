@@ -2,68 +2,84 @@ from __future__ import annotations
 
 import math
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Protocol
 
 import pandas as pd
+from pydantic import BaseModel
 
 from broker.models import AccountSnapshot, Fill, Position
+
+
+class LedgerFillRecord(BaseModel):
+    """A persisted trade row plus the broker state immediately after the fill."""
+
+    fill: Fill
+    ticker: str
+    side: str
+    realized_pnl: float
+    position_after: Position
+    account_after: AccountSnapshot
+
+
+class LedgerSnapshotRecord(BaseModel):
+    """A persisted end-of-day account snapshot keyed by trading date."""
+
+    date: str
+    account: AccountSnapshot
 
 
 class TradeLedgerBackend(Protocol):
     """Storage abstraction so later phases can swap persistence backends."""
 
-    def persist_fill(
+    def persist_fill(self, record: LedgerFillRecord) -> None: ...
+
+    def persist_daily_snapshot(self, record: LedgerSnapshotRecord) -> None: ...
+
+    def load_fill_records(
         self,
-        fill: Fill,
-        position: Position,
-        account: AccountSnapshot,
-    ) -> None: ...
+        session_id: str | None = None,
+    ) -> list[LedgerFillRecord]: ...
 
-    def persist_daily_snapshot(self, date: str, account: AccountSnapshot) -> None: ...
-
-    def load_fills(self, session_id: str | None = None) -> list[Fill]: ...
-
-    def load_snapshots(
-        self, session_id: str | None = None
-    ) -> list[AccountSnapshot]: ...
+    def load_snapshot_records(
+        self,
+        session_id: str | None = None,
+    ) -> list[LedgerSnapshotRecord]: ...
 
 
 class InMemoryLedgerBackend:
     def __init__(self) -> None:
-        self._fills: list[Fill] = []
-        self._snapshots: list[AccountSnapshot] = []
+        self._fill_records: list[LedgerFillRecord] = []
+        self._snapshot_records: list[LedgerSnapshotRecord] = []
 
-    def persist_fill(
+    def persist_fill(self, record: LedgerFillRecord) -> None:
+        self._fill_records.append(record.model_copy(deep=True))
+
+    def persist_daily_snapshot(self, record: LedgerSnapshotRecord) -> None:
+        self._snapshot_records.append(record.model_copy(deep=True))
+
+    def load_fill_records(
         self,
-        fill: Fill,
-        position: Position,
-        account: AccountSnapshot,
-    ) -> None:
-        _ = position
-        _ = account
-        self._fills.append(fill.model_copy(deep=True))
-
-    def persist_daily_snapshot(self, date: str, account: AccountSnapshot) -> None:
-        _ = date
-        self._snapshots.append(account.model_copy(deep=True))
-
-    def load_fills(self, session_id: str | None = None) -> list[Fill]:
-        fills = [fill.model_copy(deep=True) for fill in self._fills]
+        session_id: str | None = None,
+    ) -> list[LedgerFillRecord]:
+        records = [record.model_copy(deep=True) for record in self._fill_records]
         if session_id is None:
-            return fills
-        return [fill for fill in fills if fill.session_id == session_id]
+            return records
+        return [record for record in records if record.fill.session_id == session_id]
 
-    def load_snapshots(self, session_id: str | None = None) -> list[AccountSnapshot]:
-        snapshots = [snapshot.model_copy(deep=True) for snapshot in self._snapshots]
+    def load_snapshot_records(
+        self,
+        session_id: str | None = None,
+    ) -> list[LedgerSnapshotRecord]:
+        records = [record.model_copy(deep=True) for record in self._snapshot_records]
         if session_id is None:
-            return snapshots
-        return [snapshot for snapshot in snapshots if snapshot.session_id == session_id]
+            return records
+        return [record for record in records if record.account.session_id == session_id]
 
 
 class TradeLedger:
     """Collects trade logs and daily account snapshots through public exports."""
 
-    _TRADE_COLUMNS = [
+    _TRADE_COLUMNS = (
         "order_id",
         "timestamp",
         "ticker",
@@ -79,8 +95,8 @@ class TradeLedger:
         "shares_after",
         "avg_cost_after",
         "session_id",
-    ]
-    _PORTFOLIO_COLUMNS = [
+    )
+    _PORTFOLIO_COLUMNS = (
         "date",
         "timestamp",
         "cash",
@@ -88,15 +104,10 @@ class TradeLedger:
         "position_value",
         "position_count",
         "session_id",
-    ]
+    )
 
     def __init__(self, backend: TradeLedgerBackend | None = None) -> None:
         self._backend = backend or InMemoryLedgerBackend()
-        self._trade_rows: list[dict[str, Any]] = []
-        self._portfolio_rows: list[dict[str, Any]] = []
-        self._latest_positions: dict[str, Position] = {}
-        self._holding_start_times: dict[str, datetime] = {}
-        self._closed_holding_period_days: list[float] = []
 
     def record_fill(
         self,
@@ -104,7 +115,10 @@ class TradeLedger:
         position: Position,
         account: AccountSnapshot,
     ) -> None:
-        previous_position = self._latest_positions.get(position.ticker)
+        previous_position = self._get_latest_position(
+            ticker=position.ticker,
+            session_id=fill.session_id,
+        )
         previous_shares = (
             previous_position.shares if previous_position is not None else 0.0
         )
@@ -116,49 +130,23 @@ class TradeLedger:
             fill=fill,
         )
 
-        self._backend.persist_fill(fill, position, account)
-        self._trade_rows.append(
-            {
-                "order_id": fill.order_id,
-                "timestamp": fill.timestamp,
-                "ticker": position.ticker,
-                "side": side,
-                "quantity": fill.fill_qty,
-                "price": fill.fill_price,
-                "fee": fill.fee,
-                "slippage": fill.slippage,
-                "trade_value": fill.fill_price * fill.fill_qty,
-                "realized_pnl": realized_pnl,
-                "cash_after": account.cash,
-                "equity_after": account.equity,
-                "shares_after": position.shares,
-                "avg_cost_after": position.avg_cost,
-                "session_id": fill.session_id,
-            }
+        self._backend.persist_fill(
+            LedgerFillRecord(
+                fill=fill.model_copy(deep=True),
+                ticker=position.ticker,
+                side=side,
+                realized_pnl=realized_pnl,
+                position_after=position.model_copy(deep=True),
+                account_after=account.model_copy(deep=True),
+            )
         )
-        self._update_holding_periods(
-            ticker=position.ticker,
-            previous_position=previous_position,
-            next_position=position,
-            timestamp=fill.timestamp,
-        )
-        if position.shares == 0:
-            self._latest_positions.pop(position.ticker, None)
-        else:
-            self._latest_positions[position.ticker] = position.model_copy(deep=True)
 
     def record_daily_snapshot(self, date: str, account: AccountSnapshot) -> None:
-        self._backend.persist_daily_snapshot(date, account)
-        self._portfolio_rows.append(
-            {
-                "date": date,
-                "timestamp": account.timestamp,
-                "cash": account.cash,
-                "equity": account.equity,
-                "position_value": account.equity - account.cash,
-                "position_count": len(account.positions),
-                "session_id": account.session_id,
-            }
+        self._backend.persist_daily_snapshot(
+            LedgerSnapshotRecord(
+                date=date,
+                account=account.model_copy(deep=True),
+            )
         )
 
     def compute_metrics(self) -> dict[str, float | int]:
@@ -253,21 +241,29 @@ class TradeLedger:
         }
 
     def to_trades_dataframe(self) -> pd.DataFrame:
-        if not self._trade_rows:
+        records = self._backend.load_fill_records()
+        if not records:
             return pd.DataFrame(columns=pd.Index(self._TRADE_COLUMNS))
+
         return (
-            pd.DataFrame(self._trade_rows)
-            .reindex(columns=self._TRADE_COLUMNS)
+            pd.DataFrame(
+                [self._trade_record_to_row(record) for record in records],
+                columns=pd.Index(self._TRADE_COLUMNS),
+            )
             .sort_values("timestamp")
             .reset_index(drop=True)
         )
 
     def to_portfolio_dataframe(self) -> pd.DataFrame:
-        if not self._portfolio_rows:
+        records = self._backend.load_snapshot_records()
+        if not records:
             return pd.DataFrame(columns=pd.Index(self._PORTFOLIO_COLUMNS))
+
         return (
-            pd.DataFrame(self._portfolio_rows)
-            .reindex(columns=self._PORTFOLIO_COLUMNS)
+            pd.DataFrame(
+                [self._snapshot_record_to_row(record) for record in records],
+                columns=pd.Index(self._PORTFOLIO_COLUMNS),
+            )
             .sort_values("timestamp")
             .reset_index(drop=True)
         )
@@ -275,6 +271,51 @@ class TradeLedger:
     def to_csv(self, trades_path: str, portfolio_path: str) -> None:
         self.to_trades_dataframe().to_csv(trades_path, index=False)
         self.to_portfolio_dataframe().to_csv(portfolio_path, index=False)
+
+    def _trade_record_to_row(self, record: LedgerFillRecord) -> dict[str, object]:
+        return {
+            "order_id": record.fill.order_id,
+            "timestamp": record.fill.timestamp,
+            "ticker": record.ticker,
+            "side": record.side,
+            "quantity": record.fill.fill_qty,
+            "price": record.fill.fill_price,
+            "fee": record.fill.fee,
+            "slippage": record.fill.slippage,
+            "trade_value": record.fill.fill_price * record.fill.fill_qty,
+            "realized_pnl": record.realized_pnl,
+            "cash_after": record.account_after.cash,
+            "equity_after": record.account_after.equity,
+            "shares_after": record.position_after.shares,
+            "avg_cost_after": record.position_after.avg_cost,
+            "session_id": record.fill.session_id,
+        }
+
+    def _snapshot_record_to_row(
+        self,
+        record: LedgerSnapshotRecord,
+    ) -> dict[str, object]:
+        return {
+            "date": record.date,
+            "timestamp": record.account.timestamp,
+            "cash": record.account.cash,
+            "equity": record.account.equity,
+            "position_value": record.account.equity - record.account.cash,
+            "position_count": len(record.account.positions),
+            "session_id": record.account.session_id,
+        }
+
+    def _get_latest_position(
+        self,
+        *,
+        ticker: str,
+        session_id: str,
+    ) -> Position | None:
+        records = self._backend.load_fill_records(session_id=session_id)
+        for record in reversed(records):
+            if record.ticker == ticker:
+                return record.position_after.model_copy(deep=True)
+        return None
 
     def _calculate_realized_pnl(
         self,
@@ -284,14 +325,14 @@ class TradeLedger:
         fill: Fill,
     ) -> float:
         if previous_position is None or previous_position.shares == 0:
-            return -fill.fee
+            return -(fill.fee + fill.slippage)
 
         if previous_position.shares * signed_qty > 0:
-            return -fill.fee
+            return -(fill.fee + fill.slippage)
 
         close_qty = min(abs(previous_position.shares), abs(signed_qty))
         if close_qty == 0:
-            return -fill.fee
+            return -(fill.fee + fill.slippage)
 
         if previous_position.shares > 0 and signed_qty < 0:
             gross_realized_pnl = (
@@ -301,7 +342,7 @@ class TradeLedger:
             gross_realized_pnl = (
                 previous_position.avg_cost - fill.fill_price
             ) * close_qty
-        return gross_realized_pnl - fill.fee
+        return gross_realized_pnl - fill.fee - fill.slippage
 
     def _calculate_max_drawdown_duration(self, drawdowns: pd.Series) -> int:
         max_duration = 0
@@ -314,44 +355,43 @@ class TradeLedger:
                 current_duration = 0
         return max_duration
 
-    def _update_holding_periods(
-        self,
-        *,
-        ticker: str,
-        previous_position: Position | None,
-        next_position: Position,
-        timestamp: datetime,
-    ) -> None:
-        previous_sign = self._position_sign(
-            previous_position.shares if previous_position is not None else 0.0
-        )
-        next_sign = self._position_sign(next_position.shares)
-
-        if previous_sign == 0 and next_sign != 0:
-            self._holding_start_times[ticker] = timestamp
-            return
-
-        if previous_sign != 0 and next_sign == 0:
-            self._close_holding_period(ticker=ticker, timestamp=timestamp)
-            return
-
-        if previous_sign != 0 and next_sign != 0 and previous_sign != next_sign:
-            self._close_holding_period(ticker=ticker, timestamp=timestamp)
-            self._holding_start_times[ticker] = timestamp
-
-    def _close_holding_period(self, *, ticker: str, timestamp: datetime) -> None:
-        started_at = self._holding_start_times.pop(ticker, None)
-        if started_at is None:
-            return
-        holding_days = (timestamp - started_at).total_seconds() / 86_400
-        self._closed_holding_period_days.append(holding_days)
-
     def _calculate_avg_holding_period_days(self) -> float:
-        if not self._closed_holding_period_days:
-            return 0.0
-        return sum(self._closed_holding_period_days) / len(
-            self._closed_holding_period_days
+        fill_records = sorted(
+            self._backend.load_fill_records(),
+            key=lambda record: record.fill.timestamp,
         )
+        holding_start_times: dict[tuple[str, str], datetime] = {}
+        previous_shares_by_key: dict[tuple[str, str], float] = {}
+        closed_holding_period_days: list[float] = []
+
+        for record in fill_records:
+            key = (record.fill.session_id, record.ticker)
+            previous_shares = previous_shares_by_key.get(key, 0.0)
+            next_shares = record.position_after.shares
+            previous_sign = self._position_sign(previous_shares)
+            next_sign = self._position_sign(next_shares)
+
+            if previous_sign == 0 and next_sign != 0:
+                holding_start_times[key] = record.fill.timestamp
+            elif previous_sign != 0 and next_sign == 0:
+                started_at = holding_start_times.pop(key, None)
+                if started_at is not None:
+                    closed_holding_period_days.append(
+                        (record.fill.timestamp - started_at).total_seconds() / 86_400
+                    )
+            elif previous_sign != 0 and next_sign != 0 and previous_sign != next_sign:
+                started_at = holding_start_times.get(key)
+                if started_at is not None:
+                    closed_holding_period_days.append(
+                        (record.fill.timestamp - started_at).total_seconds() / 86_400
+                    )
+                holding_start_times[key] = record.fill.timestamp
+
+            previous_shares_by_key[key] = next_shares
+
+        if not closed_holding_period_days:
+            return 0.0
+        return sum(closed_holding_period_days) / len(closed_holding_period_days)
 
     def _position_sign(self, shares: float) -> int:
         if shares > 0:

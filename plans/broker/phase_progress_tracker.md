@@ -77,7 +77,7 @@
 | --- | --- | --- | --- | --- |
 | Phase 1 数据模型层 | Completed | `broker/` Phase 1 已落地，含模型/配置/事件和 pytest 覆盖 | Phase 2 起点：先写市价买入立即成交的失败测试，再实现最小 `place_order()` | `uv run pytest test/test_broker_models.py -q` + `basedpyright --baselinefile` + `ruff` 全绿 |
 | Phase 2 撮合引擎 + Broker 接口 | Completed | Broker 核心接口、撮合、风控、事件 hooks 已落地并有 pytest 覆盖 | Phase 3 起点：先写记录单笔 fill 后可回读的失败测试，再引入最小账本 | Phase 2 测试 + 质量门禁全绿 |
-| Phase 3 账本 + 交易日志 | Completed | `ledger.py`、核心指标、CSV 导出与 `PortfolioManager.sync_from_broker()` 已落地并有 pytest 覆盖 | 按当前任务边界暂停；如继续推进，下一步才进入 Phase 4 execution node 的首个失败测试 | Phase 3 测试 + 质量门禁全绿 |
+| Phase 3 账本 + 交易日志 | Completed | `ledger.py`、backend-backed 账本读回、核心指标、CSV 导出与 `PortfolioManager.sync_from_broker()` 已收口并有 pytest 覆盖 | 按当前任务边界暂停；如继续推进，下一步才进入 Phase 4 execution node 的首个失败测试 | Phase 3 测试 + 质量门禁全绿 |
 | Phase 4 主工作流集成 | Not Started | 目前仍是 `PM_agent -> END` | 先写 execution node 接入状态更新的失败测试 | Phase 4 测试 + 图结构验证 + 质量门禁全绿 |
 | Phase 5 UI + 测试 | Not Started | 现有 Streamlit 仅支持历史分析验证 | 先写回测结果展示的数据接口测试，再接 UI | Phase 5 测试 + 手动 UI 验证 + 质量门禁全绿 |
 
@@ -228,10 +228,12 @@
 - `broker/ledger.py` 现已包含：
   - `TradeLedgerBackend` Protocol
   - `InMemoryLedgerBackend`
+  - `LedgerFillRecord` / `LedgerSnapshotRecord`
   - `TradeLedger.record_fill()` / `record_daily_snapshot()`
   - `TradeLedger.to_trades_dataframe()` / `to_portfolio_dataframe()` / `to_csv()`
   - `TradeLedger.compute_metrics()`，当前覆盖 `total_return` / `annualized_return` / `max_drawdown` / `max_drawdown_duration` / `sharpe_ratio` / `win_rate` / `profit_factor` / `avg_win` / `avg_loss` / `payoff_ratio` / `number_of_trades` / `avg_holding_period_days`
-- `TradeLedger` 已通过公共接口导出成交日志与账户快照，并复用 `test/trade.py` 的多空符号语义而未整段照搬脚本实现。
+- `TradeLedger` 现已真正以 backend 作为账本数据源：同一个 backend 下重新实例化 `TradeLedger` 后，仍可通过公共接口读回 trades / snapshots / metrics。
+- `TradeLedger` 的 `realized_pnl` 口径现已与 `test/trade.py` 对齐：平仓净额按 `gross - fee - slippage` 结算，而不是只扣手续费。
 - `broker/__init__.py` 已增补 Phase 3 公共导出：`TradeLedger` / `TradeLedgerBackend` / `InMemoryLedgerBackend`
 - `dataflow/portfolio_manager.py` 已新增 `sync_from_broker(broker)`，可把 broker 公共持仓同步到现有 `side` / `qty_pct` / `avg_cost` 结构。
 
@@ -241,9 +243,15 @@
 - [x] RED -> GREEN: 最小 `TradeLedger` + `InMemoryLedgerBackend`，支持单笔 fill 记录与公共导出读回
 - [x] RED -> GREEN: `test_trade_ledger_records_daily_snapshot_and_exposes_portfolio_export`
 - [x] RED -> GREEN: 日度账户快照记录与账户级 DataFrame 导出
+- [x] RED -> GREEN: `test_trade_ledger_rehydrates_trades_and_snapshots_from_shared_backend`
+- [x] RED -> GREEN: backend-backed 账本重建，解决“只写不读”的伪抽象问题
+- [x] RED -> GREEN: `test_trade_ledger_exports_csv_from_persisted_backend_records`
+- [x] RED -> GREEN: CSV 导出从 backend persisted records 回读后仍可正常落盘
 - [x] RED -> GREEN: `test_trade_ledger_computes_core_metrics_from_snapshots_and_round_trip_fills`
 - [x] RED -> GREEN: 核心绩效指标 + `avg_holding_period_days` / `max_drawdown_duration`
+- [x] RED -> GREEN: 将 `realized_pnl` 修正为 `gross - fee - slippage`，与 `test/trade.py` 参考语义收口
 - [x] RED -> GREEN: `test_portfolio_manager_syncs_broker_positions_and_clears_flat_tickers`
+- [x] RED -> GREEN: `test_portfolio_manager_syncs_short_positions_with_negative_position_pct`
 - [x] REFACTOR: 在 `broker/__init__.py` 统一导出 Phase 3 公共类型，并将 pandas 相关实现收敛到可通过 `basedpyright --baselinefile` 的稳定写法
 
 **验证结果**
@@ -343,6 +351,8 @@
 - [x] Phase 2 当前范围完成并收口
 - [x] 启动并完成 Phase 3：落地 `broker/ledger.py`、`TradeLedgerBackend`、`InMemoryLedgerBackend` 与 `TradeLedger`
 - [x] 完成 Phase 3 账本行为测试：fill 读回、daily snapshot 导出、核心 metrics、持有期统计
+- [x] 完成 Phase 3 收尾：backend-backed ledger reload、`to_csv()` 导出验证、short 仓位同步覆盖
+- [x] 将 Phase 3 `realized_pnl` 口径修正为 `gross - fee - slippage`，与 `test/trade.py` 语义对齐
 - [x] 完成 `PortfolioManager.sync_from_broker()` 的最小联动与 pytest 覆盖
 - [x] 在 `broker/__init__.py` 增补 Phase 3 公共导出
 - [x] `uv run pytest test/test_broker_models.py test/test_broker_engine.py test/test_broker_ledger.py test/test_portfolio_manager.py -q` 通过

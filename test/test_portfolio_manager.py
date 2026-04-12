@@ -69,3 +69,41 @@ def test_portfolio_manager_syncs_broker_positions_and_clears_flat_tickers() -> N
 
     assert flat_position["side"] == "flat"
     assert flat_position["qty_pct"] == pytest.approx(0.0)
+
+
+def test_portfolio_manager_syncs_short_positions_with_negative_position_pct() -> None:
+    broker = MockBrokerEngine(
+        BrokerConfig(
+            initial_cash=100_000.0,
+            commission_rate=0.001,
+            slippage_rate=0.0005,
+            allow_short=True,
+        )
+    )
+    broker.on_bar(
+        {
+            "AAPL": {
+                "open": 99.0,
+                "high": 101.0,
+                "low": 98.0,
+                "close": 100.0,
+            }
+        }
+    )
+    broker.place_order(
+        Order(
+            ticker="AAPL",
+            side=OrderSide.SELL,
+            type=OrderType.MARKET,
+            qty=10,
+        )
+    )
+
+    portfolio_manager = PortfolioManager()
+    portfolio_manager.sync_from_broker(broker)
+
+    synced_position = portfolio_manager.get_position("AAPL")
+
+    assert synced_position["side"] == "short"
+    assert synced_position["qty_pct"] == pytest.approx(-1_000.0 / 99_998.5005)
+    assert synced_position["avg_cost"] == pytest.approx(99.95)
