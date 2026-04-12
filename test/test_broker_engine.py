@@ -262,3 +262,401 @@ def test_market_buy_is_rejected_when_it_would_breach_max_position_pct() -> None:
     account = broker.get_account()
     assert account.cash == pytest.approx(100_000.0)
     assert account.equity == pytest.approx(100_000.0)
+
+
+def test_canceling_a_pending_limit_order_prevents_future_fills() -> None:
+    broker = MockBrokerEngine(
+        BrokerConfig(
+            initial_cash=100_000.0,
+            commission_rate=0.001,
+            slippage_rate=0.0005,
+        )
+    )
+    broker.on_bar(
+        {
+            "AAPL": {
+                "open": 100.0,
+                "high": 101.0,
+                "low": 99.5,
+                "close": 100.0,
+            }
+        }
+    )
+
+    placed_order = broker.place_order(
+        Order(
+            ticker="AAPL",
+            side=OrderSide.BUY,
+            type=OrderType.LIMIT,
+            qty=10,
+            limit_price=99.0,
+        )
+    )
+    canceled_order = broker.cancel_order(placed_order.id)
+
+    assert canceled_order.status is OrderStatus.CANCELED
+    assert [order.id for order in broker.get_orders(OrderStatus.CANCELED)] == [
+        placed_order.id
+    ]
+    assert broker.get_orders(OrderStatus.NEW) == []
+
+    broker.on_bar(
+        {
+            "AAPL": {
+                "open": 99.0,
+                "high": 100.0,
+                "low": 98.0,
+                "close": 98.5,
+            }
+        }
+    )
+
+    stored_order = broker.get_order(placed_order.id)
+    assert stored_order is not None
+    assert stored_order.status is OrderStatus.CANCELED
+    assert broker.get_fills(placed_order.id) == []
+    assert broker.get_position("AAPL") is None
+
+
+def test_limit_sell_order_stays_pending_until_a_future_bar_touches_the_limit() -> None:
+    broker = MockBrokerEngine(
+        BrokerConfig(
+            initial_cash=100_000.0,
+            commission_rate=0.001,
+            slippage_rate=0.0005,
+        )
+    )
+    broker.on_bar(
+        {
+            "AAPL": {
+                "open": 99.0,
+                "high": 101.0,
+                "low": 98.0,
+                "close": 100.0,
+            }
+        }
+    )
+    broker.place_order(
+        Order(
+            ticker="AAPL",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            qty=10,
+        )
+    )
+
+    limit_order = broker.place_order(
+        Order(
+            ticker="AAPL",
+            side=OrderSide.SELL,
+            type=OrderType.LIMIT,
+            qty=10,
+            limit_price=105.0,
+        )
+    )
+
+    assert limit_order.status is OrderStatus.NEW
+    assert broker.get_position("AAPL") is not None
+
+    broker.on_bar(
+        {
+            "AAPL": {
+                "open": 103.0,
+                "high": 106.0,
+                "low": 102.0,
+                "close": 104.0,
+            }
+        }
+    )
+
+    stored_order = broker.get_order(limit_order.id)
+    assert stored_order is not None
+    assert stored_order.status is OrderStatus.FILLED
+
+    fills = broker.get_fills(limit_order.id)
+    assert len(fills) == 1
+    assert fills[0].fill_price == pytest.approx(105.0)
+    assert fills[0].fee == pytest.approx(1.05)
+    assert fills[0].slippage == pytest.approx(0.0)
+
+    assert broker.get_position("AAPL") is None
+    account = broker.get_account()
+    assert account.cash == pytest.approx(100_047.4495)
+    assert account.equity == pytest.approx(100_047.4495)
+
+
+def test_market_sell_can_open_a_short_and_market_buy_can_cover_it() -> None:
+    broker = MockBrokerEngine(
+        BrokerConfig(
+            initial_cash=100_000.0,
+            commission_rate=0.001,
+            slippage_rate=0.0005,
+            allow_short=True,
+        )
+    )
+    broker.on_bar(
+        {
+            "AAPL": {
+                "open": 99.0,
+                "high": 101.0,
+                "low": 98.0,
+                "close": 100.0,
+            }
+        }
+    )
+
+    short_order = broker.place_order(
+        Order(
+            ticker="AAPL",
+            side=OrderSide.SELL,
+            type=OrderType.MARKET,
+            qty=10,
+        )
+    )
+
+    assert short_order.status is OrderStatus.FILLED
+    short_position = broker.get_position("AAPL")
+    assert short_position is not None
+    assert short_position.shares == pytest.approx(-10.0)
+    assert short_position.avg_cost == pytest.approx(99.95)
+    assert short_position.side == "SHORT"
+    assert short_position.unrealized_pnl == pytest.approx(-0.5)
+
+    account_after_short = broker.get_account()
+    assert account_after_short.cash == pytest.approx(100_998.5005)
+    assert account_after_short.equity == pytest.approx(99_998.5005)
+
+    broker.on_bar(
+        {
+            "AAPL": {
+                "open": 91.0,
+                "high": 92.0,
+                "low": 89.0,
+                "close": 90.0,
+            }
+        }
+    )
+
+    cover_order = broker.place_order(
+        Order(
+            ticker="AAPL",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            qty=10,
+        )
+    )
+
+    assert cover_order.status is OrderStatus.FILLED
+    assert broker.get_position("AAPL") is None
+
+    fills = broker.get_fills()
+    assert len(fills) == 2
+    assert fills[-1].fill_price == pytest.approx(90.045)
+    assert fills[-1].fee == pytest.approx(0.90045)
+    assert fills[-1].slippage == pytest.approx(0.45)
+
+    account_after_cover = broker.get_account()
+    assert account_after_cover.cash == pytest.approx(100_097.15005)
+    assert account_after_cover.equity == pytest.approx(100_097.15005)
+
+
+def test_market_short_sell_is_rejected_when_shorting_is_disabled() -> None:
+    broker = MockBrokerEngine(
+        BrokerConfig(
+            initial_cash=100_000.0,
+            commission_rate=0.001,
+            slippage_rate=0.0005,
+            allow_short=False,
+        )
+    )
+    broker.on_bar(
+        {
+            "AAPL": {
+                "open": 99.0,
+                "high": 101.0,
+                "low": 98.0,
+                "close": 100.0,
+            }
+        }
+    )
+
+    placed_order = broker.place_order(
+        Order(
+            ticker="AAPL",
+            side=OrderSide.SELL,
+            type=OrderType.MARKET,
+            qty=10,
+        )
+    )
+
+    assert placed_order.status is OrderStatus.REJECTED
+    assert broker.get_fills() == []
+    assert broker.get_position("AAPL") is None
+
+    account = broker.get_account()
+    assert account.cash == pytest.approx(100_000.0)
+    assert account.equity == pytest.approx(100_000.0)
+
+
+def test_market_fill_emits_order_and_fill_callbacks_and_records_events() -> None:
+    broker = MockBrokerEngine(
+        BrokerConfig(
+            initial_cash=100_000.0,
+            commission_rate=0.001,
+            slippage_rate=0.0005,
+        )
+    )
+    order_statuses: list[OrderStatus] = []
+    fill_callback_payloads: list[tuple[float, float, float]] = []
+
+    def on_order(order: Order) -> None:
+        order_statuses.append(order.status)
+
+    def on_fill(fill_price: float, shares: float, equity: float) -> None:
+        fill_callback_payloads.append((fill_price, shares, equity))
+
+    broker.register_on_order(on_order)
+    broker.register_on_fill(
+        lambda fill, position, account: on_fill(
+            fill.fill_price,
+            position.shares,
+            account.equity,
+        )
+    )
+    broker.on_bar(
+        {
+            "AAPL": {
+                "open": 99.0,
+                "high": 101.0,
+                "low": 98.0,
+                "close": 100.0,
+            }
+        }
+    )
+
+    broker.place_order(
+        Order(
+            ticker="AAPL",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            qty=10,
+        )
+    )
+
+    assert order_statuses == [OrderStatus.NEW, OrderStatus.FILLED]
+    assert fill_callback_payloads == [
+        (pytest.approx(100.05), 10.0, pytest.approx(99_998.4995))
+    ]
+
+    event_types = [event.event_type for event in broker.get_event_log()]
+    assert event_types == ["order_placed", "order_filled"]
+    assert broker.get_event_log()[0].ticker == "AAPL"
+    assert broker.get_event_log()[1].details["order_status"] == "FILLED"
+
+
+def test_rejected_and_canceled_orders_are_recorded_in_event_log() -> None:
+    broker = MockBrokerEngine(
+        BrokerConfig(
+            initial_cash=100_000.0,
+            commission_rate=0.001,
+            slippage_rate=0.0005,
+            allow_short=False,
+        )
+    )
+    broker.on_bar(
+        {
+            "AAPL": {
+                "open": 100.0,
+                "high": 101.0,
+                "low": 99.0,
+                "close": 100.0,
+            }
+        }
+    )
+
+    rejected_order = broker.place_order(
+        Order(
+            ticker="AAPL",
+            side=OrderSide.SELL,
+            type=OrderType.MARKET,
+            qty=5,
+        )
+    )
+    pending_order = broker.place_order(
+        Order(
+            ticker="AAPL",
+            side=OrderSide.BUY,
+            type=OrderType.LIMIT,
+            qty=5,
+            limit_price=95.0,
+        )
+    )
+    canceled_order = broker.cancel_order(pending_order.id)
+
+    assert rejected_order.status is OrderStatus.REJECTED
+    assert canceled_order.status is OrderStatus.CANCELED
+
+    event_types = [event.event_type for event in broker.get_event_log()]
+    assert event_types == [
+        "order_placed",
+        "risk_check_failed",
+        "order_rejected",
+        "order_placed",
+        "order_canceled",
+    ]
+    assert broker.get_event_log()[1].details["reason"] == "short selling is disabled"
+    assert broker.get_event_log()[-1].details["order_id"] == pending_order.id
+
+
+def test_account_snapshot_tracks_multiple_tickers_through_public_queries() -> None:
+    broker = MockBrokerEngine(
+        BrokerConfig(
+            initial_cash=100_000.0,
+            commission_rate=0.001,
+            slippage_rate=0.0005,
+        )
+    )
+    broker.on_bar(
+        {
+            "AAPL": {
+                "open": 99.0,
+                "high": 101.0,
+                "low": 98.0,
+                "close": 100.0,
+            },
+            "MSFT": {
+                "open": 199.0,
+                "high": 201.0,
+                "low": 198.0,
+                "close": 200.0,
+            },
+        }
+    )
+
+    aapl_order = broker.place_order(
+        Order(
+            ticker="AAPL",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            qty=10,
+        )
+    )
+    msft_order = broker.place_order(
+        Order(
+            ticker="MSFT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            qty=5,
+        )
+    )
+
+    assert aapl_order.status is OrderStatus.FILLED
+    assert msft_order.status is OrderStatus.FILLED
+
+    positions = broker.get_positions()
+    assert {position.ticker for position in positions} == {"AAPL", "MSFT"}
+
+    account = broker.get_account()
+    assert account.cash == pytest.approx(97_996.999)
+    assert account.equity == pytest.approx(99_996.999)
+    assert {position.ticker for position in account.positions} == {"AAPL", "MSFT"}

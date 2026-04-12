@@ -76,7 +76,7 @@
 | Phase | 状态 | 当前判断 | 下一步最小 TDD 切片 | 完成门禁 |
 | --- | --- | --- | --- | --- |
 | Phase 1 数据模型层 | Completed | `broker/` Phase 1 已落地，含模型/配置/事件和 pytest 覆盖 | Phase 2 起点：先写市价买入立即成交的失败测试，再实现最小 `place_order()` | `uv run pytest test/test_broker_models.py -q` + `basedpyright --baselinefile` + `ruff` 全绿 |
-| Phase 2 撮合引擎 + Broker 接口 | Not Started | 只有 `test/trade.py` 的脚本级执行逻辑可复用 | 先写市价买入成交的行为测试，再抽出最小 `MockBrokerEngine` | Phase 2 测试 + 质量门禁全绿 |
+| Phase 2 撮合引擎 + Broker 接口 | Completed | Broker 核心接口、撮合、风控、事件 hooks 已落地并有 pytest 覆盖 | Phase 3 起点：先写记录单笔 fill 后可回读的失败测试，再引入最小账本 | Phase 2 测试 + 质量门禁全绿 |
 | Phase 3 账本 + 交易日志 | Not Started | 无 `ledger.py`，`PortfolioManager` 也无 broker 同步口 | 先写记录单笔 fill 的失败测试，再实现最小账本 | Phase 3 测试 + 质量门禁全绿 |
 | Phase 4 主工作流集成 | Not Started | 目前仍是 `PM_agent -> END` | 先写 execution node 接入状态更新的失败测试 | Phase 4 测试 + 图结构验证 + 质量门禁全绿 |
 | Phase 5 UI + 测试 | Not Started | 现有 Streamlit 仅支持历史分析验证 | 先写回测结果展示的数据接口测试，再接 UI | Phase 5 测试 + 手动 UI 验证 + 质量门禁全绿 |
@@ -138,7 +138,7 @@
 
 ### Phase 2 撮合引擎 + Broker 接口
 
-**状态**: `In Progress`
+**状态**: `Completed`
 
 **本阶段目标**
 
@@ -155,13 +155,18 @@
   - `broker/engine.py`
   - `broker/risk_checks.py`
   - `test/test_broker_engine.py`
+  - `broker/__init__.py` Phase 2 导出
 - `MockBrokerEngine` 现已具备这些可观察行为：
   - `BrokerGateway` 公共查询接口：`get_account()` / `get_position()` / `get_positions()` / `get_order()` / `get_orders()` / `get_fills()`
   - 市价单按 `close ± slippage` 立即成交
-  - 限价买单先挂起，后续 `on_bar()` 在价格触及时成交
-  - 多空统一持仓更新已覆盖“开多、加多、平多、反手”所需的核心符号语义
-  - 下单前风控已覆盖资金不足（含滑点+手续费）与 `max_position_pct`
-- 事件 hooks / 事件日志、总仓位上限、更多订单生命周期场景仍待后续切片完成。
+  - 限价买单 / 限价卖单先挂起，后续 `on_bar()` 在价格触及时成交
+  - 取消挂单后不会被未来 bar 再次成交
+  - 多空统一持仓更新已覆盖开多、加多、平多、开空、回补与反手所需的核心符号语义
+  - 下单前风控已覆盖资金不足（含滑点+手续费）、`max_position_pct` 与 `allow_short`
+  - 订单 / 成交事件 hooks：`register_on_order()` / `register_on_fill()`
+  - 结构化事件日志：`get_event_log()`
+  - 多 ticker 账户与持仓查询
+- `PARTIALLY_FILLED` 与总仓位上限 `max_total_position_pct` 仍维持为后续扩展点；按当前计划与日线简化撮合假设，不作为 Phase 2 完成阻塞。
 
 **TDD 执行记录**
 
@@ -176,9 +181,21 @@
 - [x] RED -> GREEN: `test_market_buy_is_rejected_when_it_would_breach_max_position_pct`
 - [x] RED -> GREEN: 单票仓位上限 `max_position_pct` 前置校验
 - [x] REFACTOR: 提取 `_calculate_next_position()`，把持仓符号语义收敛到引擎内部
-- [ ] RED: 限价卖单 / 取消订单行为测试
-- [ ] RED: 做空开仓 / 回补行为测试
-- [ ] RED: `allow_short=False` 的拒单测试
+- [x] RED -> GREEN: `test_canceling_a_pending_limit_order_prevents_future_fills`
+- [x] RED -> GREEN: `cancel_order()` + `get_orders(status=...)` 生命周期查询
+- [x] RED -> GREEN: `test_limit_sell_order_stays_pending_until_a_future_bar_touches_the_limit`
+- [x] RED -> GREEN: 限价卖单触发成交
+- [x] RED -> GREEN: `test_market_sell_can_open_a_short_and_market_buy_can_cover_it`
+- [x] RED -> GREEN: 做空开仓 / 回补平仓的现金与持仓语义
+- [x] RED -> GREEN: `test_market_short_sell_is_rejected_when_shorting_is_disabled`
+- [x] RED -> GREEN: `allow_short=False` 的拒单校验
+- [x] RED -> GREEN: `test_market_fill_emits_order_and_fill_callbacks_and_records_events`
+- [x] RED -> GREEN: `register_on_order()` / `register_on_fill()` / `get_event_log()`
+- [x] RED -> GREEN: `test_rejected_and_canceled_orders_are_recorded_in_event_log`
+- [x] RED -> GREEN: 拒单 / 撤单事件落盘
+- [x] RED -> GREEN: `test_account_snapshot_tracks_multiple_tickers_through_public_queries`
+- [x] RED -> GREEN: 多 ticker 账户与持仓查询
+- [x] REFACTOR: 在 `broker/__init__.py` 统一导出 Phase 2 公共类型
 
 **验证结果**
 
@@ -189,7 +206,7 @@
 
 **阻塞项**
 
-- [ ] 无外部阻塞；剩余工作主要是继续按 TDD 补齐 Phase 2 其余行为切片
+- [x] 无外部阻塞；Phase 2 当前范围已收口，后续进入 Phase 3
 
 ### Phase 3 账本 + 交易日志
 
@@ -291,10 +308,14 @@
 - [x] `ruff check .` 通过
 - [x] 启动 Phase 2：完成 `BrokerGateway` / `MockBrokerEngine` / `PreTradeRiskChecker` 的首批 TDD 切片
 - [x] 完成 Phase 2 首批公共行为测试：市价买入、限价挂单触发、平多、资金不足拒单、单票仓位上限拒单
+- [x] 完成 Phase 2 后续公共行为测试：撤单、限价卖出、做空开仓/回补、`allow_short=False` 拒单、多 ticker 查询
+- [x] 完成 Phase 2 事件面：`register_on_order()` / `register_on_fill()` / `get_event_log()`
+- [x] 在 `broker/__init__.py` 增补 Phase 2 公共导出
 - [x] `uv run pytest test/test_broker_models.py test/test_broker_engine.py -q` 通过
 - [x] `uv run basedpyright --baselinefile bugs/basedpyright/baseline.json` 通过
 - [x] `uv run ruff check .` 通过（含 Phase 2 增量）
 - [x] `uv run ruff format --check .` 通过（含 Phase 2 增量）
+- [x] Phase 2 当前范围完成并收口
 - [x] `ruff format --check .` 通过
 - [x] 新建 `broker/__init__.py` / `broker/models.py` / `broker/config.py` / `broker/events.py`
 - [x] 新建 `test/test_broker_models.py` 与 `test/conftest.py`

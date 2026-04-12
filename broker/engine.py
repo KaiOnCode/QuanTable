@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import TypedDict
 
 from broker.config import BrokerConfig
+from broker.events import BrokerEvent
 from broker.gateway import BrokerGateway
 from broker.models import (
     AccountSnapshot,
@@ -37,6 +39,11 @@ class MockBrokerEngine(BrokerGateway):
         self._orders: dict[str, Order] = {}
         self._fills: list[Fill] = []
         self._latest_bars: dict[str, BarData] = {}
+        self._event_log: list[BrokerEvent] = []
+        self._on_fill_callbacks: list[
+            Callable[[Fill, Position, AccountSnapshot], None]
+        ] = []
+        self._on_order_callbacks: list[Callable[[Order], None]] = []
 
     def on_bar(self, bars: dict[str, BarData]) -> None:
         self._latest_bars.update(bars)
@@ -73,23 +80,64 @@ class MockBrokerEngine(BrokerGateway):
             return None
         return self._build_position_view(position)
 
+    def register_on_fill(
+        self, callback: Callable[[Fill, Position, AccountSnapshot], None]
+    ) -> None:
+        self._on_fill_callbacks.append(callback)
+
+    def register_on_order(self, callback: Callable[[Order], None]) -> None:
+        self._on_order_callbacks.append(callback)
+
+    def get_event_log(self) -> list[BrokerEvent]:
+        return [event.model_copy(deep=True) for event in self._event_log]
+
     def place_order(self, order: Order) -> Order:
         stored_order = order.model_copy(deep=True)
         stored_order.updated_at = _utc_now()
         self._orders[stored_order.id] = stored_order
+        self._record_order_event("order_placed", stored_order)
+        self._notify_order_callbacks(stored_order)
 
         reference_price = self._get_reference_price(stored_order.ticker)
         account_before = self.get_account()
-        passed, _reason = self._risk_checker.check(
+        passed, reason = self._risk_checker.check(
             stored_order,
             account_before,
             reference_price=reference_price,
         )
 
-        if not passed or reference_price is None:
+        if reference_price is None:
             stored_order.status = OrderStatus.REJECTED
             stored_order.updated_at = _utc_now()
             self._orders[stored_order.id] = stored_order
+            self._record_event(
+                "risk_check_failed",
+                order=stored_order,
+                details={"reason": "missing market data"},
+            )
+            self._record_order_event(
+                "order_rejected",
+                stored_order,
+                details={"reason": "missing market data"},
+            )
+            self._notify_order_callbacks(stored_order)
+            return stored_order.model_copy(deep=True)
+
+        if not passed:
+            stored_order.status = OrderStatus.REJECTED
+            stored_order.updated_at = _utc_now()
+            self._orders[stored_order.id] = stored_order
+            self._record_event(
+                "risk_check_failed",
+                order=stored_order,
+                details={"reason": reason},
+            )
+            self._record_order_event(
+                "order_rejected",
+                stored_order,
+                details={"reason": reason},
+            )
+            self._notify_order_callbacks(stored_order)
             return stored_order.model_copy(deep=True)
 
         if stored_order.type is OrderType.MARKET:
@@ -99,8 +147,12 @@ class MockBrokerEngine(BrokerGateway):
 
     def cancel_order(self, order_id: str) -> Order:
         order = self._orders[order_id]
+        if order.status is not OrderStatus.NEW:
+            return order.model_copy(deep=True)
         order.status = OrderStatus.CANCELED
         order.updated_at = _utc_now()
+        self._record_order_event("order_canceled", order)
+        self._notify_order_callbacks(order)
         return order.model_copy(deep=True)
 
     def get_order(self, order_id: str) -> Order | None:
@@ -153,6 +205,17 @@ class MockBrokerEngine(BrokerGateway):
         if not passed:
             order.status = OrderStatus.REJECTED
             order.updated_at = _utc_now()
+            self._record_event(
+                "risk_check_failed",
+                order=order,
+                details={"reason": "risk check failed during limit execution"},
+            )
+            self._record_order_event(
+                "order_rejected",
+                order,
+                details={"reason": "risk check failed during limit execution"},
+            )
+            self._notify_order_callbacks(order)
             return
 
         self._execute_fill(order, fill_price=limit_price, reference_price=limit_price)
@@ -183,19 +246,35 @@ class MockBrokerEngine(BrokerGateway):
             self._positions[order.ticker] = updated_position
         self._cash -= signed_trade_value
         self._cash -= fee
-        self._fills.append(
-            Fill(
-                order_id=order.id,
-                fill_price=fill_price,
-                fill_qty=order.qty,
-                fee=fee,
-                slippage=slippage,
-                session_id=order.session_id,
-            )
+        fill = Fill(
+            order_id=order.id,
+            fill_price=fill_price,
+            fill_qty=order.qty,
+            fee=fee,
+            slippage=slippage,
+            session_id=order.session_id,
         )
+        self._fills.append(fill)
         order.status = OrderStatus.FILLED
         order.updated_at = _utc_now()
         self._orders[order.id] = order
+        position_after = self.get_position(order.ticker)
+        if position_after is None:
+            position_after = Position(
+                ticker=order.ticker,
+                shares=0.0,
+                avg_cost=0.0,
+                session_id=order.session_id,
+            )
+        account_after = self.get_account()
+        self._record_order_event("order_filled", order)
+        for callback in self._on_fill_callbacks:
+            callback(
+                fill.model_copy(deep=True),
+                position_after.model_copy(deep=True),
+                account_after.model_copy(deep=True),
+            )
+        self._notify_order_callbacks(order)
 
     def _build_position_view(self, position: Position) -> Position:
         mark_price = self._get_mark_price(position.ticker, position.avg_cost)
@@ -267,3 +346,41 @@ class MockBrokerEngine(BrokerGateway):
             avg_cost=fill_price,
             session_id=session_id,
         )
+
+    def _record_order_event(
+        self,
+        event_type: str,
+        order: Order,
+        *,
+        details: dict[str, str] | None = None,
+    ) -> None:
+        payload = {
+            "order_id": order.id,
+            "order_status": order.status.value,
+            "side": order.side.value,
+            "order_type": order.type.value,
+            "qty": str(order.qty),
+        }
+        if details is not None:
+            payload.update(details)
+        self._record_event(event_type, order=order, details=payload)
+
+    def _record_event(
+        self,
+        event_type: str,
+        *,
+        order: Order,
+        details: dict[str, str],
+    ) -> None:
+        self._event_log.append(
+            BrokerEvent(
+                event_type=event_type,
+                session_id=order.session_id,
+                ticker=order.ticker,
+                details=details,
+            )
+        )
+
+    def _notify_order_callbacks(self, order: Order) -> None:
+        for callback in self._on_order_callbacks:
+            callback(order.model_copy(deep=True))
