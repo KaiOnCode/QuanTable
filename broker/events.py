@@ -11,8 +11,11 @@ def _utc_now() -> datetime:
 
 
 class BrokerEvent(BaseModel):
+    # Keep a small stable string so other modules can branch on event type
+    # without importing engine internals.
     event_type: str
     timestamp: datetime = Field(default_factory=_utc_now)
     session_id: str = ""
     ticker: str = ""
+    # Use a fresh dict per event. Audit code may enrich this payload later.
     details: dict[str, Any] = Field(default_factory=dict)

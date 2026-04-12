@@ -29,6 +29,8 @@ class OrderStatus(str, Enum):
     REJECTED = "REJECTED"
 
 
+# Phase 1 keeps `session_id` on broker-facing models so later phases can join
+# one run across storage, notifications, and audit logs.
 class Order(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     ticker: str
@@ -43,6 +45,8 @@ class Order(BaseModel):
 
     @model_validator(mode="after")
     def validate_limit_price(self) -> Order:
+        # Market orders are priced by the engine later. A limit order needs its
+        # trigger price at model-validation time.
         if self.type is OrderType.LIMIT and self.limit_price is None:
             msg = "limit_price is required for limit orders"
             raise ValueError(msg)
@@ -54,6 +58,7 @@ class Fill(BaseModel):
     fill_price: float
     fill_qty: float
     fee: float
+    # `slippage` stores realized cash cost, not the configured rate.
     slippage: float
     timestamp: datetime = Field(default_factory=_utc_now)
     session_id: str = ""
@@ -61,8 +66,12 @@ class Fill(BaseModel):
 
 class Position(BaseModel):
     ticker: str
+    # Positive shares = long, negative shares = short. This matches the sign
+    # convention in `test/trade.py` and keeps PnL math symmetric.
     shares: float
+    # Average entry cost per share. Direction lives in `shares`, not here.
     avg_cost: float
+    # `side` is derived for logs and UI. `shares` remains the source of truth.
     side: str = "FLAT"
     unrealized_pnl: float = 0.0
     session_id: str = ""
@@ -80,6 +89,7 @@ class Position(BaseModel):
 
 class AccountSnapshot(BaseModel):
     cash: float
+    # `equity` means cash plus marked-to-market position value.
     equity: float
     positions: list[Position] = Field(default_factory=list)
     timestamp: datetime = Field(default_factory=_utc_now)
@@ -92,6 +102,8 @@ class ExecutionReport(BaseModel):
     position_before: Position | None = None
     position_after: Position | None = None
     account_after: AccountSnapshot
+    # Keep PM context next to execution results so downstream code can consume
+    # one object for notifications, state sync, or audit output.
     pm_action: str
     pm_report_summary: str
     timestamp: datetime = Field(default_factory=_utc_now)
