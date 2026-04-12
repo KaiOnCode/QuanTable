@@ -1,8 +1,38 @@
 # Gap C: Broker Mock + Feedback — 完整实施计划
 
 > **版本**: Final (合并自 [impl_plan_v1.md](./impl_plan_v1.md) + [impl_plan_v2.md](./impl_plan_v2.md))
-> **最后更新**: 2026-04-05
+> **最后更新**: 2026-04-13
 > **负责人**: Gap C 组
+
+---
+
+## 0 执行规约与质量门禁
+
+本计划从现在开始受以下规约约束，后续所有实现、测试、验收和 review 都以此为准：
+
+1. **工具使用范围**
+   - 可以使用本地任意相关 `skill`；如需读取 PDF，优先使用 `/pdf` skill。
+   - 可以自由使用互联网检索工具做事实核验、官方文档检索和方案调研。
+   - 鼓励使用 sub-agent 并行做代码审计/信息收集，但关键设计决策与最终整合必须回到主执行链路统一收口。
+
+2. **统一工程工作流**
+   - 项目统一由 `uv` 管理；安装、运行、测试、类型检查、格式化都使用 `uv run ...` 触发。
+   - 类型与质量检查统一使用 `based-pyright` + `ruff`。
+   - `pyproject.toml` 必须作为项目级质量配置源，不能只依赖编辑器本地设置；其中 `pyright` 配置由 `basedpyright` CLI 直接消费。
+
+3. **质量门禁（强约束）**
+   - `pyproject.toml` 中必须显式规定 `pyright.typeCheckingMode = "standard"`，并由 `basedpyright` 执行项目级类型检查。
+   - 所有新增或修改后的 Python 代码都必须同时通过：
+     - `uv run basedpyright`
+     - `uv run ruff check .`
+     - `uv run ruff format --check .`
+   - 验收标准为 **0-warning / 0-error**；若仓库存在历史问题，必须在对应 Phase 中显式记录、消化或隔离，不能静默带过。
+
+4. **严格 TDD 流程（强约束）**
+   - 严格遵循 `tdd` skill 的 `red -> green -> refactor` 流程实施。
+   - 禁止“先把所有测试写完，再一次性把实现补完”的 horizontal slicing。
+   - 每次只推进一个垂直切片：先写一个失败的行为测试，再写最小实现让它通过，最后在绿色状态下重构。
+   - 测试优先验证公共接口和可观察行为，而不是内部实现细节。
 
 ---
 
@@ -577,14 +607,17 @@ test/
 
 ## 6 依赖变更
 
-无需引入新的外部依赖。所需库都已在 `pyproject.toml` 中：
+运行时依赖无需新增额外外部服务依赖；Broker 实现仍以现有栈为主。项目级开发/质量依赖需要在 `pyproject.toml` 中明确：
 
 - `pydantic` — 数据模型
 - `pandas` — DataFrame 操作
 - `numpy` — 数值计算
 - `plotly` / `streamlit` — 可视化
+- `pytest` — TDD / 自动化测试
+- `ruff` — lint + format
+- `basedpyright` — 标准类型检查
 
-测试可能需要新增 `pytest` 到 dev dependencies（如果尚未安装）。
+所有验证命令统一通过 `uv run ...` 执行，避免出现游离于项目配置之外的本地工作流。
 
 ---
 
@@ -653,6 +686,11 @@ for each trading_day:
 ### 8.1 自动化测试
 
 ```bash
+# 质量门禁
+uv run basedpyright
+uv run ruff check .
+uv run ruff format --check .
+
 # 运行所有单元测试
 uv run pytest test/test_broker.py -v
 
