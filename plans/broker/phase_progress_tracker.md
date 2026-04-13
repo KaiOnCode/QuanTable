@@ -355,6 +355,21 @@
 - [x] Task 3: 整理 broker backtest 页面结构，使 KPI / Performance / Trades / Portfolio 更清晰
 - [x] Task 4: 补强 Phase 5 回归测试，覆盖多 bar、日期区间和页面展示主路径
 
+**Phase 5 Final Acceptance**
+
+- [x] 回测配置面板：已具备 `start_date / end_date`、`Initial Cash`、`Commission Rate`、`Slippage Rate` 与 broker backtest 开关
+- [x] 交易日志页面：已具备 trades 表与 portfolio 表展示
+- [x] 绩效指标面板：已具备 KPI 卡片、Strategy vs Benchmark 权益曲线、回撤曲线
+- [x] 自动化验证：pytest 回归、`basedpyright --baselinefile`、`ruff check`、`ruff format --check` 全绿
+- [x] 浏览器层验证：`test/streamlit_broker_phase5_smoke.py` 已通过
+
+**Cross-check Against `impl_plan_final.md`**
+
+- [x] `streamlit_app.py` 的三类目标均已覆盖：回测配置面板、交易日志、绩效指标面板
+- [x] Phase 5 计划中的 Strategy vs Benchmark / Drawdown 图表已落地
+- [x] Phase 5 计划中的“端到端回测测试”已以 `test/test_backtest_runner.py` + `test/test_streamlit_app.py` + 现有 execution/orchestrator 测试组合实现
+- [~] 计划文档写的是单文件 `test/test_broker.py`；实际实现采用按职责拆分的 pytest 文件集合（`test/test_broker_models.py` / `test/test_broker_engine.py` / `test/test_broker_ledger.py` / `test/test_backtest_runner.py` / `test/test_streamlit_app.py` 等）。这是文件组织层面的偏差，不是功能缺口。
+
 ---
 
 ## 6 审计参考点

@@ -66,6 +66,35 @@ uv run python app.py NVDA --output report.txt  # 保存报告
 
 **CLI输出**：方向(Bullish/Bearish/Neutral) + 时间范围 + 置信度 + 详细分析
 
+## ✅ 验证与 QA
+
+### 项目质量门禁
+
+```bash
+cp bugs/basedpyright/baseline.json /tmp/basedpyright-baseline.json
+uv run basedpyright --baselinefile /tmp/basedpyright-baseline.json
+uv run ruff check .
+uv run ruff format --check .
+```
+
+### Phase 5 Streamlit Broker Smoke
+
+先确保已安装浏览器自动化依赖：
+
+```bash
+uv add --dev playwright
+uv run playwright install chromium
+```
+
+然后执行浏览器层 smoke：
+
+```bash
+uv run python /home/eden/.agents/skills/webapp-testing/scripts/with_server.py \
+  --server "uv run streamlit run streamlit_app.py --server.headless true --server.port 8501" \
+  --port 8501 \
+  -- uv run python test/streamlit_broker_phase5_smoke.py
+```
+
 ## 🏗️ 项目结构
 
 ```text

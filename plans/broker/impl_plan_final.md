@@ -6,6 +6,26 @@
 
 ---
 
+## Post-Implementation Note (2026-04-13)
+
+本文件保留为 **实施计划基线**；实际完成状态、验收结果与后续修正以
+[`phase_progress_tracker.md`](./phase_progress_tracker.md) 为准。
+
+Phase 5 落地后，有几处实现与本计划文本存在“组织方式不同、功能等价或增强”的情况，特此说明：
+
+- Phase 5 已完成并通过收口验收；实际状态请查看 `phase_progress_tracker.md` 中的 `Phase 5 Final Acceptance` 与交叉核对记录。
+- Streamlit 的 broker backtest 配置最终落地为显式 `start_date / end_date` 区间输入，而不是仅保留早期的 preview window 形态。
+- Streamlit 的绩效面板已实际包含：
+  - KPI 卡片
+  - Strategy vs Benchmark 权益曲线
+  - Strategy vs Benchmark 回撤曲线
+  - `Overview / Performance / Trades / Portfolio` 页面分区
+- 浏览器层 smoke 验证脚本已落盘到
+  [`test/streamlit_broker_phase5_smoke.py`](/home/eden/MasterGraduation/COMP7705-Agent-Quant/test/streamlit_broker_phase5_smoke.py)。
+- 本计划中的 `test/test_broker.py` 在最终实现中没有作为单一聚合文件落地；实际采用按职责拆分的 pytest 文件集合（如 `test/test_broker_models.py`、`test/test_broker_engine.py`、`test/test_broker_ledger.py`、`test/test_backtest_runner.py`、`test/test_streamlit_app.py` 等）。这是测试组织方式差异，不构成功能缺口。
+
+---
+
 ## 0 执行规约与质量门禁
 
 本计划从现在开始受以下规约约束，后续所有实现、测试、验收和 review 都以此为准：
