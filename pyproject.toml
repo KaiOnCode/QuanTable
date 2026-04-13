@@ -30,6 +30,7 @@ dependencies = [
 dev = [
     "basedpyright",
     "matplotlib",
+    "playwright>=1.58.0",
     "pytest",
     "ruff",
 ]

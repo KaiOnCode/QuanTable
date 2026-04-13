@@ -8,7 +8,7 @@
 
 ## 1 当前基线
 
-当前分支已经完成 Broker 集成前的基础设施与主链路收口；截至 `2026-04-13`，`broker/` 顶层包的 **Phase 1-4 核心范围** 已完成落地，Phase 5 仍未开始。
+当前分支已经完成 Broker 集成前的基础设施与主链路收口；截至 `2026-04-13`，`broker/` 顶层包的 **Phase 1-5 核心范围** 已完成落地，Phase 5 已完成最小 UI / 回测展示链路并收口。
 
 ### 已存在的可复用基础
 
@@ -79,7 +79,7 @@
 | Phase 2 撮合引擎 + Broker 接口 | Completed | Broker 核心接口、撮合、风控、事件 hooks 已落地并有 pytest 覆盖 | Phase 3 起点：先写记录单笔 fill 后可回读的失败测试，再引入最小账本 | Phase 2 测试 + 质量门禁全绿 |
 | Phase 3 账本 + 交易日志 | Completed | `ledger.py`、backend-backed 账本读回、核心指标、CSV 导出与 `PortfolioManager.sync_from_broker()` 已收口并有 pytest 覆盖 | 按当前任务边界暂停；如继续推进，下一步才进入 Phase 4 execution node 的首个失败测试 | Phase 3 测试 + 质量门禁全绿 |
 | Phase 4 主工作流集成 | Completed | `AgentState` / `execution_node` / `orchestrator` / `DataService` / `agent_tools` / `backtest_runner` 最小范围已落地，含 HITL 插入点与审批状态契约 | 按当前任务边界暂停；如继续推进，下一步才进入 Phase 5 UI / 回测展示层 | Phase 4 测试 + 图结构验证 + 质量门禁全绿 |
-| Phase 5 UI + 测试 | In Progress | `BacktestRunner` happy path、Streamlit 回测数据适配层、交易日志/组合表/KPI 最小展示切片已落地；页面仍需进一步整理 | 下一步补权益/回撤图与更多页面整理，再做更完整 UI 回归 | Phase 5 测试 + 手动 UI 验证 + 质量门禁全绿 |
+| Phase 5 UI + 测试 | Completed | `BacktestRunner`、回测配置面板、KPI/图表/交易日志/组合表、页面整理、自动化回归与浏览器层 smoke 均已落地 | 按当前任务边界收口；如继续推进，可转向后续增强而非 Phase 5 必需项 | Phase 5 测试 + 浏览器 smoke + 质量门禁全绿 |
 
 ---
 
@@ -305,7 +305,7 @@
 
 ### Phase 5 UI + 测试
 
-**状态**: `In Progress`
+**状态**: `Completed`
 
 **本阶段目标**
 
@@ -323,6 +323,17 @@
   - Backtest Mode 侧边栏的 broker preview 配置（窗口、初始资金、手续费、滑点）
   - Backtest 结果区中的 broker backtest 展示入口
 - 已新增 `test/test_streamlit_app.py`，覆盖回测结果数据适配、UI 渲染调用与 `Backtester` → `BacktestRunner` 接通。
+- 已补：
+  - Strategy vs Benchmark 权益曲线
+  - Strategy vs Benchmark 回撤曲线
+  - 明确 `start_date / end_date` 的 broker backtest 区间配置
+  - `Overview / Performance / Trades / Portfolio` 页面分区
+  - 多 bar + 显式日期区间 + dashboard 渲染主路径回归测试
+- Streamlit app 启动 smoke 已通过：本地 `streamlit_app.py` 能成功起服到 `8501` 端口。
+- 浏览器层 smoke 已通过：补齐 `playwright` 依赖与 Chromium 后，已验证 Backtest Mode 中新增的 broker backtest 日期区间与费用配置项可在页面中被发现。
+- 浏览器层 smoke 脚本已落盘到 [test/streamlit_broker_phase5_smoke.py](/home/eden/MasterGraduation/COMP7705-Agent-Quant/test/streamlit_broker_phase5_smoke.py)，用于后续手动复跑。
+- 推荐复跑命令：
+  `uv run python /home/eden/.agents/skills/webapp-testing/scripts/with_server.py --server "uv run streamlit run streamlit_app.py --server.headless true --server.port 8501" --port 8501 -- uv run python test/streamlit_broker_phase5_smoke.py`
 
 **TDD 执行记录**
 
@@ -331,7 +342,11 @@
 - [x] RED -> GREEN: Streamlit 最小展示切片 `render_backtest_dashboard()`
 - [x] RED -> GREEN: `Backtester.run_execution_backtest()` 接通 `BacktestRunner`
 - [x] REFACTOR: 将回测展示拆成“数据适配层 + 渲染层”，避免页面直接耦合底层 ledger 列结构
-- [ ] 下一步：补权益曲线 / 回撤曲线与更完整的页面整理
+- [x] RED -> GREEN: Strategy vs Benchmark / Drawdown 图表数据与最小 Plotly 渲染
+- [x] RED -> GREEN: broker backtest 配置推进到明确 `start_date / end_date`
+- [x] RED -> GREEN: broker backtest 页面整理为清晰分区
+- [x] RED -> GREEN: 多 bar / 日期区间 / dashboard 主路径回归测试
+- [x] Closeout: 浏览器层 UI smoke 已完成，Phase 5 当前范围收口
 
 **Phase 5 Active Task List**
 
