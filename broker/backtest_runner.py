@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from datetime import UTC, datetime
+from typing import Any, cast
+from uuid import uuid4
 
 import pandas as pd
 
 from agentgraph.orchestrator import IntelliFin_Assistant
 from broker.config import BrokerConfig
-from broker.engine import MockBrokerEngine
+from broker.engine import BarData, MockBrokerEngine
 from broker.ledger import TradeLedger
+from broker.models import AccountSnapshot
 
 
 @dataclass
@@ -32,6 +35,7 @@ class BacktestRunner:
         self.broker = broker or MockBrokerEngine(config)
         self.ledger = ledger or TradeLedger()
         self.agent = agent or IntelliFin_Assistant(broker=self.broker)
+        self.broker.register_on_fill(self.ledger.record_fill)
 
     def run(
         self,
@@ -40,15 +44,83 @@ class BacktestRunner:
         start_date: str,
         end_date: str,
     ) -> BacktestResult:
-        del ticker
         date_filtered = price_df.loc[start_date:end_date].copy()
-        for _date, _row in date_filtered.iterrows():
-            # Phase 4 only lands the public runner shape. The execution loop will
-            # expand in a later slice once orchestration contracts settle.
-            pass
+        session_id = f"backtest-{ticker.lower()}-{uuid4().hex[:8]}"
+
+        for trading_date, row in date_filtered.iterrows():
+            self.broker.on_bar({ticker: self._row_to_bar(row)})
+            current_position_pct = self._calculate_current_position_pct(ticker)
+            self.agent.run(
+                ticker,
+                date=self._to_iso_date(trading_date),
+                current_position_pct=current_position_pct,
+                execution_enabled=True,
+                session_id=session_id,
+            )
+            trading_timestamp = self._require_timestamp(trading_date)
+            self.ledger.record_daily_snapshot(
+                date=trading_timestamp.strftime("%Y-%m-%d"),
+                account=self._account_snapshot_for_date(trading_timestamp, session_id),
+            )
 
         return BacktestResult(
             trades=self.ledger.to_trades_dataframe(),
             portfolio=self.ledger.to_portfolio_dataframe(),
             metrics=self.ledger.compute_metrics(),
         )
+
+    def _row_to_bar(self, row: pd.Series) -> BarData:
+        return BarData(
+            open=self._get_row_value(row, "Open", "open"),
+            high=self._get_row_value(row, "High", "high"),
+            low=self._get_row_value(row, "Low", "low"),
+            close=self._get_row_value(row, "Close", "close"),
+        )
+
+    def _get_row_value(self, row: pd.Series, *column_names: str) -> float:
+        for column_name in column_names:
+            if column_name in row:
+                return float(row[column_name])
+        msg = f"missing required price column; expected one of {column_names!r}"
+        raise KeyError(msg)
+
+    def _calculate_current_position_pct(self, ticker: str) -> float:
+        account = self.broker.get_account()
+        position = self.broker.get_position(ticker)
+        if position is None or account.equity == 0:
+            return 0.0
+
+        latest_price = self.broker.get_latest_price(ticker)
+        if latest_price is None:
+            return 0.0
+
+        position_value = position.shares * latest_price
+        return position_value / account.equity * 100.0
+
+    def _to_iso_date(self, trading_date: Any) -> str:
+        timestamp = self._require_timestamp(trading_date)
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.tz_localize(UTC)
+        else:
+            timestamp = timestamp.tz_convert(UTC)
+        return timestamp.isoformat().replace("+00:00", "Z")
+
+    def _account_snapshot_for_date(
+        self,
+        trading_date: Any,
+        session_id: str,
+    ) -> AccountSnapshot:
+        snapshot = self.broker.get_account()
+        snapshot.timestamp = cast(
+            datetime,
+            self._require_timestamp(self._to_iso_date(trading_date)).to_pydatetime(),
+        )
+        snapshot.session_id = session_id
+        return snapshot
+
+    def _require_timestamp(self, trading_date: Any) -> pd.Timestamp:
+        timestamp = pd.Timestamp(trading_date)
+        if timestamp is pd.NaT:
+            msg = "invalid backtest trading timestamp"
+            raise ValueError(msg)
+        return cast(pd.Timestamp, timestamp)

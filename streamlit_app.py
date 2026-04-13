@@ -6,12 +6,17 @@ IntelliFin Assistant - Streamlit Web 界面
 import os
 import re
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Any, Callable, cast
 
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 from dotenv import load_dotenv
+
+from broker.backtest_runner import BacktestResult, BacktestRunner
+from broker.config import BrokerConfig
 
 # 加载配置
 load_dotenv("properties.env")
@@ -45,6 +50,39 @@ def ensure_init_files():
 
 # 创建必要的 __init__.py 文件
 ensure_init_files()
+
+
+def _missing_provider(*args: object, **kwargs: object) -> dict[str, object]:
+    del args, kwargs
+    msg = "required data provider dependencies are not available"
+    raise RuntimeError(msg)
+
+
+class _MissingAssistant:
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        del args, kwargs
+        msg = "required agent dependencies are not available"
+        raise RuntimeError(msg)
+
+    def run(self, *args: object, **kwargs: object) -> dict[str, object]:
+        del args, kwargs
+        msg = "required agent dependencies are not available"
+        raise RuntimeError(msg)
+
+
+IntelliFin_Assistant: Any = _MissingAssistant
+df_get_prices: Any = _missing_provider
+df_get_indicators: Any = _missing_provider
+df_get_fundamentals: Any = _missing_provider
+
+
+def _require_timestamp(value: Any) -> pd.Timestamp:
+    timestamp = pd.Timestamp(value)
+    if timestamp is pd.NaT:
+        msg = "invalid backtest timestamp"
+        raise ValueError(msg)
+    return cast(pd.Timestamp, timestamp)
+
 
 # 尝试导入依赖模块，如果失败则显示友好错误信息
 DEPENDENCIES_OK = True
@@ -96,8 +134,11 @@ st.set_page_config(
 class Backtester:
     """简化的回测器，用于历史分析"""
 
-    def __init__(self):
-        pass
+    def __init__(
+        self,
+        runner_factory: Callable[[BrokerConfig], Any] | None = None,
+    ):
+        self._runner_factory = runner_factory or BacktestRunner
 
     def run_historical_analysis(
         self, ticker: str, analysis_date: str, forward_days: int = 30
@@ -152,6 +193,171 @@ class Backtester:
             result["backtest_validation"] = None
 
         return result
+
+    def run_execution_backtest(
+        self,
+        ticker: str,
+        end_date: str,
+        *,
+        lookback_days: int = 5,
+        initial_cash: float = 100_000.0,
+        commission_rate: float = 0.001,
+        slippage_rate: float = 0.0005,
+    ) -> BacktestResult | None:
+        date_iso = f"{end_date}T00:00:00Z"
+        price_data = df_get_prices(ticker, lookback_days, end_date=date_iso)
+        rows = price_data.get("rows", []) if price_data else []
+        if not rows:
+            return None
+
+        price_df = pd.DataFrame(
+            [
+                {
+                    "Date": row["ts"],
+                    "Open": row["o"],
+                    "High": row["h"],
+                    "Low": row["l"],
+                    "Close": row["c"],
+                }
+                for row in rows
+            ]
+        )
+        price_df["Date"] = pd.to_datetime(price_df["Date"])
+        price_df = price_df.set_index("Date").sort_index()
+        start_timestamp = _require_timestamp(price_df.index.min())
+        end_timestamp = _require_timestamp(price_df.index.max())
+
+        runner = self._runner_factory(
+            BrokerConfig(
+                initial_cash=initial_cash,
+                commission_rate=commission_rate,
+                slippage_rate=slippage_rate,
+            )
+        )
+        return runner.run(
+            ticker=ticker,
+            price_df=price_df,
+            start_date=start_timestamp.strftime("%Y-%m-%d"),
+            end_date=end_timestamp.strftime("%Y-%m-%d"),
+        )
+
+
+@dataclass(frozen=True)
+class BacktestMetricCard:
+    label: str
+    value: str
+
+
+@dataclass(frozen=True)
+class BacktestDashboardData:
+    trades_table: pd.DataFrame
+    portfolio_table: pd.DataFrame
+    metric_cards: list[BacktestMetricCard]
+
+
+def build_backtest_dashboard_data(
+    result: BacktestResult,
+) -> BacktestDashboardData:
+    trades_table = result.trades.loc[
+        :,
+        [
+            "timestamp",
+            "ticker",
+            "side",
+            "quantity",
+            "price",
+            "fee",
+            "slippage",
+            "realized_pnl",
+        ],
+    ].copy()
+    if not trades_table.empty:
+        trades_table["timestamp"] = pd.to_datetime(
+            trades_table["timestamp"]
+        ).dt.strftime("%Y-%m-%d %H:%M:%S")
+    trades_table = trades_table.rename(
+        columns={
+            "timestamp": "Time",
+            "ticker": "Ticker",
+            "side": "Side",
+            "quantity": "Quantity",
+            "price": "Price",
+            "fee": "Fee",
+            "slippage": "Slippage",
+            "realized_pnl": "Realized PnL",
+        }
+    )
+
+    portfolio_table = result.portfolio.loc[
+        :,
+        ["date", "timestamp", "cash", "equity", "position_value", "position_count"],
+    ].copy()
+    if not portfolio_table.empty:
+        portfolio_table["timestamp"] = pd.to_datetime(
+            portfolio_table["timestamp"]
+        ).dt.strftime("%Y-%m-%d %H:%M:%S")
+    portfolio_table = portfolio_table.rename(
+        columns={
+            "date": "Date",
+            "timestamp": "Time",
+            "cash": "Cash",
+            "equity": "Equity",
+            "position_value": "Position Value",
+            "position_count": "Open Positions",
+        }
+    )
+
+    metric_cards = [
+        BacktestMetricCard(
+            label="Total Return",
+            value=f"{float(result.metrics.get('total_return', 0.0)):.2%}",
+        ),
+        BacktestMetricCard(
+            label="Max Drawdown",
+            value=f"{float(result.metrics.get('max_drawdown', 0.0)):.2%}",
+        ),
+        BacktestMetricCard(
+            label="Sharpe Ratio",
+            value=f"{float(result.metrics.get('sharpe_ratio', 0.0)):.2f}",
+        ),
+        BacktestMetricCard(
+            label="Win Rate",
+            value=f"{float(result.metrics.get('win_rate', 0.0)):.2%}",
+        ),
+        BacktestMetricCard(
+            label="Trades",
+            value=str(int(result.metrics.get("number_of_trades", 0))),
+        ),
+    ]
+
+    return BacktestDashboardData(
+        trades_table=trades_table,
+        portfolio_table=portfolio_table,
+        metric_cards=metric_cards,
+    )
+
+
+def render_backtest_dashboard(
+    dashboard: BacktestDashboardData,
+    *,
+    streamlit_api: Any = st,
+) -> None:
+    streamlit_api.subheader("📒 Broker Backtest")
+    streamlit_api.caption("Strategy KPIs")
+
+    for column, card in zip(
+        streamlit_api.columns(len(dashboard.metric_cards)),
+        dashboard.metric_cards,
+    ):
+        column.metric(card.label, card.value)
+
+    streamlit_api.subheader("Trade Log")
+    streamlit_api.caption("Executed fills exported from the trade ledger.")
+    streamlit_api.dataframe(dashboard.trades_table, use_container_width=True)
+
+    streamlit_api.subheader("Portfolio Timeline")
+    streamlit_api.caption("Daily account snapshots exported from the trade ledger.")
+    streamlit_api.dataframe(dashboard.portfolio_table, use_container_width=True)
 
 
 # 自定义 CSS
@@ -721,6 +927,11 @@ def main():
         # Backtest settings (only shown in backtest mode)
         backtest_date = None
         forward_days = 30
+        enable_execution_backtest = False
+        execution_backtest_days = 5
+        execution_initial_cash = 100_000.0
+        execution_commission_rate = 0.001
+        execution_slippage_rate = 0.0005
         if mode == "Backtest Mode":
             st.subheader("📅 Backtest Settings")
             backtest_date = st.date_input(
@@ -738,6 +949,40 @@ def main():
             st.caption(
                 f"💡 The system will predict based on data from {backtest_date}, then validate actual performance for the next {forward_days} days."
             )
+
+            st.markdown("**Broker Execution Preview**")
+            enable_execution_backtest = st.checkbox(
+                "Run broker backtest preview",
+                value=True,
+                help="Replay the last few bars through the broker + execution loop.",
+            )
+            if enable_execution_backtest:
+                execution_backtest_days = st.selectbox(
+                    "Preview Window (Bars)",
+                    [5, 10, 20, 30],
+                    index=0,
+                    help="Shorter windows keep the broker backtest preview responsive.",
+                )
+                execution_initial_cash = st.number_input(
+                    "Initial Cash",
+                    min_value=1_000.0,
+                    value=100_000.0,
+                    step=10_000.0,
+                )
+                execution_commission_rate = st.number_input(
+                    "Commission Rate",
+                    min_value=0.0,
+                    value=0.001,
+                    step=0.0001,
+                    format="%.4f",
+                )
+                execution_slippage_rate = st.number_input(
+                    "Slippage Rate",
+                    min_value=0.0,
+                    value=0.0005,
+                    step=0.0001,
+                    format="%.4f",
+                )
 
         st.divider()
 
@@ -997,6 +1242,25 @@ def main():
                     result = backtester.run_historical_analysis(
                         ticker, analysis_date_str, forward_days=forward_days
                     )
+
+                    if enable_execution_backtest:
+                        st.write("")
+                        st.write("🧾 Running broker execution backtest preview...")
+                        broker_backtest = backtester.run_execution_backtest(
+                            ticker=ticker,
+                            end_date=analysis_date_str,
+                            lookback_days=execution_backtest_days,
+                            initial_cash=execution_initial_cash,
+                            commission_rate=execution_commission_rate,
+                            slippage_rate=execution_slippage_rate,
+                        )
+                        if broker_backtest is not None:
+                            result["broker_backtest"] = broker_backtest
+                            st.write("  ✅ Broker backtest preview exported")
+                        else:
+                            st.write(
+                                "  ⚠️ Broker backtest preview skipped (no price data)"
+                            )
 
                     st.write("")
                     st.write("  ✅ **Historical Analysis Completed**")
@@ -1265,6 +1529,11 @@ def main():
                         unsafe_allow_html=True,
                     )
 
+            st.divider()
+
+        broker_backtest = result.get("broker_backtest")
+        if isinstance(broker_backtest, BacktestResult):
+            render_backtest_dashboard(build_backtest_dashboard_data(broker_backtest))
             st.divider()
 
         st.header("📋 Analysis Report")

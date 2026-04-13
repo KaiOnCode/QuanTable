@@ -79,7 +79,7 @@
 | Phase 2 撮合引擎 + Broker 接口 | Completed | Broker 核心接口、撮合、风控、事件 hooks 已落地并有 pytest 覆盖 | Phase 3 起点：先写记录单笔 fill 后可回读的失败测试，再引入最小账本 | Phase 2 测试 + 质量门禁全绿 |
 | Phase 3 账本 + 交易日志 | Completed | `ledger.py`、backend-backed 账本读回、核心指标、CSV 导出与 `PortfolioManager.sync_from_broker()` 已收口并有 pytest 覆盖 | 按当前任务边界暂停；如继续推进，下一步才进入 Phase 4 execution node 的首个失败测试 | Phase 3 测试 + 质量门禁全绿 |
 | Phase 4 主工作流集成 | Completed | `AgentState` / `execution_node` / `orchestrator` / `DataService` / `agent_tools` / `backtest_runner` 最小范围已落地，含 HITL 插入点与审批状态契约 | 按当前任务边界暂停；如继续推进，下一步才进入 Phase 5 UI / 回测展示层 | Phase 4 测试 + 图结构验证 + 质量门禁全绿 |
-| Phase 5 UI + 测试 | Not Started | 现有 Streamlit 仅支持历史分析验证 | 先写回测结果展示的数据接口测试，再接 UI | Phase 5 测试 + 手动 UI 验证 + 质量门禁全绿 |
+| Phase 5 UI + 测试 | In Progress | `BacktestRunner` happy path、Streamlit 回测数据适配层、交易日志/组合表/KPI 最小展示切片已落地；页面仍需进一步整理 | 下一步补权益/回撤图与更多页面整理，再做更完整 UI 回归 | Phase 5 测试 + 手动 UI 验证 + 质量门禁全绿 |
 
 ---
 
@@ -305,7 +305,7 @@
 
 ### Phase 5 UI + 测试
 
-**状态**: `Not Started`
+**状态**: `In Progress`
 
 **本阶段目标**
 
@@ -315,16 +315,23 @@
 
 **当前证据**
 
-- 当前 Streamlit 页面主要是分析结果展示与历史验证，不是 Broker 执行视角。
-- 当前 `test/` 目录以脚本为主，不是 pytest 测试套件。
+- `test/test_backtest_runner.py` 已新增最小 happy path，验证 `BacktestRunner.run()` 会返回结构化 `trades / portfolio / metrics`，并且真实驱动 broker + agent + ledger 产生交易与日终快照。
+- `streamlit_app.py` 已新增：
+  - `Backtester.run_execution_backtest()`：将价格 rows 转成 OHLC DataFrame，并调用正式 `BacktestRunner`
+  - `build_backtest_dashboard_data()`：将 `BacktestResult` 适配成 Streamlit 直接消费的交易表、组合表、KPI 卡片
+  - `render_backtest_dashboard()`：最小渲染交易日志表、组合时间线表、绩效指标面板
+  - Backtest Mode 侧边栏的 broker preview 配置（窗口、初始资金、手续费、滑点）
+  - Backtest 结果区中的 broker backtest 展示入口
+- 已新增 `test/test_streamlit_app.py`，覆盖回测结果数据适配、UI 渲染调用与 `Backtester` → `BacktestRunner` 接通。
 
 **TDD 执行记录**
 
-- [ ] RED: 回测结果数据结构测试
-- [ ] GREEN: 最小展示数据管线
-- [ ] RED: 端到端回测最小 happy path 测试
-- [ ] GREEN: `BacktestRunner` 与 UI 读取接通
-- [ ] REFACTOR: 整理测试夹具与页面数据适配层
+- [x] RED -> GREEN: `BacktestRunner.run()` 最小 happy path，返回结构化 `trades / portfolio / metrics`
+- [x] RED -> GREEN: Streamlit 回测结果数据适配层 `build_backtest_dashboard_data()`
+- [x] RED -> GREEN: Streamlit 最小展示切片 `render_backtest_dashboard()`
+- [x] RED -> GREEN: `Backtester.run_execution_backtest()` 接通 `BacktestRunner`
+- [x] REFACTOR: 将回测展示拆成“数据适配层 + 渲染层”，避免页面直接耦合底层 ledger 列结构
+- [ ] 下一步：补权益曲线 / 回撤曲线与更完整的页面整理
 
 ---
 
