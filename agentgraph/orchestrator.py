@@ -3,11 +3,11 @@ import sys
 from typing import Any
 
 from dotenv import load_dotenv
-from pydantic import SecretStr
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
+from pydantic import SecretStr
 
 from agentgraph.execution_node import create_execution_node
 from agentgraph.state import AgentState
@@ -92,6 +92,8 @@ class IntelliFin_Assistant:
         self,
         llm: Any | None = None,
         broker: BrokerGateway | None = None,
+        enable_hitl: bool = False,
+        hitl_approval_node: Any | None = None,
         tool_nodes: dict[str, Any] | None = None,
         agent_nodes: dict[str, Any] | None = None,
         execution_node: Any | None = None,
@@ -109,6 +111,8 @@ class IntelliFin_Assistant:
         self.tool_nodes: dict[str, Any] = tool_nodes or self._create_tool_nodes()
         self.agent_nodes: dict[str, Any] = agent_nodes or self._create_agent_nodes()
         self.execution_node = execution_node
+        self.enable_hitl = enable_hitl
+        self.hitl_approval_node = hitl_approval_node
         self.broker = broker
         wf = StateGraph(AgentState)
 
@@ -146,11 +150,16 @@ class IntelliFin_Assistant:
             execution_node_impl: Any = self.execution_node
             if execution_node_impl is None:
                 execution_node_impl = create_execution_node(self.broker)
-            wf.add_node(
-                "execution_node",
-                execution_node_impl,
-            )
-            wf.add_edge("PM_agent", "execution_node")
+            wf.add_node("execution_node", execution_node_impl)
+            if self.enable_hitl:
+                wf.add_node(
+                    "hitl_approval",
+                    self.hitl_approval_node or self._create_hitl_approval_placeholder(),
+                )
+                wf.add_edge("PM_agent", "hitl_approval")
+                wf.add_edge("hitl_approval", "execution_node")
+            else:
+                wf.add_edge("PM_agent", "execution_node")
             wf.add_edge("execution_node", END)
 
         # 初始化内存，在图运行时存储状态（状态持久化）
@@ -203,6 +212,14 @@ class IntelliFin_Assistant:
             "risk_analyst": risk_analyst_agent(self.llm),
             "PM_agent": PM_agent(self.llm),
         }
+
+    def _create_hitl_approval_placeholder(self):
+        def placeholder(state: AgentState):
+            # Gap B will replace this with interrupt/resume approval logic later.
+            del state
+            return {}
+
+        return placeholder
 
 
 if __name__ == "__main__":

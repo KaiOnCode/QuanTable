@@ -8,11 +8,11 @@
 
 ## 1 当前基线
 
-当前分支已经具备 Broker 集成前的主链路与若干可复用资产；截至 `2026-04-13`，`broker/` 顶层包的 **Phase 1-3 核心范围** 已完成落地，Phase 4+ 仍未开始。
+当前分支已经完成 Broker 集成前的基础设施与主链路收口；截至 `2026-04-13`，`broker/` 顶层包的 **Phase 1-4 核心范围** 已完成落地，Phase 5 仍未开始。
 
 ### 已存在的可复用基础
 
-- Agent 主流程已打通到 `PM_agent`，但当前仍以 `PM_agent -> END` 结束，尚无 execution node 闭环。
+- Agent 主流程现已支持 `PM_agent -> execution_node -> END`，并在 `enable_hitl=True` 时预留 `PM_agent -> hitl_approval -> execution_node -> END` 插入点。
 - `DataService` 已支持历史价格、指标、基本面、新闻的 `end_date` 读取语义，可作为回测数据入口。
 - `PortfolioManager` 已具备状态化持仓与风险限额管理，现已补上 `sync_from_broker()` 的最小 broker 同步口。
 - `test/trade.py` 已有脚本级回测原型，含手续费、滑点、多空统一 PnL、CSV 输出，可作为撮合/账本参考逻辑。
@@ -20,10 +20,10 @@
 
 ### 当前关键缺口
 
-- `broker/` 顶层包现已覆盖 Phase 1-3 的 `models.py` / `config.py` / `events.py` / `gateway.py` / `engine.py` / `risk_checks.py` / `ledger.py`；Phase 4+ 的 `execution_node.py` / `backtest_runner.py` 仍未开始。
-- `agentgraph/state.py` 尚无 `execution_report`、`execution_enabled`、`session_id` 等执行层字段。
-- `agentgraph/orchestrator.py` 仍是 `PM_agent -> END`，Phase 4 的执行闭环未接入。
-- 项目级 `pyright` / `ruff` / `pytest` 约束现已写入 `pyproject.toml`，但仓库的 `basedpyright` 基线仍为红色，存在历史类型错误待消化。
+- `broker/` 顶层包现已覆盖 Phase 1-4 的 `models.py` / `config.py` / `events.py` / `gateway.py` / `engine.py` / `risk_checks.py` / `ledger.py` / `backtest_runner.py`。
+- `agentgraph/state.py` 已补上 `execution_report`、`execution_enabled`、`session_id`，并正式声明 `approval_status` / `modified_target_pct` 审批字段。
+- `agentgraph/orchestrator.py` 已接入 execution 闭环；Phase 5 之前的主缺口转为 UI / Streamlit / 展示层。
+- 项目级 `pyright` / `ruff` / `pytest` 约束现已写入 `pyproject.toml`；当前增量开发继续依赖 `bugs/basedpyright/baseline.json` 隔离全仓库历史类型债务。
 
 ---
 
@@ -78,7 +78,7 @@
 | Phase 1 数据模型层 | Completed | `broker/` Phase 1 已落地，含模型/配置/事件和 pytest 覆盖 | Phase 2 起点：先写市价买入立即成交的失败测试，再实现最小 `place_order()` | `uv run pytest test/test_broker_models.py -q` + `basedpyright --baselinefile` + `ruff` 全绿 |
 | Phase 2 撮合引擎 + Broker 接口 | Completed | Broker 核心接口、撮合、风控、事件 hooks 已落地并有 pytest 覆盖 | Phase 3 起点：先写记录单笔 fill 后可回读的失败测试，再引入最小账本 | Phase 2 测试 + 质量门禁全绿 |
 | Phase 3 账本 + 交易日志 | Completed | `ledger.py`、backend-backed 账本读回、核心指标、CSV 导出与 `PortfolioManager.sync_from_broker()` 已收口并有 pytest 覆盖 | 按当前任务边界暂停；如继续推进，下一步才进入 Phase 4 execution node 的首个失败测试 | Phase 3 测试 + 质量门禁全绿 |
-| Phase 4 主工作流集成 | Not Started | 目前仍是 `PM_agent -> END` | 先写 execution node 接入状态更新的失败测试 | Phase 4 测试 + 图结构验证 + 质量门禁全绿 |
+| Phase 4 主工作流集成 | Completed | `AgentState` / `execution_node` / `orchestrator` / `DataService` / `agent_tools` / `backtest_runner` 最小范围已落地，含 HITL 插入点与审批状态契约 | 按当前任务边界暂停；如继续推进，下一步才进入 Phase 5 UI / 回测展示层 | Phase 4 测试 + 图结构验证 + 质量门禁全绿 |
 | Phase 5 UI + 测试 | Not Started | 现有 Streamlit 仅支持历史分析验证 | 先写回测结果展示的数据接口测试，再接 UI | Phase 5 测试 + 手动 UI 验证 + 质量门禁全绿 |
 
 ---
@@ -267,7 +267,7 @@
 
 ### Phase 4 主工作流集成
 
-**状态**: `Not Started`
+**状态**: `Completed`
 
 **本阶段目标**
 
@@ -279,17 +279,29 @@
 
 **当前证据**
 
-- `agentgraph/orchestrator.py` 当前明确是 `PM_agent -> END`。
-- `dataflow/service.py` 当前没有 broker 注入参数。
-- `agents/utils/agent_tools.py` 仍是模块级数据服务入口。
+- 已新增 `agentgraph/execution_node.py`，并完成这些可观察行为：
+  - `execution_enabled=False` 时跳过执行
+  - `Action=HOLD` 时只返回执行结果，不下单
+  - `BUY/SELL` 决策会构造市价单、调用 broker、生成 `ExecutionReport`
+  - 执行后联动 `PortfolioManager.sync_from_broker()`
+  - `approval_status=rejected/modified` 已接入执行前审批状态检查
+- `agentgraph/orchestrator.py` 现已支持：
+  - 无 broker 时保持 `PM_agent -> END`
+  - 有 broker 时走 `PM_agent -> execution_node -> END`
+  - `enable_hitl=True` 时预留 `PM_agent -> hitl_approval -> execution_node -> END`
+- `dataflow/service.py` 已支持 broker 注入，`agents/utils/agent_tools.py` 已切换为可配置 `DataService` 工厂。
+- `broker/backtest_runner.py` 已建立最小骨架，并用 pytest 覆盖空窗口结构化返回。
 
 **TDD 执行记录**
 
-- [ ] RED: `execution_enabled=False` 时跳过执行测试
-- [ ] GREEN: 最小 execution node 框架
-- [ ] RED: `BUY/SELL` 决策生成执行报告测试
-- [ ] GREEN: broker 调用与 state 写回
-- [ ] REFACTOR: `DataService` 注入与 `BacktestRunner` 接口收敛
+- [x] RED -> GREEN: `execution_enabled=False` 时 execution node 跳过执行
+- [x] RED -> GREEN: `Action=HOLD` 时不下单，仅返回可观察执行结果
+- [x] RED -> GREEN: `BUY/SELL` 决策生成订单、调用 broker、序列化 `ExecutionReport`
+- [x] RED -> GREEN: execution 后联动 `PortfolioManager.sync_from_broker()`
+- [x] RED -> GREEN: `approval_status=rejected/modified` 的审批状态检查与目标仓位改写
+- [x] RED -> GREEN: `orchestrator` 接入 `PM_agent -> execution_node -> END`
+- [x] RED -> GREEN: `enable_hitl=True` 时接入 `hitl_approval -> execution_node` 插入路径
+- [x] REFACTOR: `DataService` broker 注入、`agent_tools` 工厂化、`BacktestRunner` 最小骨架收敛
 
 ### Phase 5 UI + 测试
 
@@ -318,12 +330,12 @@
 
 ## 6 审计参考点
 
-- `agentgraph/orchestrator.py`: 当前工作流止于 `PM_agent`
-- `agentgraph/state.py`: 当前仅有分析/决策字段
-- `dataflow/service.py`: 当前尚无 broker 注入
-- `dataflow/portfolio_manager.py`: 已补 `sync_from_broker()`；`DataService` 注入仍待 Phase 4
-- `test/trade.py`: 脚本级回测与执行参考逻辑
-- `streamlit_app.py`: 现有历史分析验证 UI
+- `agentgraph/orchestrator.py`: 已支持 execution 闭环与 HITL 插入点
+- `agentgraph/state.py`: 已包含执行 / 会话 / 审批相关状态契约
+- `dataflow/service.py`: 已支持 broker 注入
+- `dataflow/portfolio_manager.py`: 已补 `sync_from_broker()`，并由 execution node 联动调用
+- `test/trade.py`: 继续作为执行语义参考，不直接复用脚本结构
+- `streamlit_app.py`: 仍是 Phase 5 的主要待改造目标
 
 ---
 
@@ -366,3 +378,11 @@
 - [x] 完成 Phase 1 数据模型层的 TDD 切片并全部转绿
 - [x] `basedpyright --baselinefile bugs/basedpyright/baseline.json` 通过
 - [x] Phase 1 当前增量质量门禁：`0 errors / 0 warnings / 0 notes`
+- [x] 启动并完成 Phase 4：落地 `agentgraph/execution_node.py`、`AgentState` 执行层字段与 `orchestrator` 执行闭环
+- [x] 完成 Phase 4 execution node 行为测试：skip / HOLD / BUY / SELL / portfolio sync / approval rejected / approval modified
+- [x] 完成 Phase 4 graph 集成测试：无 broker 向后兼容、有 broker 执行闭环、`enable_hitl=True` 的 `hitl_approval -> execution_node` 插入路径
+- [x] 完成 `DataService` broker 注入、`agent_tools` 工厂化与 `BacktestRunner` 最小骨架
+- [x] `uv run pytest test/test_broker_models.py test/test_broker_engine.py test/test_broker_ledger.py test/test_portfolio_manager.py test/test_execution_node.py test/test_orchestrator.py test/test_data_service.py test/test_agent_tools.py test/test_backtest_runner.py -q` 通过
+- [x] `uv run ruff check .` 通过（含 Phase 4 增量）
+- [x] `uv run ruff format --check .` 通过（含 Phase 4 增量）
+- [x] 使用临时 baseline 副本完成 `basedpyright --baselinefile` 增量校验，正式 `bugs/basedpyright/baseline.json` 保持未修改

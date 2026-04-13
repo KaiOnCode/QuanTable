@@ -65,6 +65,35 @@ def test_execution_node_returns_hold_report_without_placing_orders() -> None:
     assert broker.get_orders() == []
 
 
+def test_execution_node_returns_rejected_report_when_approval_rejects_trade() -> None:
+    broker = MockBrokerEngine(BrokerConfig())
+    broker.on_bar(
+        {
+            "AAPL": {
+                "open": 99.0,
+                "high": 101.0,
+                "low": 98.0,
+                "close": 100.0,
+            }
+        }
+    )
+
+    execution_node = create_execution_node(broker)
+
+    result = execution_node(
+        {
+            "ticker": "AAPL",
+            "Action": "BUY",
+            "Target_position_pct": 50.0,
+            "approval_status": "rejected",
+            "execution_enabled": True,
+        }
+    )
+
+    assert result == {"execution_report": "REJECTED — 审批未通过，不执行"}
+    assert broker.get_orders() == []
+
+
 def test_execution_node_places_market_order_and_serializes_execution_report() -> None:
     broker = MockBrokerEngine(
         BrokerConfig(
@@ -119,6 +148,50 @@ def test_execution_node_places_market_order_and_serializes_execution_report() ->
     assert report.pm_action == "BUY"
     assert report.pm_report_summary == "Increase exposure on breakout."
     assert report.session_id == "session-1"
+
+
+def test_execution_node_uses_modified_target_pct_from_hitl_state() -> None:
+    broker = MockBrokerEngine(
+        BrokerConfig(
+            initial_cash=100_000.0,
+            commission_rate=0.001,
+            slippage_rate=0.0005,
+        )
+    )
+    broker.on_bar(
+        {
+            "AAPL": {
+                "open": 99.0,
+                "high": 101.0,
+                "low": 98.0,
+                "close": 100.0,
+            }
+        }
+    )
+
+    execution_node = create_execution_node(broker)
+
+    result = execution_node(
+        {
+            "ticker": "AAPL",
+            "Action": "BUY",
+            "Target_position_pct": 50.0,
+            "approval_status": "modified",
+            "modified_target_pct": 20.0,
+            "execution_enabled": True,
+        }
+    )
+
+    orders = broker.get_orders()
+    execution_report = result["execution_report"]
+    assert isinstance(execution_report, str)
+    report = ExecutionReport.model_validate_json(execution_report)
+
+    assert len(orders) == 1
+    assert orders[0].qty == pytest.approx(200.0)
+    assert report.order.qty == pytest.approx(200.0)
+    assert report.position_after is not None
+    assert report.position_after.shares == pytest.approx(200.0)
 
 
 def test_execution_node_syncs_portfolio_manager_after_execution() -> None:

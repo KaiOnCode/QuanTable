@@ -1,4 +1,4 @@
-from typing import Annotated, List, Optional
+from typing import Annotated, List, NotRequired, Optional
 
 from langchain_core.messages import BaseMessage
 from langgraph.graph import MessagesState, add_messages
@@ -64,9 +64,14 @@ class AgentState(MessagesState):
     # ========== 新增：会话追踪 (Gap A 预留) ==========
     session_id: Annotated[Optional[str], "会话ID，用于持久化追踪"]
 
-    # ========== Gap B 预留：HITL 审批（注释形式，合并时由 Gap B 团队取消注释） ==========
-    # approval_status: Annotated[Optional[str], "审批状态: auto_approved/pending/approved/rejected/modified"] = "auto_approved"
-    # modified_target_pct: Annotated[Optional[float], "审批修改后的目标仓位"] = None
+    # ========== Gap B 预留：HITL 审批 ==========
+    approval_status: NotRequired[
+        Annotated[
+            Optional[str],
+            "审批状态: auto_approved/pending/approved/rejected/modified",
+        ]
+    ]
+    modified_target_pct: NotRequired[Annotated[Optional[float], "审批修改后的目标仓位"]]
 
     # ========== Gap E 预留：决策流审计（注释形式） ==========
     # execution_events: Annotated[Optional[str], "执行层事件列表（JSON序列化）"] = ""

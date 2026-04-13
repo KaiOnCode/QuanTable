@@ -36,6 +36,9 @@ def create_execution_node(
     def execution_node(state: Mapping[str, object]) -> dict[str, object]:
         if not state.get("execution_enabled", False):
             return {}
+        approval_status = str(state.get("approval_status", "auto_approved"))
+        if approval_status == "rejected":
+            return {"execution_report": "REJECTED — 审批未通过，不执行"}
         action = str(state.get("Action", "HOLD")).upper()
         if action == "HOLD":
             return {"execution_report": "HOLD — 无需执行"}
@@ -48,7 +51,12 @@ def create_execution_node(
         account_before = broker.get_account()
         position_before = broker.get_position(ticker)
         current_shares = position_before.shares if position_before is not None else 0.0
-        target_pct = _coerce_float(state.get("Target_position_pct", 0.0))
+        target_pct_source = (
+            state.get("modified_target_pct", state.get("Target_position_pct", 0.0))
+            if approval_status == "modified"
+            else state.get("Target_position_pct", 0.0)
+        )
+        target_pct = _coerce_float(target_pct_source)
         target_fraction = max(min(target_pct / 100.0, 1.0), -1.0)
         target_position_value = account_before.equity * target_fraction
         target_shares = float(floor(target_position_value / reference_price))

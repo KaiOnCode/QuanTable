@@ -101,3 +101,55 @@ def test_orchestrator_keeps_pm_agent_terminal_when_no_broker_is_configured() -> 
 
     assert result["Action"] == "BUY"
     assert "execution_report" not in result
+
+
+def test_orchestrator_routes_through_hitl_approval_when_enabled() -> None:
+    broker = MockBrokerEngine(
+        BrokerConfig(
+            initial_cash=100_000.0,
+            commission_rate=0.001,
+            slippage_rate=0.0005,
+        )
+    )
+    broker.on_bar(
+        {
+            "AAPL": {
+                "open": 99.0,
+                "high": 101.0,
+                "low": 98.0,
+                "close": 100.0,
+            }
+        }
+    )
+    hitl_calls: list[str] = []
+
+    def hitl_approval_node(state):
+        hitl_calls.append(str(state["ticker"]))
+        return {
+            "approval_status": "modified",
+            "modified_target_pct": 20.0,
+        }
+
+    assistant = IntelliFin_Assistant(
+        broker=broker,
+        enable_hitl=True,
+        hitl_approval_node=hitl_approval_node,
+        tool_nodes=_stub_tool_nodes(),
+        agent_nodes=_stub_agent_nodes(),
+    )
+
+    result = assistant.run(
+        "AAPL",
+        date="2026-04-13T00:00:00Z",
+        current_position_pct=0.0,
+        execution_enabled=True,
+        session_id="session-hitl",
+    )
+
+    report = ExecutionReport.model_validate_json(result["execution_report"])
+
+    assert hitl_calls == ["AAPL"]
+    assert result["approval_status"] == "modified"
+    assert result["modified_target_pct"] == 20.0
+    assert report.order.status is OrderStatus.FILLED
+    assert report.order.qty == 200.0
