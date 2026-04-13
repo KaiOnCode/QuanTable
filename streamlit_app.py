@@ -199,13 +199,23 @@ class Backtester:
         ticker: str,
         end_date: str,
         *,
+        start_date: str | None = None,
         lookback_days: int = 5,
         initial_cash: float = 100_000.0,
         commission_rate: float = 0.001,
         slippage_rate: float = 0.0005,
     ) -> BacktestResult | None:
         date_iso = f"{end_date}T00:00:00Z"
-        price_data = df_get_prices(ticker, lookback_days, end_date=date_iso)
+        effective_lookback_days = lookback_days
+        if start_date is not None:
+            start_timestamp = pd.Timestamp(start_date)
+            end_timestamp = pd.Timestamp(end_date)
+            effective_lookback_days = max(
+                (end_timestamp - start_timestamp).days + 1,
+                1,
+            )
+
+        price_data = df_get_prices(ticker, effective_lookback_days, end_date=date_iso)
         rows = price_data.get("rows", []) if price_data else []
         if not rows:
             return None
@@ -224,6 +234,11 @@ class Backtester:
         )
         price_df["Date"] = pd.to_datetime(price_df["Date"])
         price_df = price_df.set_index("Date").sort_index()
+        if start_date is not None:
+            price_df = price_df.loc[start_date:end_date].copy()
+        if price_df.empty:
+            return None
+
         start_timestamp = _require_timestamp(price_df.index.min())
         end_timestamp = _require_timestamp(price_df.index.max())
 
@@ -252,6 +267,7 @@ class BacktestMetricCard:
 class BacktestDashboardData:
     trades_table: pd.DataFrame
     portfolio_table: pd.DataFrame
+    performance_table: pd.DataFrame
     metric_cards: list[BacktestMetricCard]
 
 
@@ -306,6 +322,25 @@ def build_backtest_dashboard_data(
             "position_count": "Open Positions",
         }
     )
+    performance_table = result.portfolio.loc[
+        :,
+        [
+            "date",
+            "strategy_equity",
+            "benchmark_equity",
+            "strategy_drawdown",
+            "benchmark_drawdown",
+        ],
+    ].copy()
+    performance_table = performance_table.rename(
+        columns={
+            "date": "Date",
+            "strategy_equity": "Strategy Equity",
+            "benchmark_equity": "Benchmark Equity",
+            "strategy_drawdown": "Strategy Drawdown",
+            "benchmark_drawdown": "Benchmark Drawdown",
+        }
+    )
 
     metric_cards = [
         BacktestMetricCard(
@@ -333,8 +368,61 @@ def build_backtest_dashboard_data(
     return BacktestDashboardData(
         trades_table=trades_table,
         portfolio_table=portfolio_table,
+        performance_table=performance_table,
         metric_cards=metric_cards,
     )
+
+
+def build_backtest_performance_figure(performance_table: pd.DataFrame) -> go.Figure:
+    figure = go.Figure()
+    if performance_table.empty:
+        return figure
+
+    figure.add_trace(
+        go.Scatter(
+            x=performance_table["Date"],
+            y=performance_table["Strategy Equity"],
+            name="Strategy Equity",
+            mode="lines",
+        )
+    )
+    figure.add_trace(
+        go.Scatter(
+            x=performance_table["Date"],
+            y=performance_table["Benchmark Equity"],
+            name="Benchmark Equity",
+            mode="lines",
+        )
+    )
+    figure.update_layout(template="plotly_white", height=320)
+    return figure
+
+
+def build_backtest_drawdown_figure(performance_table: pd.DataFrame) -> go.Figure:
+    figure = go.Figure()
+    if performance_table.empty:
+        return figure
+
+    figure.add_trace(
+        go.Scatter(
+            x=performance_table["Date"],
+            y=performance_table["Strategy Drawdown"],
+            name="Strategy Drawdown",
+            mode="lines",
+            fill="tozeroy",
+        )
+    )
+    figure.add_trace(
+        go.Scatter(
+            x=performance_table["Date"],
+            y=performance_table["Benchmark Drawdown"],
+            name="Benchmark Drawdown",
+            mode="lines",
+            fill="tozeroy",
+        )
+    )
+    figure.update_layout(template="plotly_white", height=320)
+    return figure
 
 
 def render_backtest_dashboard(
@@ -343,21 +431,42 @@ def render_backtest_dashboard(
     streamlit_api: Any = st,
 ) -> None:
     streamlit_api.subheader("📒 Broker Backtest")
-    streamlit_api.caption("Strategy KPIs")
+    overview_tab, performance_tab, trades_tab, portfolio_tab = streamlit_api.tabs(
+        ["Overview", "Performance", "Trades", "Portfolio"]
+    )
 
-    for column, card in zip(
-        streamlit_api.columns(len(dashboard.metric_cards)),
-        dashboard.metric_cards,
-    ):
-        column.metric(card.label, card.value)
+    with overview_tab:
+        streamlit_api.subheader("Overview")
+        streamlit_api.caption("Strategy KPIs")
+        for column, card in zip(
+            streamlit_api.columns(len(dashboard.metric_cards)),
+            dashboard.metric_cards,
+        ):
+            column.metric(card.label, card.value)
 
-    streamlit_api.subheader("Trade Log")
-    streamlit_api.caption("Executed fills exported from the trade ledger.")
-    streamlit_api.dataframe(dashboard.trades_table, use_container_width=True)
+    with performance_tab:
+        streamlit_api.subheader("Performance")
+        streamlit_api.caption(
+            "Strategy vs Benchmark and drawdown over the backtest window."
+        )
+        streamlit_api.plotly_chart(
+            build_backtest_performance_figure(dashboard.performance_table),
+            use_container_width=True,
+        )
+        streamlit_api.plotly_chart(
+            build_backtest_drawdown_figure(dashboard.performance_table),
+            use_container_width=True,
+        )
 
-    streamlit_api.subheader("Portfolio Timeline")
-    streamlit_api.caption("Daily account snapshots exported from the trade ledger.")
-    streamlit_api.dataframe(dashboard.portfolio_table, use_container_width=True)
+    with trades_tab:
+        streamlit_api.subheader("Trade Log")
+        streamlit_api.caption("Executed fills exported from the trade ledger.")
+        streamlit_api.dataframe(dashboard.trades_table, use_container_width=True)
+
+    with portfolio_tab:
+        streamlit_api.subheader("Portfolio Timeline")
+        streamlit_api.caption("Daily account snapshots exported from the trade ledger.")
+        streamlit_api.dataframe(dashboard.portfolio_table, use_container_width=True)
 
 
 # 自定义 CSS
@@ -928,7 +1037,8 @@ def main():
         backtest_date = None
         forward_days = 30
         enable_execution_backtest = False
-        execution_backtest_days = 5
+        execution_start_date = None
+        execution_end_date = None
         execution_initial_cash = 100_000.0
         execution_commission_rate = 0.001
         execution_slippage_rate = 0.0005
@@ -957,11 +1067,18 @@ def main():
                 help="Replay the last few bars through the broker + execution loop.",
             )
             if enable_execution_backtest:
-                execution_backtest_days = st.selectbox(
-                    "Preview Window (Bars)",
-                    [5, 10, 20, 30],
-                    index=0,
-                    help="Shorter windows keep the broker backtest preview responsive.",
+                execution_end_date = st.date_input(
+                    "Broker Backtest End Date",
+                    value=backtest_date,
+                    max_value=backtest_date,
+                    help="Use the analysis date or an earlier date as the broker replay end.",
+                )
+                default_start_date = execution_end_date - timedelta(days=4)
+                execution_start_date = st.date_input(
+                    "Broker Backtest Start Date",
+                    value=default_start_date,
+                    max_value=execution_end_date,
+                    help="Replay a bounded historical window through broker execution.",
                 )
                 execution_initial_cash = st.number_input(
                     "Initial Cash",
@@ -1248,8 +1365,16 @@ def main():
                         st.write("🧾 Running broker execution backtest preview...")
                         broker_backtest = backtester.run_execution_backtest(
                             ticker=ticker,
-                            end_date=analysis_date_str,
-                            lookback_days=execution_backtest_days,
+                            start_date=(
+                                execution_start_date.strftime("%Y-%m-%d")
+                                if execution_start_date is not None
+                                else None
+                            ),
+                            end_date=(
+                                execution_end_date.strftime("%Y-%m-%d")
+                                if execution_end_date is not None
+                                else analysis_date_str
+                            ),
                             initial_cash=execution_initial_cash,
                             commission_rate=execution_commission_rate,
                             slippage_rate=execution_slippage_rate,

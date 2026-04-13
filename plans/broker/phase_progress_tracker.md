@@ -333,6 +333,13 @@
 - [x] REFACTOR: 将回测展示拆成“数据适配层 + 渲染层”，避免页面直接耦合底层 ledger 列结构
 - [ ] 下一步：补权益曲线 / 回撤曲线与更完整的页面整理
 
+**Phase 5 Active Task List**
+
+- [x] Task 1: 补绩效图表数据接口与最小图表渲染（Strategy vs Benchmark + Drawdown）
+- [x] Task 2: 将 broker backtest 配置从 preview window 推进到明确的 `start_date / end_date`
+- [x] Task 3: 整理 broker backtest 页面结构，使 KPI / Performance / Trades / Portfolio 更清晰
+- [x] Task 4: 补强 Phase 5 回归测试，覆盖多 bar、日期区间和页面展示主路径
+
 ---
 
 ## 6 审计参考点

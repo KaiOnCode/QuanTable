@@ -32,6 +32,7 @@ class BacktestRunner:
         ledger: TradeLedger | None = None,
         agent: Any | None = None,
     ) -> None:
+        self._config = config
         self.broker = broker or MockBrokerEngine(config)
         self.ledger = ledger or TradeLedger()
         self.agent = agent or IntelliFin_Assistant(broker=self.broker)
@@ -63,9 +64,10 @@ class BacktestRunner:
                 account=self._account_snapshot_for_date(trading_timestamp, session_id),
             )
 
+        portfolio = self._build_portfolio_performance_view(date_filtered)
         return BacktestResult(
             trades=self.ledger.to_trades_dataframe(),
-            portfolio=self.ledger.to_portfolio_dataframe(),
+            portfolio=portfolio,
             metrics=self.ledger.compute_metrics(),
         )
 
@@ -124,3 +126,45 @@ class BacktestRunner:
             msg = "invalid backtest trading timestamp"
             raise ValueError(msg)
         return cast(pd.Timestamp, timestamp)
+
+    def _build_portfolio_performance_view(self, price_df: pd.DataFrame) -> pd.DataFrame:
+        portfolio = self.ledger.to_portfolio_dataframe()
+        if portfolio.empty:
+            return portfolio
+
+        close_by_date = {
+            self._require_timestamp(trading_date).strftime(
+                "%Y-%m-%d"
+            ): self._get_row_value(row, "Close", "close")
+            for trading_date, row in price_df.iterrows()
+        }
+
+        portfolio = portfolio.copy()
+        close_values = [
+            float(close_by_date[str(date_value)])
+            for date_value in portfolio["date"].tolist()
+        ]
+        portfolio["close"] = pd.Series(close_values, index=portfolio.index, dtype=float)
+        portfolio["strategy_equity"] = self._float_series(portfolio, "equity")
+        benchmark_start_close = float(portfolio.iloc[0]["close"])
+        benchmark_shares = (
+            self._config.initial_cash / benchmark_start_close
+            if benchmark_start_close != 0
+            else 0.0
+        )
+        benchmark_equity = self._float_series(portfolio, "close") * benchmark_shares
+        portfolio["benchmark_equity"] = benchmark_equity
+        portfolio["strategy_drawdown"] = self._calculate_drawdown_series(
+            self._float_series(portfolio, "strategy_equity")
+        )
+        portfolio["benchmark_drawdown"] = self._calculate_drawdown_series(
+            self._float_series(portfolio, "benchmark_equity")
+        )
+        return portfolio
+
+    def _calculate_drawdown_series(self, equity_series: pd.Series) -> pd.Series:
+        running_max = equity_series.cummax()
+        return 1 - equity_series / running_max
+
+    def _float_series(self, dataframe: pd.DataFrame, column: str) -> pd.Series:
+        return pd.Series(dataframe[column], index=dataframe.index, dtype=float)
