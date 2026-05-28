@@ -1,0 +1,2 @@
+这个文件夹中放了一些我找的关于finance agent的项目的简介，主要是复制了他们的readme
+其中awesome-trading-agents是一个列表，其他是具体的项目

@@ -1,0 +1,34 @@
+{
+  "presets": [
+    {
+      "id": "aggressive_event_driven",
+      "text": "专注于短期事件驱动机会：优先关注公司公告、并购重组、订单暴增、技术突破等催化事件；偏好中小市值、高波动的题材股，适合激进套利策略。",
+      "style": "aggressive",
+      "tags": ["event-driven", "short-term", "small-cap", "high-volatility"]
+    },
+    {
+      "id": "conservative_value",
+      "text": "专注于稳健的价值投资：关注低PE、高股息、稳定现金流、强护城河的蓝筹股；偏好长期持有，追求稳定复利，控制回撤优先。",
+      "style": "conservative",
+      "tags": ["value", "long-term", "large-cap", "dividend"]
+    },
+    {
+      "id": "momentum_growth",
+      "text": "专注于成长动量：关注营收和利润高增长、行业景气度上升、机构持续加仓的标的；偏好中大盘成长股，持有周期1-4周，趋势跟踪为主。",
+      "style": "aggressive",
+      "tags": ["momentum", "growth", "mid-cap", "trend-following"]
+    },
+    {
+      "id": "technical_reversal",
+      "text": "专注于技术反转信号：寻找RSI超卖/超买、MACD金叉/死叉、布林带突破等技术信号；以技术面为主，基本面为辅，持有周期1-5天，严格止损。",
+      "style": "moderate",
+      "tags": ["technical", "reversal", "swing-trading", "mean-reversion"]
+    },
+    {
+      "id": "macro_sensitive",
+      "text": "专注于宏观政策敏感型机会：关注货币政策转向、财政刺激、产业政策变化对相关板块的影响；结合利率、汇率、大宗商品走势进行行业配置和择时。",
+      "style": "moderate",
+      "tags": ["macro", "policy", "sector-rotation", "top-down"]
+    }
+  ]
+}

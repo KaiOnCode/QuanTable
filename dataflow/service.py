@@ -132,10 +132,28 @@ class DataService:
 
         return []
 
+    def df_get_sentiment(
+        self,
+        ticker: str,
+        window_days: int = 7,
+        end_date: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        获取新闻情绪评分 [-1.0, 1.0]。
+        Uses cache (SHA256 integrity, 4h TTL) and keyword-based aggregation.
+        """
+        from .providers.sentiment import df_get_sentiment
+
+        return df_get_sentiment(
+            ticker,
+            window_days=window_days,
+            end_date=end_date,
+        )
+
     def df_get_policy_expectations(self) -> Dict[str, Any]:
         """
         获取利率预期
-        TODO: (这是您的下一个任务)
+        TODO: Integrate with CME FedWatch or similar source.
         """
         print("[DataService] df_get_policy_expectations not implemented.")
         return {}
