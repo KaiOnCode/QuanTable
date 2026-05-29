@@ -1,8 +1,8 @@
 """
 Manual Playwright smoke check for the Phase 5 Streamlit backtest UI.
 
-This lives under `test/` for discoverability, but it is intentionally not named
-`test_*.py` so regular pytest runs do not require a browser runtime.
+This lives under `test/streamlit/` for discoverability, but it is intentionally
+not named `test_*.py` so regular pytest runs do not require a browser runtime.
 """
 
 from playwright.sync_api import sync_playwright

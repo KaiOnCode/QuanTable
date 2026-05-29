@@ -175,7 +175,7 @@ main
 合并完成后至少检查：
 
 - `uv sync`
-- `uv run pytest test/test_broker_models.py test/test_broker_engine.py test/test_broker_ledger.py test/test_backtest_runner.py`
+- `uv run pytest test/broker/test_models.py test/broker/test_engine.py test/broker/test_ledger.py test/broker/test_backtest_runner.py`
 - `uv run basedpyright --baselinefile bugs/basedpyright/baseline.json`
 - `uv run ruff check .`
 - `uv run ruff format --check .`

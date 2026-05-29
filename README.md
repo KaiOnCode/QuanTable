@@ -92,7 +92,7 @@ uv run playwright install chromium
 uv run python /home/eden/.agents/skills/webapp-testing/scripts/with_server.py \
   --server "uv run streamlit run streamlit_app.py --server.headless true --server.port 8501" \
   --port 8501 \
-  -- uv run python test/streamlit_broker_phase5_smoke.py
+  -- uv run python test/streamlit/streamlit_broker_phase5_smoke.py
 ```
 
 ## 🏗️ 项目结构

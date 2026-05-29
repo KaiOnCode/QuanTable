@@ -39,7 +39,7 @@
 - **动作**：在计划里继续把 Streamlit broker smoke 视为 broker 已有能力的回归证据。
 - **对应文件范围**：`plans/broker-plus/frozen-contract-and-impl-plan.md` 的最终回归 gate。
 - **依赖**：无代码依赖；只依赖冻结契约的非目标。
-- **验收 gate**：最终 gate 仍包含 `test/test_streamlit_app.py` 或等价 smoke 证据。
+- **验收 gate**：最终 gate 仍包含 `test/streamlit/test_streamlit_app.py` 或等价 smoke 证据。
 - **非目标**：不迁移 Streamlit 到 React，不删除 Streamlit 验证。
 
 ## 3. 随实现排期执行
@@ -51,7 +51,7 @@
 - **phase**：Phase 1 / Task 1。
 - **动作**：为 `Order`、`Fill`、`Position`、`AccountSnapshot`、`ExecutionReport`、`BrokerEvent`、ledger records 补齐 `strategy_id`、`account_id`、`session_id`、`decision_id` 的默认语义。
 - **依赖**：冻结契约的 identity semantics。
-- **对应文件范围**：`broker/models.py`、`broker/events.py`、`broker/ledger.py`、`broker/__init__.py`、`test/test_broker_models.py`、`test/test_broker_ledger.py`。
+- **对应文件范围**：`broker/models.py`、`broker/events.py`、`broker/ledger.py`、`broker/__init__.py`、`test/broker/test_models.py`、`test/broker/test_ledger.py`。
 - **验收 gate**：默认值和 ledger round-trip 测试通过；`session_id` 不被解释为 strategy/account/decision。
 - **非目标**：不实现用户/权限系统，不把 `decision_id` 生成职责放入 broker。
 
@@ -60,7 +60,7 @@
 - **phase**：Phase 1 / Task 3。
 - **动作**：扩展 broker execution-domain event 字段，新增 `BrokerEventSink` protocol 和 `InMemoryBrokerEventSink`，由 sink 按 `(strategy_id, account_id)` 分配单调 `sequence`。
 - **依赖**：身份字段默认语义。
-- **对应文件范围**：`broker/events.py`、`broker/engine.py`、`broker/__init__.py`、`test/test_broker_models.py`、`test/test_broker_engine.py`。
+- **对应文件范围**：`broker/events.py`、`broker/engine.py`、`broker/__init__.py`、`test/broker/test_models.py`、`test/broker/test_engine.py`。
 - **验收 gate**：事件字段完整；不同 account 的 sequence 独立从 1 开始。
 - **非目标**：不实现 SQLite event store，不接入 ContextStore，不做权限、加密或生产级审计合规。
 
@@ -69,7 +69,7 @@
 - **phase**：Phase 2 / Task 2。
 - **动作**：让 `MockBrokerEngine` 按 `account_id` 隔离 cash、positions、orders、fills 和 event log，同时保留 `"default"` 兼容行为。
 - **依赖**：身份字段和 event sink 边界。
-- **对应文件范围**：`broker/engine.py`、`broker/gateway.py`、`test/test_broker_engine.py`。
+- **对应文件范围**：`broker/engine.py`、`broker/gateway.py`、`test/broker/test_engine.py`。
 - **验收 gate**：两个 account 的账户快照、持仓、订单、成交和事件互不污染；旧默认账户测试继续通过。
 - **非目标**：不实现多策略调度，不实现多用户权限，不改写 backtest 为 per-ticker 独立账户。
 
@@ -78,7 +78,7 @@
 - **phase**：Phase 3 / Task 4。
 - **动作**：新增 `broker/views.py`，固定 `AccountView`、`PositionView`、`OrderView`、`FillView`、`TradeView`、`ApprovalSnapshotView`、`ExecutionReportView`、`BrokerEventView`、`PerformanceMetricsView`、`BacktestConfigView`、`BacktestSeriesPointView`、`BacktestResultView`。
 - **依赖**：身份字段、账户隔离和 ledger/event 边界。
-- **对应文件范围**：`broker/views.py`、`broker/__init__.py`、`test/test_broker_views.py`。
+- **对应文件范围**：`broker/views.py`、`broker/__init__.py`、`test/broker/test_views.py`。
 - **验收 gate**：枚举映射、百分比单位、订单成交聚合、持仓价格来源和从账本生成交易视图的语义都有测试固定。
 - **非目标**：不实现 FastAPI route，不让 React 直接依赖 broker 内部模型，不把内部 enum 大规模改名。
 
@@ -87,7 +87,7 @@
 - **phase**：Phase 4 / Task 5。
 - **动作**：让 execution node 所有分支返回结构化 `ExecutionReportView` JSON；`pending`、`rejected`、`timed_out`、缺价格、禁用执行、HOLD、目标已满足都有明确状态。
 - **依赖**：`ExecutionReportView`、event sink、身份传播。
-- **对应文件范围**：`agentgraph/execution_node.py`、`agentgraph/state.py`、`test/test_execution_node.py`、`test/test_orchestrator.py`。
+- **对应文件范围**：`agentgraph/execution_node.py`、`agentgraph/state.py`、`test/agentgraph/test_execution_node.py`、`test/agentgraph/test_orchestrator.py`。
 - **验收 gate**：`pending/skipped/held/rejected/failed/executed` 分支都有测试；`skipped/held` 不写 broker event；`modified` 记录原始和修改后目标仓位。
 - **非目标**：不实现 HITL manager、审批策略规则、通知、interrupt/resume 或前端审批页。
 
@@ -96,7 +96,7 @@
 - **phase**：Phase 5 / Task 6。
 - **动作**：把执行型回测结果序列化成同步完成的 `BacktestResultView`，包含 `benchmark_symbol`、summary、series、trades。
 - **依赖**：view/serializer 层和 TradeView 语义。
-- **对应文件范围**：`broker/backtest_runner.py`、`broker/views.py`、`test/test_backtest_runner.py`、`test/test_broker_views.py`。
+- **对应文件范围**：`broker/backtest_runner.py`、`broker/views.py`、`test/broker/test_backtest_runner.py`、`test/broker/test_views.py`。
 - **验收 gate**：`status="completed"`、`benchmark_symbol="SPY"` 默认、百分比点输出、benchmark/excess return、portfolio-level series 和 ledger-derived trades 都有测试。
 - **非目标**：不实现异步 job queue，不实现 `/api/backtest`，不实现方向预测准确率回测 contract。
 
@@ -105,7 +105,7 @@
 - **phase**：Phase 6 / Task 7。
 - **动作**：把 `on_execution_complete` 提升为 `IntelliFin_Assistant` 构造参数，并透传到 execution node。
 - **依赖**：结构化 `ExecutionReportView`。
-- **对应文件范围**：`agentgraph/orchestrator.py`、`test/test_orchestrator.py`。
+- **对应文件范围**：`agentgraph/orchestrator.py`、`test/agentgraph/test_orchestrator.py`。
 - **验收 gate**：callback 精确收到一次 broker-owned report 和 state。
 - **非目标**：不改变 graph topology，不在 broker-plus 接入 ContextStore、notification 或 audit service。
 

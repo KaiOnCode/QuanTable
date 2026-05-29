@@ -222,7 +222,7 @@ This section is the only implementation schedule for broker-plus. `plans/broker-
 - **02 disposition:** Execute with the implementation schedule.
 - **Scope:** Task 1 identity fields and ledger propagation; Task 3 broker event sink protocol and in-memory implementation.
 - **Dependencies:** Frozen identity semantics, event/ledger boundary, and default account semantics.
-- **File scope:** `broker/models.py`, `broker/events.py`, `broker/ledger.py`, `broker/engine.py`, `broker/__init__.py`, `test/test_broker_models.py`, `test/test_broker_ledger.py`, `test/test_broker_engine.py`.
+- **File scope:** `broker/models.py`, `broker/events.py`, `broker/ledger.py`, `broker/engine.py`, `broker/__init__.py`, `test/broker/test_models.py`, `test/broker/test_ledger.py`, `test/broker/test_engine.py`.
 - **Acceptance gate:** Identity default tests, ledger round-trip tests, event field tests, and independent `sequence` tests per `(strategy_id, account_id)` pass; `session_id` is not interpreted as strategy/account/decision identity.
 - **Non-goals:** Do not generate `decision_id`; do not implement a SQLite event store; do not integrate ContextStore; do not add permissions, encryption, or production-grade audit compliance.
 
@@ -231,7 +231,7 @@ This section is the only implementation schedule for broker-plus. `plans/broker-
 - **02 disposition:** Execute with the implementation schedule.
 - **Scope:** Task 2 makes `MockBrokerEngine` isolate cash, positions, orders, fills, and event logs by `account_id`, while preserving `"default"` compatibility behavior.
 - **Dependencies:** Phase 1 identity fields and event sink boundary.
-- **File scope:** `broker/engine.py`, `broker/gateway.py`, `test/test_broker_engine.py`.
+- **File scope:** `broker/engine.py`, `broker/gateway.py`, `test/broker/test_engine.py`.
 - **Acceptance gate:** Account snapshots, positions, orders, fills, and events for two accounts do not contaminate each other; legacy default-account tests continue to pass.
 - **Non-goals:** Do not implement multi-strategy scheduling; do not implement users or permissions; do not convert backtests into per-ticker isolated accounts.
 
@@ -240,7 +240,7 @@ This section is the only implementation schedule for broker-plus. `plans/broker-
 - **02 disposition:** Execute with the implementation schedule.
 - **Scope:** Task 4 adds `broker/views.py` and freezes the execution-domain view contract and pure serializers consumable by API/front-end layers.
 - **Dependencies:** Phase 1 identity fields and event/ledger boundary; Phase 2 account isolation semantics.
-- **File scope:** `broker/views.py`, `broker/__init__.py`, `test/test_broker_views.py`.
+- **File scope:** `broker/views.py`, `broker/__init__.py`, `test/broker/test_views.py`.
 - **Acceptance gate:** Lower-case enum mapping, internal decimal fractions vs external percentage points, order fill aggregation, `PositionView.price_source`, and ledger-derived `TradeView` behavior are fixed by tests.
 - **Non-goals:** Do not implement FastAPI routes; do not make React depend on broker internals; do not broadly rename internal broker enums.
 
@@ -249,7 +249,7 @@ This section is the only implementation schedule for broker-plus. `plans/broker-
 - **02 disposition:** Execute with the implementation schedule.
 - **Scope:** Task 5 converts every execution-node branch to structured `ExecutionReportView` JSON and fixes the safety semantics for `approval_status="pending"`.
 - **Dependencies:** Phase 1 event sink and identity propagation; Phase 3 `ExecutionReportView`.
-- **File scope:** `agentgraph/execution_node.py`, `agentgraph/state.py`, `test/test_execution_node.py`, `test/test_orchestrator.py`.
+- **File scope:** `agentgraph/execution_node.py`, `agentgraph/state.py`, `test/agentgraph/test_execution_node.py`, `test/agentgraph/test_orchestrator.py`.
 - **Acceptance gate:** `pending`, `skipped`, `held`, `executed`, `rejected`, and `failed` branches are covered by tests; `skipped/held` do not write broker events; `modified` records original and modified target percentages.
 - **Non-goals:** Do not implement a HITL manager, approval policy rules, notifications, interrupt/resume, front-end approval pages, or the formal approval domain.
 
@@ -258,7 +258,7 @@ This section is the only implementation schedule for broker-plus. `plans/broker-
 - **02 disposition:** Execute with the implementation schedule.
 - **Scope:** Task 6 produces a synchronous completed `BacktestResultView` with config, summary, series, trades, and `benchmark_symbol`.
 - **Dependencies:** Phase 3 view/serializer layer and ledger-derived trade semantics.
-- **File scope:** `broker/backtest_runner.py`, `broker/views.py`, `test/test_backtest_runner.py`, `test/test_broker_views.py`.
+- **File scope:** `broker/backtest_runner.py`, `broker/views.py`, `test/broker/test_backtest_runner.py`, `test/broker/test_views.py`.
 - **Acceptance gate:** `status="completed"`, default `benchmark_symbol="SPY"`, benchmark/excess return, percentage-point summary values, portfolio-level series, and ledger-derived trades are fixed by tests.
 - **Non-goals:** Do not implement an async job queue; do not implement `/api/backtest`; do not implement a prediction-accuracy backtest contract.
 
@@ -267,7 +267,7 @@ This section is the only implementation schedule for broker-plus. `plans/broker-
 - **02 disposition:** Execute with the implementation schedule.
 - **Scope:** Task 7 promotes `on_execution_complete` to an `IntelliFin_Assistant` constructor parameter and passes it through to the execution node.
 - **Dependencies:** Phase 4 structured `ExecutionReportView`.
-- **File scope:** `agentgraph/orchestrator.py`, `test/test_orchestrator.py`.
+- **File scope:** `agentgraph/orchestrator.py`, `test/agentgraph/test_orchestrator.py`.
 - **Acceptance gate:** The callback receives the broker-owned report and state exactly once.
 - **Non-goals:** Do not change graph topology; do not integrate ContextStore, notification, or audit services in broker-plus.
 
@@ -301,8 +301,8 @@ The following items are outside broker-plus first-stage scope: React/Next.js pag
 - Modify: `broker/events.py`
 - Modify: `broker/ledger.py`
 - Modify: `broker/__init__.py`
-- Test: `test/test_broker_models.py`
-- Test: `test/test_broker_ledger.py`
+- Test: `test/broker/test_models.py`
+- Test: `test/broker/test_ledger.py`
 
 - [x] **Step 1: Write failing tests for identity defaults and propagation**
 
@@ -322,7 +322,7 @@ Also add a ledger test where a fill with all IDs persists and reloads through `I
 Run:
 
 ```bash
-uv run pytest test/test_broker_models.py test/test_broker_ledger.py -q
+uv run pytest test/broker/test_models.py test/broker/test_ledger.py -q
 ```
 
 Expected: fail on missing identity fields.
@@ -348,7 +348,7 @@ Update `broker/__init__.py` only for new public classes. Do not export private h
 Run:
 
 ```bash
-uv run pytest test/test_broker_models.py test/test_broker_ledger.py -q
+uv run pytest test/broker/test_models.py test/broker/test_ledger.py -q
 uv run basedpyright --baselinefile bugs/basedpyright/baseline.json
 uv run ruff check .
 uv run ruff format --check .
@@ -362,7 +362,7 @@ Expected: all pass.
 
 - Modify: `broker/engine.py`
 - Modify: `broker/gateway.py`
-- Test: `test/test_broker_engine.py`
+- Test: `test/broker/test_engine.py`
 
 - [x] **Step 1: Write failing tests for account isolation**
 
@@ -380,7 +380,7 @@ Assert `get_account(account_id="account-a")` only includes account A state and `
 Run:
 
 ```bash
-uv run pytest test/test_broker_engine.py -q
+uv run pytest test/broker/test_engine.py -q
 ```
 
 Expected: fail because current engine stores one global cash/positions/orders/fills set.
@@ -422,7 +422,7 @@ When placing or canceling orders, use `order.account_id`.
 Run:
 
 ```bash
-uv run pytest test/test_broker_engine.py test/test_execution_node.py test/test_backtest_runner.py -q
+uv run pytest test/broker/test_engine.py test/agentgraph/test_execution_node.py test/broker/test_backtest_runner.py -q
 ```
 
 Expected: all pass with default account behavior unchanged.
@@ -434,8 +434,8 @@ Expected: all pass with default account behavior unchanged.
 - Modify: `broker/events.py`
 - Modify: `broker/engine.py`
 - Modify: `broker/__init__.py`
-- Test: `test/test_broker_models.py`
-- Test: `test/test_broker_engine.py`
+- Test: `test/broker/test_models.py`
+- Test: `test/broker/test_engine.py`
 
 - [x] **Step 1: Write failing tests for event IDs and per-account sequence**
 
@@ -462,7 +462,7 @@ Add a test that account A event sequence is `1, 2` while account B starts at `1`
 Run:
 
 ```bash
-uv run pytest test/test_broker_models.py test/test_broker_engine.py -q
+uv run pytest test/broker/test_models.py test/broker/test_engine.py -q
 ```
 
 Expected: fail on missing event fields and sink behavior.
@@ -497,7 +497,7 @@ Keep `get_event_log()` as a compatibility wrapper over the sink for default acco
 Run:
 
 ```bash
-uv run pytest test/test_broker_models.py test/test_broker_engine.py -q
+uv run pytest test/broker/test_models.py test/broker/test_engine.py -q
 uv run basedpyright --baselinefile bugs/basedpyright/baseline.json
 uv run ruff check .
 uv run ruff format --check .
@@ -511,11 +511,11 @@ Expected: all pass.
 
 - Create: `broker/views.py`
 - Modify: `broker/__init__.py`
-- Test: `test/test_broker_views.py`
+- Test: `test/broker/test_views.py`
 
 - [x] **Step 1: Write failing tests for enum and percent mappings**
 
-Create `test/test_broker_views.py`. Cover:
+Create `test/broker/test_views.py`. Cover:
 
 ```python
 OrderStatus.NEW -> "pending"
@@ -574,7 +574,7 @@ to_backtest_result_view(...)
 Run:
 
 ```bash
-uv run pytest test/test_broker_views.py -q
+uv run pytest test/broker/test_views.py -q
 uv run basedpyright --baselinefile bugs/basedpyright/baseline.json
 uv run ruff check .
 uv run ruff format --check .
@@ -588,8 +588,8 @@ Expected: all pass.
 
 - Modify: `agentgraph/execution_node.py`
 - Modify: `agentgraph/state.py`
-- Test: `test/test_execution_node.py`
-- Test: `test/test_orchestrator.py`
+- Test: `test/agentgraph/test_execution_node.py`
+- Test: `test/agentgraph/test_orchestrator.py`
 
 - [x] **Step 1: Write failing tests for skipped, held, pending, rejected, failed**
 
@@ -635,7 +635,7 @@ Write `execution_pending`, `execution_rejected`, and `execution_failed` only for
 Run:
 
 ```bash
-uv run pytest test/test_execution_node.py test/test_orchestrator.py -q
+uv run pytest test/agentgraph/test_execution_node.py test/agentgraph/test_orchestrator.py -q
 uv run basedpyright --baselinefile bugs/basedpyright/baseline.json
 uv run ruff check .
 uv run ruff format --check .
@@ -649,8 +649,8 @@ Expected: all pass.
 
 - Modify: `broker/backtest_runner.py`
 - Modify: `broker/views.py`
-- Test: `test/test_backtest_runner.py`
-- Test: `test/test_broker_views.py`
+- Test: `test/broker/test_backtest_runner.py`
+- Test: `test/broker/test_views.py`
 
 - [x] **Step 1: Write failing tests for BacktestResultView**
 
@@ -679,7 +679,7 @@ The serializer must accept a result/config with multiple tickers and represent i
 Run:
 
 ```bash
-uv run pytest test/test_backtest_runner.py test/test_broker_views.py -q
+uv run pytest test/broker/test_backtest_runner.py test/broker/test_views.py -q
 uv run basedpyright --baselinefile bugs/basedpyright/baseline.json
 uv run ruff check .
 uv run ruff format --check .
@@ -692,7 +692,7 @@ Expected: all pass.
 **Files:**
 
 - Modify: `agentgraph/orchestrator.py`
-- Test: `test/test_orchestrator.py`
+- Test: `test/agentgraph/test_orchestrator.py`
 
 - [x] **Step 1: Write failing test for hook passthrough**
 
@@ -717,7 +717,7 @@ Only change orchestrator wiring. Do not alter graph topology.
 Run:
 
 ```bash
-uv run pytest test/test_orchestrator.py -q
+uv run pytest test/agentgraph/test_orchestrator.py -q
 uv run basedpyright --baselinefile bugs/basedpyright/baseline.json
 uv run ruff check .
 uv run ruff format --check .
@@ -759,7 +759,7 @@ See plans/broker-plus/05-contract-mapping.md
 Run:
 
 ```bash
-uv run pytest test/test_broker_models.py test/test_broker_engine.py test/test_broker_ledger.py test/test_broker_views.py test/test_execution_node.py test/test_orchestrator.py test/test_backtest_runner.py test/test_streamlit_app.py -q
+uv run pytest test/broker/test_models.py test/broker/test_engine.py test/broker/test_ledger.py test/broker/test_views.py test/agentgraph/test_execution_node.py test/agentgraph/test_orchestrator.py test/broker/test_backtest_runner.py test/streamlit/test_streamlit_app.py -q
 uv run basedpyright --baselinefile bugs/basedpyright/baseline.json
 uv run ruff check .
 uv run ruff format --check .
@@ -810,7 +810,7 @@ Broker-plus is ready for integration planning when:
 - Quality gates pass:
 
 ```bash
-uv run pytest test/test_broker_models.py test/test_broker_engine.py test/test_broker_ledger.py test/test_broker_views.py test/test_execution_node.py test/test_orchestrator.py test/test_backtest_runner.py test/test_streamlit_app.py -q
+uv run pytest test/broker/test_models.py test/broker/test_engine.py test/broker/test_ledger.py test/broker/test_views.py test/agentgraph/test_execution_node.py test/agentgraph/test_orchestrator.py test/broker/test_backtest_runner.py test/streamlit/test_streamlit_app.py -q
 uv run basedpyright --baselinefile bugs/basedpyright/baseline.json
 uv run ruff check .
 uv run ruff format --check .

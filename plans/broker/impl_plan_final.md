@@ -21,8 +21,8 @@ Phase 5 落地后，有几处实现与本计划文本存在“组织方式不同
   - Strategy vs Benchmark 回撤曲线
   - `Overview / Performance / Trades / Portfolio` 页面分区
 - 浏览器层 smoke 验证脚本已落盘到
-  [`test/streamlit_broker_phase5_smoke.py`](/home/eden/MasterGraduation/COMP7705-Agent-Quant/test/streamlit_broker_phase5_smoke.py)。
-- 本计划中的 `test/test_broker.py` 在最终实现中没有作为单一聚合文件落地；实际采用按职责拆分的 pytest 文件集合（如 `test/test_broker_models.py`、`test/test_broker_engine.py`、`test/test_broker_ledger.py`、`test/test_backtest_runner.py`、`test/test_streamlit_app.py` 等）。这是测试组织方式差异，不构成功能缺口。
+  [`test/streamlit/streamlit_broker_phase5_smoke.py`](/home/eden/MasterGraduation/COMP7705-Agent-Quant/test/streamlit/streamlit_broker_phase5_smoke.py)。
+- 本计划中的 `test/test_broker.py` 在最终实现中没有作为单一聚合文件落地；实际采用按职责拆分的 pytest 文件集合（如 `test/broker/test_models.py`、`test/broker/test_engine.py`、`test/broker/test_ledger.py`、`test/broker/test_backtest_runner.py`、`test/streamlit/test_streamlit_app.py` 等）。这是测试组织方式差异，不构成功能缺口。
 
 ---
 
@@ -518,30 +518,22 @@ class BacktestRunner:
    - 权益曲线图（Strategy vs Benchmark）
    - 回撤曲线图
 
-#### [NEW] `test/test_broker.py`
+#### [NEW] `test/broker/` + related integration tests
 
-Pytest 单元测试 + 集成测试：
+Pytest 单元测试 + 集成测试。最终实现采用按职责拆分的测试文件，而不是单一聚合文件：
 
 ```python
 # 单元测试
-class TestOrderModels: ...        # 模型创建与验证
-class TestMockBrokerEngine: ...
-    # test_place_market_buy
-    # test_place_market_sell
-    # test_place_limit_buy_triggered
-    # test_place_limit_buy_not_triggered
-    # test_cancel_order
-    # test_short_selling
-    # test_position_pnl_calculation
-    # test_insufficient_funds_rejection
-    # test_commission_and_slippage
-
-class TestPreTradeRiskChecker: ... # 风控检查
-class TestTradeLedger: ...         # 日志与指标
+test/broker/test_models.py          # 模型创建与验证
+test/broker/test_engine.py          # MockBrokerEngine matching/risk/events
+test/broker/test_ledger.py          # 日志与指标
+test/broker/test_backtest_runner.py # broker backtest runner
+test/broker/test_views.py           # broker-plus public view contract
 
 # 集成测试
-class TestExecutionNode: ...       # 执行节点与 AgentState 集成
-class TestBacktestRunner: ...      # 端到端回测流程
+test/agentgraph/test_execution_node.py
+test/agentgraph/test_orchestrator.py
+test/streamlit/test_streamlit_app.py
 ```
 
 ---
@@ -575,7 +567,11 @@ agents/utils/
 streamlit_app.py                 # [MODIFY] 新增交易日志/绩效面板
 
 test/
-└── test_broker.py               # [NEW] 完整测试套件
+├── broker/                      # [NEW] broker package tests
+├── agentgraph/                  # [NEW] execution/orchestrator integration tests
+├── dataflow/                    # [NEW] broker-dataflow integration tests
+├── agents/                      # [NEW] agent tool integration tests
+└── streamlit/                   # [NEW] Streamlit dashboard tests and smoke script
 ```
 
 ---
@@ -721,14 +717,14 @@ uv run basedpyright
 uv run ruff check .
 uv run ruff format --check .
 
-# 运行所有单元测试
-uv run pytest test/test_broker.py -v
+# 运行 broker 单元测试
+uv run pytest test/broker -v
 
-# 运行特定测试类
-uv run pytest test/test_broker.py::TestMockBrokerEngine -v
+# 运行特定 broker 模块
+uv run pytest test/broker/test_engine.py -v
 
 # 端到端集成测试（不调 LLM，用 mock 数据）
-uv run pytest test/test_broker.py::TestBacktestRunner -v
+uv run pytest test/broker/test_backtest_runner.py test/agentgraph -v
 ```
 
 ### 8.2 手动验证

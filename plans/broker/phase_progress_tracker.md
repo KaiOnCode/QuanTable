@@ -75,7 +75,7 @@
 
 | Phase | 状态 | 当前判断 | 下一步最小 TDD 切片 | 完成门禁 |
 | --- | --- | --- | --- | --- |
-| Phase 1 数据模型层 | Completed | `broker/` Phase 1 已落地，含模型/配置/事件和 pytest 覆盖 | Phase 2 起点：先写市价买入立即成交的失败测试，再实现最小 `place_order()` | `uv run pytest test/test_broker_models.py -q` + `basedpyright --baselinefile` + `ruff` 全绿 |
+| Phase 1 数据模型层 | Completed | `broker/` Phase 1 已落地，含模型/配置/事件和 pytest 覆盖 | Phase 2 起点：先写市价买入立即成交的失败测试，再实现最小 `place_order()` | `uv run pytest test/broker/test_models.py -q` + `basedpyright --baselinefile` + `ruff` 全绿 |
 | Phase 2 撮合引擎 + Broker 接口 | Completed | Broker 核心接口、撮合、风控、事件 hooks 已落地并有 pytest 覆盖 | Phase 3 起点：先写记录单笔 fill 后可回读的失败测试，再引入最小账本 | Phase 2 测试 + 质量门禁全绿 |
 | Phase 3 账本 + 交易日志 | Completed | `ledger.py`、backend-backed 账本读回、核心指标、CSV 导出与 `PortfolioManager.sync_from_broker()` 已收口并有 pytest 覆盖 | 按当前任务边界暂停；如继续推进，下一步才进入 Phase 4 execution node 的首个失败测试 | Phase 3 测试 + 质量门禁全绿 |
 | Phase 4 主工作流集成 | Completed | `AgentState` / `execution_node` / `orchestrator` / `DataService` / `agent_tools` / `backtest_runner` 最小范围已落地，含 HITL 插入点与审批状态契约 | 按当前任务边界暂停；如继续推进，下一步才进入 Phase 5 UI / 回测展示层 | Phase 4 测试 + 图结构验证 + 质量门禁全绿 |
@@ -96,7 +96,7 @@
 - [x] 建立 `broker/events.py`
 - [x] 补齐 `Order` / `Fill` / `Position` / `AccountSnapshot` / `ExecutionReport`
 - [x] 建立 `broker/__init__.py` 统一导出 Phase 1 公共类型
-- [x] 建立 `test/test_broker_models.py` 与 `test/conftest.py`
+- [x] 建立 `test/broker/test_models.py` 与 `test/conftest.py`
 
 **当前证据**
 
@@ -127,7 +127,7 @@
 
 **验证结果**
 
-- [x] `uv run pytest test/test_broker_models.py -q`
+- [x] `uv run pytest test/broker/test_models.py -q`
 - [x] `uv run basedpyright --baselinefile bugs/basedpyright/baseline.json`
 - [x] `uv run ruff check .`
 - [x] `uv run ruff format --check .`
@@ -154,7 +154,7 @@
   - `broker/gateway.py`
   - `broker/engine.py`
   - `broker/risk_checks.py`
-  - `test/test_broker_engine.py`
+  - `test/broker/test_engine.py`
   - `broker/__init__.py` Phase 2 导出
 - `MockBrokerEngine` 现已具备这些可观察行为：
   - `BrokerGateway` 公共查询接口：`get_account()` / `get_position()` / `get_positions()` / `get_order()` / `get_orders()` / `get_fills()`
@@ -199,7 +199,7 @@
 
 **验证结果**
 
-- [x] `uv run pytest test/test_broker_models.py test/test_broker_engine.py -q`
+- [x] `uv run pytest test/broker/test_models.py test/broker/test_engine.py -q`
 - [x] `uv run basedpyright --baselinefile bugs/basedpyright/baseline.json`
 - [x] `uv run ruff check .`
 - [x] `uv run ruff format --check .`
@@ -223,8 +223,8 @@
 
 - 已新增：
   - `broker/ledger.py`
-  - `test/test_broker_ledger.py`
-  - `test/test_portfolio_manager.py`
+  - `test/broker/test_ledger.py`
+  - `test/dataflow/test_portfolio_manager.py`
 - `broker/ledger.py` 现已包含：
   - `TradeLedgerBackend` Protocol
   - `InMemoryLedgerBackend`
@@ -256,7 +256,7 @@
 
 **验证结果**
 
-- [x] `uv run pytest test/test_broker_models.py test/test_broker_engine.py test/test_broker_ledger.py test/test_portfolio_manager.py -q`
+- [x] `uv run pytest test/broker/test_models.py test/broker/test_engine.py test/broker/test_ledger.py test/dataflow/test_portfolio_manager.py -q`
 - [x] `uv run basedpyright --baselinefile bugs/basedpyright/baseline.json`
 - [x] `uv run ruff check .`
 - [x] `uv run ruff format --check .`
@@ -310,19 +310,19 @@
 **本阶段目标**
 
 - Streamlit 增加交易日志与绩效面板
-- 建立 `test/test_broker.py`
+- 建立按领域拆分的 broker / integration pytest 套件
 - 完成端到端回测测试
 
 **当前证据**
 
-- `test/test_backtest_runner.py` 已新增最小 happy path，验证 `BacktestRunner.run()` 会返回结构化 `trades / portfolio / metrics`，并且真实驱动 broker + agent + ledger 产生交易与日终快照。
+- `test/broker/test_backtest_runner.py` 已新增最小 happy path，验证 `BacktestRunner.run()` 会返回结构化 `trades / portfolio / metrics`，并且真实驱动 broker + agent + ledger 产生交易与日终快照。
 - `streamlit_app.py` 已新增：
   - `Backtester.run_execution_backtest()`：将价格 rows 转成 OHLC DataFrame，并调用正式 `BacktestRunner`
   - `build_backtest_dashboard_data()`：将 `BacktestResult` 适配成 Streamlit 直接消费的交易表、组合表、KPI 卡片
   - `render_backtest_dashboard()`：最小渲染交易日志表、组合时间线表、绩效指标面板
   - Backtest Mode 侧边栏的 broker preview 配置（窗口、初始资金、手续费、滑点）
   - Backtest 结果区中的 broker backtest 展示入口
-- 已新增 `test/test_streamlit_app.py`，覆盖回测结果数据适配、UI 渲染调用与 `Backtester` → `BacktestRunner` 接通。
+- 已新增 `test/streamlit/test_streamlit_app.py`，覆盖回测结果数据适配、UI 渲染调用与 `Backtester` → `BacktestRunner` 接通。
 - 已补：
   - Strategy vs Benchmark 权益曲线
   - Strategy vs Benchmark 回撤曲线
@@ -331,9 +331,9 @@
   - 多 bar + 显式日期区间 + dashboard 渲染主路径回归测试
 - Streamlit app 启动 smoke 已通过：本地 `streamlit_app.py` 能成功起服到 `8501` 端口。
 - 浏览器层 smoke 已通过：补齐 `playwright` 依赖与 Chromium 后，已验证 Backtest Mode 中新增的 broker backtest 日期区间与费用配置项可在页面中被发现。
-- 浏览器层 smoke 脚本已落盘到 [test/streamlit_broker_phase5_smoke.py](/home/eden/MasterGraduation/COMP7705-Agent-Quant/test/streamlit_broker_phase5_smoke.py)，用于后续手动复跑。
+- 浏览器层 smoke 脚本已落盘到 [test/streamlit/streamlit_broker_phase5_smoke.py](/home/eden/MasterGraduation/COMP7705-Agent-Quant/test/streamlit/streamlit_broker_phase5_smoke.py)，用于后续手动复跑。
 - 推荐复跑命令：
-  `uv run python /home/eden/.agents/skills/webapp-testing/scripts/with_server.py --server "uv run streamlit run streamlit_app.py --server.headless true --server.port 8501" --port 8501 -- uv run python test/streamlit_broker_phase5_smoke.py`
+  `uv run python /home/eden/.agents/skills/webapp-testing/scripts/with_server.py --server "uv run streamlit run streamlit_app.py --server.headless true --server.port 8501" --port 8501 -- uv run python test/streamlit/streamlit_broker_phase5_smoke.py`
 
 **TDD 执行记录**
 
@@ -361,14 +361,14 @@
 - [x] 交易日志页面：已具备 trades 表与 portfolio 表展示
 - [x] 绩效指标面板：已具备 KPI 卡片、Strategy vs Benchmark 权益曲线、回撤曲线
 - [x] 自动化验证：pytest 回归、`basedpyright --baselinefile`、`ruff check`、`ruff format --check` 全绿
-- [x] 浏览器层验证：`test/streamlit_broker_phase5_smoke.py` 已通过
+- [x] 浏览器层验证：`test/streamlit/streamlit_broker_phase5_smoke.py` 已通过
 
 **Cross-check Against `impl_plan_final.md`**
 
 - [x] `streamlit_app.py` 的三类目标均已覆盖：回测配置面板、交易日志、绩效指标面板
 - [x] Phase 5 计划中的 Strategy vs Benchmark / Drawdown 图表已落地
-- [x] Phase 5 计划中的“端到端回测测试”已以 `test/test_backtest_runner.py` + `test/test_streamlit_app.py` + 现有 execution/orchestrator 测试组合实现
-- [~] 计划文档写的是单文件 `test/test_broker.py`；实际实现采用按职责拆分的 pytest 文件集合（`test/test_broker_models.py` / `test/test_broker_engine.py` / `test/test_broker_ledger.py` / `test/test_backtest_runner.py` / `test/test_streamlit_app.py` 等）。这是文件组织层面的偏差，不是功能缺口。
+- [x] Phase 5 计划中的“端到端回测测试”已以 `test/broker/test_backtest_runner.py` + `test/streamlit/test_streamlit_app.py` + 现有 execution/orchestrator 测试组合实现
+- [~] 计划文档写的是单文件 `test/test_broker.py`；实际实现采用按职责拆分的 pytest 文件集合（`test/broker/test_models.py` / `test/broker/test_engine.py` / `test/broker/test_ledger.py` / `test/broker/test_backtest_runner.py` / `test/streamlit/test_streamlit_app.py` 等）。这是文件组织层面的偏差，不是功能缺口。
 
 ---
 
@@ -400,7 +400,7 @@
 - [x] 完成 Phase 2 后续公共行为测试：撤单、限价卖出、做空开仓/回补、`allow_short=False` 拒单、多 ticker 查询
 - [x] 完成 Phase 2 事件面：`register_on_order()` / `register_on_fill()` / `get_event_log()`
 - [x] 在 `broker/__init__.py` 增补 Phase 2 公共导出
-- [x] `uv run pytest test/test_broker_models.py test/test_broker_engine.py -q` 通过
+- [x] `uv run pytest test/broker/test_models.py test/broker/test_engine.py -q` 通过
 - [x] `uv run basedpyright --baselinefile bugs/basedpyright/baseline.json` 通过
 - [x] `uv run ruff check .` 通过（含 Phase 2 增量）
 - [x] `uv run ruff format --check .` 通过（含 Phase 2 增量）
@@ -411,13 +411,13 @@
 - [x] 将 Phase 3 `realized_pnl` 口径修正为 `gross - fee - slippage`，与 `test/trade.py` 语义对齐
 - [x] 完成 `PortfolioManager.sync_from_broker()` 的最小联动与 pytest 覆盖
 - [x] 在 `broker/__init__.py` 增补 Phase 3 公共导出
-- [x] `uv run pytest test/test_broker_models.py test/test_broker_engine.py test/test_broker_ledger.py test/test_portfolio_manager.py -q` 通过
+- [x] `uv run pytest test/broker/test_models.py test/broker/test_engine.py test/broker/test_ledger.py test/dataflow/test_portfolio_manager.py -q` 通过
 - [x] `uv run basedpyright --baselinefile bugs/basedpyright/baseline.json` 通过（含 Phase 3 增量）
 - [x] `uv run ruff check .` 通过（含 Phase 3 增量）
 - [x] `uv run ruff format --check .` 通过（含 Phase 3 增量）
 - [x] `ruff format --check .` 通过
 - [x] 新建 `broker/__init__.py` / `broker/models.py` / `broker/config.py` / `broker/events.py`
-- [x] 新建 `test/test_broker_models.py` 与 `test/conftest.py`
+- [x] 新建 `test/broker/test_models.py` 与 `test/conftest.py`
 - [x] 为 `BrokerConfig(BaseSettings)` 补充 `pydantic-settings` 依赖
 - [x] 完成 Phase 1 数据模型层的 TDD 切片并全部转绿
 - [x] `basedpyright --baselinefile bugs/basedpyright/baseline.json` 通过
@@ -426,7 +426,7 @@
 - [x] 完成 Phase 4 execution node 行为测试：skip / HOLD / BUY / SELL / portfolio sync / approval rejected / approval modified
 - [x] 完成 Phase 4 graph 集成测试：无 broker 向后兼容、有 broker 执行闭环、`enable_hitl=True` 的 `hitl_approval -> execution_node` 插入路径
 - [x] 完成 `DataService` broker 注入、`agent_tools` 工厂化与 `BacktestRunner` 最小骨架
-- [x] `uv run pytest test/test_broker_models.py test/test_broker_engine.py test/test_broker_ledger.py test/test_portfolio_manager.py test/test_execution_node.py test/test_orchestrator.py test/test_data_service.py test/test_agent_tools.py test/test_backtest_runner.py -q` 通过
+- [x] `uv run pytest test/broker/test_models.py test/broker/test_engine.py test/broker/test_ledger.py test/dataflow/test_portfolio_manager.py test/agentgraph/test_execution_node.py test/agentgraph/test_orchestrator.py test/dataflow/test_data_service.py test/agents/test_agent_tools.py test/broker/test_backtest_runner.py -q` 通过
 - [x] `uv run ruff check .` 通过（含 Phase 4 增量）
 - [x] `uv run ruff format --check .` 通过（含 Phase 4 增量）
 - [x] 使用临时 baseline 副本完成 `basedpyright --baselinefile` 增量校验，正式 `bugs/basedpyright/baseline.json` 保持未修改
