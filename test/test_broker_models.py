@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from broker.config import BrokerConfig
-from broker.events import BrokerEvent
+from broker.events import BrokerEvent, InMemoryBrokerEventSink
 from broker.models import (
     AccountSnapshot,
     ExecutionReport,
@@ -145,14 +145,70 @@ def test_broker_event_uses_independent_default_details() -> None:
 
     first_event.details["order_id"] = "order-1"
 
+    assert first_event.event_id == ""
+    assert first_event.sequence == 0
     assert first_event.timestamp.tzinfo == timezone.utc
+    assert first_event.entity_type == ""
+    assert first_event.entity_id == ""
     assert first_event.strategy_id == ""
     assert first_event.account_id == "default"
     assert first_event.session_id == ""
     assert first_event.decision_id == ""
     assert first_event.ticker == ""
+    assert first_event.payload == {}
     assert first_event.details == {"order_id": "order-1"}
     assert second_event.details == {}
+
+
+def test_in_memory_broker_event_sink_assigns_sequence_per_strategy_account() -> None:
+    sink = InMemoryBrokerEventSink()
+
+    first_a = sink.publish(
+        BrokerEvent(
+            event_type="order_placed",
+            entity_type="order",
+            entity_id="order-a-1",
+            strategy_id="strategy-a",
+            account_id="account-a",
+            payload={"ticker": "AAPL"},
+        )
+    )
+    second_a = sink.publish(
+        BrokerEvent(
+            event_type="order_filled",
+            entity_type="order",
+            entity_id="order-a-1",
+            strategy_id="strategy-a",
+            account_id="account-a",
+            payload={"ticker": "AAPL"},
+        )
+    )
+    first_b = sink.publish(
+        BrokerEvent(
+            event_type="order_placed",
+            entity_type="order",
+            entity_id="order-b-1",
+            strategy_id="strategy-b",
+            account_id="account-b",
+            payload={"ticker": "MSFT"},
+        )
+    )
+
+    assert first_a.event_id
+    assert first_a.sequence == 1
+    assert second_a.sequence == 2
+    assert first_b.sequence == 1
+    assert [
+        event.sequence
+        for event in sink.load_events(strategy_id="strategy-a", account_id="account-a")
+    ] == [1, 2]
+    assert [
+        event.event_type for event in sink.load_events(event_type="order_placed")
+    ] == [
+        "order_placed",
+        "order_placed",
+    ]
+    assert sink.load_events(session_id="missing") == []
 
 
 def test_broker_config_exposes_phase_one_defaults_and_overrides() -> None:

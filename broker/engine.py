@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import TypedDict
 
 from broker.config import BrokerConfig
-from broker.events import BrokerEvent
+from broker.events import BrokerEvent, BrokerEventSink, InMemoryBrokerEventSink
 from broker.gateway import BrokerGateway
 from broker.models import (
     AccountSnapshot,
@@ -31,7 +31,12 @@ class BarData(TypedDict):
 
 
 class MockBrokerEngine(BrokerGateway):
-    def __init__(self, config: BrokerConfig):
+    def __init__(
+        self,
+        config: BrokerConfig,
+        *,
+        event_sink: BrokerEventSink | None = None,
+    ):
         self._config = config
         self._risk_checker = PreTradeRiskChecker(config)
         self._cash = config.initial_cash
@@ -39,7 +44,9 @@ class MockBrokerEngine(BrokerGateway):
         self._orders: dict[str, Order] = {}
         self._fills: list[Fill] = []
         self._latest_bars: dict[str, BarData] = {}
-        self._event_log: list[BrokerEvent] = []
+        self._event_sink = (
+            event_sink if event_sink is not None else InMemoryBrokerEventSink()
+        )
         self._on_fill_callbacks: list[
             Callable[[Fill, Position, AccountSnapshot], None]
         ] = []
@@ -91,8 +98,20 @@ class MockBrokerEngine(BrokerGateway):
     def register_on_order(self, callback: Callable[[Order], None]) -> None:
         self._on_order_callbacks.append(callback)
 
-    def get_event_log(self) -> list[BrokerEvent]:
-        return [event.model_copy(deep=True) for event in self._event_log]
+    def get_event_log(
+        self,
+        *,
+        strategy_id: str | None = None,
+        account_id: str | None = None,
+        session_id: str | None = None,
+        event_type: str | None = None,
+    ) -> list[BrokerEvent]:
+        return self._event_sink.load_events(
+            strategy_id=strategy_id,
+            account_id=account_id,
+            session_id=session_id,
+            event_type=event_type,
+        )
 
     def place_order(self, order: Order) -> Order:
         stored_order = order.model_copy(deep=True)
@@ -406,14 +425,17 @@ class MockBrokerEngine(BrokerGateway):
         order: Order,
         details: dict[str, str],
     ) -> None:
-        self._event_log.append(
+        self._event_sink.publish(
             BrokerEvent(
                 event_type=event_type,
+                entity_type="order",
+                entity_id=order.id,
                 strategy_id=order.strategy_id,
                 account_id=order.account_id,
                 session_id=order.session_id,
                 decision_id=order.decision_id,
                 ticker=order.ticker,
+                payload=details,
                 details=details,
             )
         )

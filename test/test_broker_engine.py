@@ -4,6 +4,7 @@ import pytest
 
 from broker.config import BrokerConfig
 from broker.engine import MockBrokerEngine
+from broker.events import InMemoryBrokerEventSink
 from broker.models import Order, OrderSide, OrderStatus, OrderType
 
 
@@ -552,6 +553,109 @@ def test_market_fill_emits_order_and_fill_callbacks_and_records_events() -> None
     assert event_types == ["order_placed", "order_filled"]
     assert broker.get_event_log()[0].ticker == "AAPL"
     assert broker.get_event_log()[1].details["order_status"] == "FILLED"
+
+
+def test_engine_publishes_events_with_per_strategy_account_sequences() -> None:
+    event_sink = InMemoryBrokerEventSink()
+    broker = MockBrokerEngine(
+        BrokerConfig(
+            initial_cash=100_000.0,
+            commission_rate=0.001,
+            slippage_rate=0.0005,
+        ),
+        event_sink=event_sink,
+    )
+    broker.on_bar(
+        {
+            "AAPL": {
+                "open": 99.0,
+                "high": 101.0,
+                "low": 98.0,
+                "close": 100.0,
+            },
+            "MSFT": {
+                "open": 199.0,
+                "high": 201.0,
+                "low": 198.0,
+                "close": 200.0,
+            },
+        }
+    )
+
+    broker.place_order(
+        Order(
+            ticker="AAPL",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            qty=10,
+            strategy_id="strategy-a",
+            account_id="account-a",
+            session_id="session-a",
+            decision_id="decision-a",
+        )
+    )
+    broker.place_order(
+        Order(
+            ticker="MSFT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            qty=5,
+            strategy_id="strategy-b",
+            account_id="account-b",
+            session_id="session-b",
+            decision_id="decision-b",
+        )
+    )
+
+    account_a_events = event_sink.load_events(account_id="account-a")
+    account_b_events = event_sink.load_events(account_id="account-b")
+
+    assert [event.sequence for event in account_a_events] == [1, 2]
+    assert [event.sequence for event in account_b_events] == [1, 2]
+    assert [event.event_type for event in account_a_events] == [
+        "order_placed",
+        "order_filled",
+    ]
+    assert account_a_events[0].entity_type == "order"
+    assert account_a_events[0].entity_id
+    assert account_a_events[0].strategy_id == "strategy-a"
+    assert account_a_events[0].session_id == "session-a"
+    assert account_a_events[0].decision_id == "decision-a"
+    assert account_a_events[0].payload["order_status"] == "NEW"
+    assert broker.get_event_log(account_id="account-a") == account_a_events
+
+
+def test_engine_preserves_injected_falsy_event_sink() -> None:
+    class FalsyEventSink(InMemoryBrokerEventSink):
+        def __bool__(self) -> bool:
+            return False
+
+    event_sink = FalsyEventSink()
+    broker = MockBrokerEngine(BrokerConfig(), event_sink=event_sink)
+    broker.on_bar(
+        {
+            "AAPL": {
+                "open": 99.0,
+                "high": 101.0,
+                "low": 98.0,
+                "close": 100.0,
+            }
+        }
+    )
+
+    broker.place_order(
+        Order(
+            ticker="AAPL",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            qty=10,
+        )
+    )
+
+    assert [event.event_type for event in event_sink.load_events()] == [
+        "order_placed",
+        "order_filled",
+    ]
 
 
 def test_rejected_and_canceled_orders_are_recorded_in_event_log() -> None:
