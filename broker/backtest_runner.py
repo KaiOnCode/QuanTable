@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import uuid4
@@ -12,6 +12,7 @@ from broker.config import BrokerConfig
 from broker.engine import BarData, MockBrokerEngine
 from broker.ledger import TradeLedger
 from broker.models import AccountSnapshot
+from broker.views import BacktestConfigView, BacktestResultView, to_backtest_result_view
 
 
 @dataclass
@@ -19,6 +20,16 @@ class BacktestResult:
     trades: pd.DataFrame
     portfolio: pd.DataFrame
     metrics: dict[str, float | int]
+    view: BacktestResultView = field(
+        default_factory=lambda: BacktestResultView(
+            config=BacktestConfigView(),
+            summary=to_backtest_result_view(
+                config=BacktestConfigView(),
+                metrics={},
+                portfolio=pd.DataFrame(),
+            ).summary,
+        )
+    )
 
 
 class BacktestRunner:
@@ -64,11 +75,28 @@ class BacktestRunner:
                 account=self._account_snapshot_for_date(trading_timestamp, session_id),
             )
 
-        portfolio = self._build_portfolio_performance_view(date_filtered)
+        portfolio = self._build_portfolio_performance_view(
+            date_filtered,
+            session_id=session_id,
+        )
+        metrics = self.ledger.compute_metrics(session_id=session_id)
         return BacktestResult(
-            trades=self.ledger.to_trades_dataframe(),
+            trades=self.ledger.to_trades_dataframe(session_id=session_id),
             portfolio=portfolio,
-            metrics=self.ledger.compute_metrics(),
+            metrics=metrics,
+            view=to_backtest_result_view(
+                config=BacktestConfigView(
+                    tickers=[ticker],
+                    start_date=start_date,
+                    end_date=end_date,
+                    benchmark_symbol="SPY",
+                    account_id="default",
+                ),
+                metrics=metrics,
+                portfolio=portfolio,
+                trades=self.ledger.load_fill_records(session_id=session_id),
+                benchmark_return=self._calculate_benchmark_return(portfolio),
+            ),
         )
 
     def _row_to_bar(self, row: pd.Series) -> BarData:
@@ -127,8 +155,13 @@ class BacktestRunner:
             raise ValueError(msg)
         return cast(pd.Timestamp, timestamp)
 
-    def _build_portfolio_performance_view(self, price_df: pd.DataFrame) -> pd.DataFrame:
-        portfolio = self.ledger.to_portfolio_dataframe()
+    def _build_portfolio_performance_view(
+        self,
+        price_df: pd.DataFrame,
+        *,
+        session_id: str,
+    ) -> pd.DataFrame:
+        portfolio = self.ledger.to_portfolio_dataframe(session_id=session_id)
         if portfolio.empty:
             return portfolio
 
@@ -168,3 +201,12 @@ class BacktestRunner:
 
     def _float_series(self, dataframe: pd.DataFrame, column: str) -> pd.Series:
         return pd.Series(dataframe[column], index=dataframe.index, dtype=float)
+
+    def _calculate_benchmark_return(self, portfolio: pd.DataFrame) -> float:
+        if portfolio.empty or "benchmark_equity" not in portfolio:
+            return 0.0
+        benchmark_equity = self._float_series(portfolio, "benchmark_equity")
+        start_equity = float(benchmark_equity.iloc[0])
+        if start_equity == 0:
+            return 0.0
+        return float(benchmark_equity.iloc[-1]) / start_equity - 1

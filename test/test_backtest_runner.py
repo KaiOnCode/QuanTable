@@ -196,3 +196,128 @@ def test_backtest_runner_adds_strategy_and_benchmark_performance_columns() -> No
         0.0,
         pytest.approx(1 - 90_000.0 / 110_000.0),
     ]
+
+
+def test_backtest_runner_returns_completed_backtest_result_view_contract() -> None:
+    broker = MockBrokerEngine(
+        BrokerConfig(
+            initial_cash=100_000.0,
+            commission_rate=0.0,
+            slippage_rate=0.0,
+        )
+    )
+    runner = BacktestRunner(
+        BrokerConfig(
+            initial_cash=100_000.0,
+            commission_rate=0.0,
+            slippage_rate=0.0,
+        ),
+        broker=broker,
+        agent=BuyThenHoldAgent(broker),
+    )
+    price_df = pd.DataFrame(
+        [
+            {
+                "Open": 99.0,
+                "High": 101.0,
+                "Low": 98.0,
+                "Close": 100.0,
+            },
+            {
+                "Open": 109.0,
+                "High": 111.0,
+                "Low": 108.0,
+                "Close": 110.0,
+            },
+        ],
+        index=pd.to_datetime(["2026-01-02", "2026-01-03"]),
+    )
+
+    result = runner.run(
+        ticker="AAPL",
+        price_df=price_df,
+        start_date="2026-01-02",
+        end_date="2026-01-03",
+    )
+
+    assert result.view.status == "completed"
+    assert result.view.config.tickers == ["AAPL"]
+    assert result.view.config.benchmark_symbol == "SPY"
+    assert result.view.summary.cumulative_return_pct == pytest.approx(5.0)
+    assert result.view.summary.benchmark_return_pct == pytest.approx(10.0)
+    assert result.view.summary.excess_return_pct == pytest.approx(-5.0)
+    assert len(result.view.series) == 2
+    assert result.view.series[0].strategy_equity == pytest.approx(100_000.0)
+    assert result.view.series[0].benchmark_equity == pytest.approx(100_000.0)
+    assert result.view.trades[0].order_id == result.trades.loc[0, "order_id"]
+    assert result.view.trades[0].side == "buy"
+
+
+def test_backtest_runner_view_is_scoped_to_current_session_when_runner_is_reused() -> (
+    None
+):
+    broker = MockBrokerEngine(
+        BrokerConfig(
+            initial_cash=100_000.0,
+            commission_rate=0.0,
+            slippage_rate=0.0,
+        )
+    )
+    runner = BacktestRunner(
+        BrokerConfig(
+            initial_cash=100_000.0,
+            commission_rate=0.0,
+            slippage_rate=0.0,
+        ),
+        broker=broker,
+        agent=BuyThenHoldAgent(broker),
+    )
+    first_price_df = pd.DataFrame(
+        [
+            {
+                "Open": 99.0,
+                "High": 101.0,
+                "Low": 98.0,
+                "Close": 100.0,
+            },
+            {
+                "Open": 109.0,
+                "High": 111.0,
+                "Low": 108.0,
+                "Close": 110.0,
+            },
+        ],
+        index=pd.to_datetime(["2026-01-02", "2026-01-03"]),
+    )
+    second_price_df = pd.DataFrame(
+        [
+            {
+                "Open": 119.0,
+                "High": 121.0,
+                "Low": 118.0,
+                "Close": 120.0,
+            }
+        ],
+        index=pd.to_datetime(["2026-02-02"]),
+    )
+
+    first_result = runner.run(
+        ticker="AAPL",
+        price_df=first_price_df,
+        start_date="2026-01-02",
+        end_date="2026-01-03",
+    )
+    second_result = runner.run(
+        ticker="AAPL",
+        price_df=second_price_df,
+        start_date="2026-02-02",
+        end_date="2026-02-02",
+    )
+
+    assert len(first_result.view.series) == 2
+    assert [point.date for point in second_result.view.series] == ["2026-02-02"]
+    assert second_result.view.config.start_date == "2026-02-02"
+    assert all(
+        trade.session_id != first_result.view.trades[0].session_id
+        for trade in second_result.view.trades
+    )

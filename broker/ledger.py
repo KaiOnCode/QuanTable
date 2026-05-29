@@ -172,8 +172,8 @@ class TradeLedger:
             )
         )
 
-    def compute_metrics(self) -> dict[str, float | int]:
-        portfolio = self.to_portfolio_dataframe()
+    def compute_metrics(self, session_id: str | None = None) -> dict[str, float | int]:
+        portfolio = self.to_portfolio_dataframe(session_id=session_id)
         if portfolio.empty:
             return {
                 "total_return": 0.0,
@@ -217,7 +217,7 @@ class TradeLedger:
             if std > 0:
                 sharpe_ratio = float(returns.mean() / std * math.sqrt(252))
 
-        trades = self.to_trades_dataframe()
+        trades = self.to_trades_dataframe(session_id=session_id)
         realized_pnl_values = (
             [float(value) for value in trades["realized_pnl"].tolist()]
             if not trades.empty
@@ -260,11 +260,13 @@ class TradeLedger:
             "avg_loss": avg_loss,
             "payoff_ratio": payoff_ratio,
             "number_of_trades": number_of_trades,
-            "avg_holding_period_days": self._calculate_avg_holding_period_days(),
+            "avg_holding_period_days": self._calculate_avg_holding_period_days(
+                session_id=session_id,
+            ),
         }
 
-    def to_trades_dataframe(self) -> pd.DataFrame:
-        records = self._backend.load_fill_records()
+    def to_trades_dataframe(self, session_id: str | None = None) -> pd.DataFrame:
+        records = self._backend.load_fill_records(session_id=session_id)
         if not records:
             return pd.DataFrame(columns=pd.Index(self._TRADE_COLUMNS))
 
@@ -277,8 +279,8 @@ class TradeLedger:
             .reset_index(drop=True)
         )
 
-    def to_portfolio_dataframe(self) -> pd.DataFrame:
-        records = self._backend.load_snapshot_records()
+    def to_portfolio_dataframe(self, session_id: str | None = None) -> pd.DataFrame:
+        records = self._backend.load_snapshot_records(session_id=session_id)
         if not records:
             return pd.DataFrame(columns=pd.Index(self._PORTFOLIO_COLUMNS))
 
@@ -294,6 +296,12 @@ class TradeLedger:
     def to_csv(self, trades_path: str, portfolio_path: str) -> None:
         self.to_trades_dataframe().to_csv(trades_path, index=False)
         self.to_portfolio_dataframe().to_csv(portfolio_path, index=False)
+
+    def load_fill_records(
+        self,
+        session_id: str | None = None,
+    ) -> list[LedgerFillRecord]:
+        return self._backend.load_fill_records(session_id=session_id)
 
     def _trade_record_to_row(self, record: LedgerFillRecord) -> dict[str, object]:
         return {
@@ -385,9 +393,12 @@ class TradeLedger:
                 current_duration = 0
         return max_duration
 
-    def _calculate_avg_holding_period_days(self) -> float:
+    def _calculate_avg_holding_period_days(
+        self,
+        session_id: str | None = None,
+    ) -> float:
         fill_records = sorted(
-            self._backend.load_fill_records(),
+            self._backend.load_fill_records(session_id=session_id),
             key=lambda record: record.fill.timestamp,
         )
         holding_start_times: dict[tuple[str, str, str], datetime] = {}

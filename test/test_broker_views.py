@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import pandas as pd
 import pytest
 
 from broker.events import BrokerEvent
@@ -17,7 +18,10 @@ from broker.models import (
 )
 from broker.views import (
     ApprovalSnapshotView,
+    BacktestConfigView,
+    BacktestResultView,
     to_broker_event_view,
+    to_backtest_result_view,
     to_execution_status_report_view,
     to_order_view,
     to_performance_metrics_view,
@@ -270,3 +274,58 @@ def test_broker_event_view_uses_payload_contract() -> None:
     assert view.sequence == 7
     assert view.event_type == "order_filled"
     assert view.payload == {"ticker": "AAPL"}
+
+
+def test_backtest_result_view_serializes_completed_portfolio_contract() -> None:
+    position = Position(ticker="AAPL", shares=10, avg_cost=100.0)
+    account = AccountSnapshot(cash=99_000.0, equity=100_100.0, positions=[position])
+    trade_record = LedgerFillRecord(
+        fill=Fill(
+            order_id="order-1",
+            fill_price=100.0,
+            fill_qty=10,
+            fee=1.0,
+            slippage=0.5,
+        ),
+        ticker="AAPL",
+        side="BUY",
+        realized_pnl=-1.5,
+        position_after=position,
+        account_after=account,
+    )
+    portfolio = pd.DataFrame(
+        [
+            {
+                "date": "2026-01-02",
+                "strategy_equity": 100_100.0,
+                "benchmark_equity": 101_000.0,
+                "strategy_drawdown": 0.01,
+                "benchmark_drawdown": 0.02,
+            }
+        ]
+    )
+
+    view = to_backtest_result_view(
+        config=BacktestConfigView(
+            tickers=["AAPL", "MSFT"],
+            start_date="2026-01-01",
+            end_date="2026-01-31",
+            benchmark_symbol="SPY",
+        ),
+        metrics={"total_return": 0.001, "number_of_trades": 1},
+        portfolio=portfolio,
+        trades=[trade_record],
+        benchmark_return=0.01,
+    )
+
+    assert isinstance(view, BacktestResultView)
+    assert view.status == "completed"
+    assert view.config.benchmark_symbol == "SPY"
+    assert view.config.tickers == ["AAPL", "MSFT"]
+    assert view.summary.cumulative_return_pct == pytest.approx(0.1)
+    assert view.summary.benchmark_return_pct == pytest.approx(1.0)
+    assert view.summary.excess_return_pct == pytest.approx(-0.9)
+    assert view.series[0].strategy_equity == pytest.approx(100_100.0)
+    assert view.series[0].benchmark_equity == pytest.approx(101_000.0)
+    assert view.series[0].strategy_drawdown_pct == pytest.approx(1.0)
+    assert view.trades[0].order_id == "order-1"
