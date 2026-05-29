@@ -19,6 +19,10 @@ class LedgerFillRecord(BaseModel):
     realized_pnl: float
     position_after: Position
     account_after: AccountSnapshot
+    strategy_id: str = ""
+    account_id: str = "default"
+    session_id: str = ""
+    decision_id: str = ""
 
 
 class LedgerSnapshotRecord(BaseModel):
@@ -26,6 +30,10 @@ class LedgerSnapshotRecord(BaseModel):
 
     date: str
     account: AccountSnapshot
+    strategy_id: str = ""
+    account_id: str = "default"
+    session_id: str = ""
+    decision_id: str = ""
 
 
 class TradeLedgerBackend(Protocol):
@@ -95,6 +103,9 @@ class TradeLedger:
         "shares_after",
         "avg_cost_after",
         "session_id",
+        "strategy_id",
+        "account_id",
+        "decision_id",
     )
     _PORTFOLIO_COLUMNS = (
         "date",
@@ -104,6 +115,9 @@ class TradeLedger:
         "position_value",
         "position_count",
         "session_id",
+        "strategy_id",
+        "account_id",
+        "decision_id",
     )
 
     def __init__(self, backend: TradeLedgerBackend | None = None) -> None:
@@ -117,6 +131,7 @@ class TradeLedger:
     ) -> None:
         previous_position = self._get_latest_position(
             ticker=position.ticker,
+            account_id=fill.account_id,
             session_id=fill.session_id,
         )
         previous_shares = (
@@ -138,6 +153,10 @@ class TradeLedger:
                 realized_pnl=realized_pnl,
                 position_after=position.model_copy(deep=True),
                 account_after=account.model_copy(deep=True),
+                strategy_id=fill.strategy_id,
+                account_id=fill.account_id,
+                session_id=fill.session_id,
+                decision_id=fill.decision_id,
             )
         )
 
@@ -146,6 +165,10 @@ class TradeLedger:
             LedgerSnapshotRecord(
                 date=date,
                 account=account.model_copy(deep=True),
+                strategy_id=account.strategy_id,
+                account_id=account.account_id,
+                session_id=account.session_id,
+                decision_id=account.decision_id,
             )
         )
 
@@ -289,6 +312,9 @@ class TradeLedger:
             "shares_after": record.position_after.shares,
             "avg_cost_after": record.position_after.avg_cost,
             "session_id": record.fill.session_id,
+            "strategy_id": record.strategy_id,
+            "account_id": record.account_id,
+            "decision_id": record.decision_id,
         }
 
     def _snapshot_record_to_row(
@@ -303,17 +329,21 @@ class TradeLedger:
             "position_value": record.account.equity - record.account.cash,
             "position_count": len(record.account.positions),
             "session_id": record.account.session_id,
+            "strategy_id": record.strategy_id,
+            "account_id": record.account_id,
+            "decision_id": record.decision_id,
         }
 
     def _get_latest_position(
         self,
         *,
         ticker: str,
+        account_id: str,
         session_id: str,
     ) -> Position | None:
         records = self._backend.load_fill_records(session_id=session_id)
         for record in reversed(records):
-            if record.ticker == ticker:
+            if record.ticker == ticker and record.account_id == account_id:
                 return record.position_after.model_copy(deep=True)
         return None
 
@@ -360,12 +390,12 @@ class TradeLedger:
             self._backend.load_fill_records(),
             key=lambda record: record.fill.timestamp,
         )
-        holding_start_times: dict[tuple[str, str], datetime] = {}
-        previous_shares_by_key: dict[tuple[str, str], float] = {}
+        holding_start_times: dict[tuple[str, str, str], datetime] = {}
+        previous_shares_by_key: dict[tuple[str, str, str], float] = {}
         closed_holding_period_days: list[float] = []
 
         for record in fill_records:
-            key = (record.fill.session_id, record.ticker)
+            key = (record.fill.session_id, record.account_id, record.ticker)
             previous_shares = previous_shares_by_key.get(key, 0.0)
             next_shares = record.position_after.shares
             previous_sign = self._position_sign(previous_shares)

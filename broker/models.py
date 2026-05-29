@@ -41,7 +41,10 @@ class Order(BaseModel):
     status: OrderStatus = OrderStatus.NEW
     created_at: datetime = Field(default_factory=_utc_now)
     updated_at: datetime = Field(default_factory=_utc_now)
+    strategy_id: str = ""
+    account_id: str = "default"
     session_id: str = ""
+    decision_id: str = ""
 
     @model_validator(mode="after")
     def validate_limit_price(self) -> Order:
@@ -61,7 +64,10 @@ class Fill(BaseModel):
     # `slippage` stores realized cash cost, not the configured rate.
     slippage: float
     timestamp: datetime = Field(default_factory=_utc_now)
+    strategy_id: str = ""
+    account_id: str = "default"
     session_id: str = ""
+    decision_id: str = ""
 
 
 class Position(BaseModel):
@@ -74,7 +80,10 @@ class Position(BaseModel):
     # `side` is derived for logs and UI. `shares` remains the source of truth.
     side: str = "FLAT"
     unrealized_pnl: float = 0.0
+    strategy_id: str = ""
+    account_id: str = "default"
     session_id: str = ""
+    decision_id: str = ""
 
     @model_validator(mode="after")
     def derive_side(self) -> Position:
@@ -93,7 +102,10 @@ class AccountSnapshot(BaseModel):
     equity: float
     positions: list[Position] = Field(default_factory=list)
     timestamp: datetime = Field(default_factory=_utc_now)
+    strategy_id: str = ""
+    account_id: str = "default"
     session_id: str = ""
+    decision_id: str = ""
 
 
 class ExecutionReport(BaseModel):
@@ -107,4 +119,7 @@ class ExecutionReport(BaseModel):
     pm_action: str
     pm_report_summary: str
     timestamp: datetime = Field(default_factory=_utc_now)
+    strategy_id: str = ""
+    account_id: str = "default"
     session_id: str = ""
+    decision_id: str = ""

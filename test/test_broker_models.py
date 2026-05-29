@@ -27,7 +27,10 @@ def test_market_order_defaults_to_new_status_with_generated_metadata() -> None:
 
     assert order.status is OrderStatus.NEW
     assert order.limit_price is None
+    assert order.strategy_id == ""
+    assert order.account_id == "default"
     assert order.session_id == ""
+    assert order.decision_id == ""
     assert order.id
     assert order.created_at.tzinfo == timezone.utc
     assert order.updated_at.tzinfo == timezone.utc
@@ -64,7 +67,10 @@ def test_fill_defaults_timestamp_and_session_id() -> None:
 
     assert fill.order_id == "order-1"
     assert fill.timestamp.tzinfo == timezone.utc
+    assert fill.strategy_id == ""
+    assert fill.account_id == "default"
     assert fill.session_id == ""
+    assert fill.decision_id == ""
 
 
 def test_position_derives_side_from_share_direction() -> None:
@@ -73,8 +79,21 @@ def test_position_derives_side_from_share_direction() -> None:
     flat_position = Position(ticker="AAPL", shares=0, avg_cost=0.0)
 
     assert long_position.side == "LONG"
+    assert long_position.strategy_id == ""
+    assert long_position.account_id == "default"
+    assert long_position.session_id == ""
+    assert long_position.decision_id == ""
     assert short_position.side == "SHORT"
     assert flat_position.side == "FLAT"
+
+
+def test_account_snapshot_exposes_identity_defaults() -> None:
+    account = AccountSnapshot(cash=100_000.0, equity=100_000.0)
+
+    assert account.strategy_id == ""
+    assert account.account_id == "default"
+    assert account.session_id == ""
+    assert account.decision_id == ""
 
 
 def test_execution_report_preserves_nested_models_and_pm_context() -> None:
@@ -113,6 +132,10 @@ def test_execution_report_preserves_nested_models_and_pm_context() -> None:
     assert report.position_after.side == "LONG"
     assert report.pm_action == "BUY"
     assert report.pm_report_summary == "Increase exposure on breakout."
+    assert report.strategy_id == ""
+    assert report.account_id == "default"
+    assert report.session_id == ""
+    assert report.decision_id == ""
     assert report.timestamp.tzinfo == timezone.utc
 
 
@@ -123,7 +146,10 @@ def test_broker_event_uses_independent_default_details() -> None:
     first_event.details["order_id"] = "order-1"
 
     assert first_event.timestamp.tzinfo == timezone.utc
+    assert first_event.strategy_id == ""
+    assert first_event.account_id == "default"
     assert first_event.session_id == ""
+    assert first_event.decision_id == ""
     assert first_event.ticker == ""
     assert first_event.details == {"order_id": "order-1"}
     assert second_event.details == {}

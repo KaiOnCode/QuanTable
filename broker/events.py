@@ -15,7 +15,10 @@ class BrokerEvent(BaseModel):
     # without importing engine internals.
     event_type: str
     timestamp: datetime = Field(default_factory=_utc_now)
+    strategy_id: str = ""
+    account_id: str = "default"
     session_id: str = ""
+    decision_id: str = ""
     ticker: str = ""
     # Use a fresh dict per event. Audit code may enrich this payload later.
     details: dict[str, Any] = Field(default_factory=dict)

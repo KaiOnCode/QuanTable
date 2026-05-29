@@ -6,7 +6,12 @@ import pytest
 
 from broker.config import BrokerConfig
 from broker.engine import MockBrokerEngine
-from broker.ledger import InMemoryLedgerBackend, TradeLedger
+from broker.ledger import (
+    InMemoryLedgerBackend,
+    LedgerFillRecord,
+    LedgerSnapshotRecord,
+    TradeLedger,
+)
 from broker.models import (
     AccountSnapshot,
     Fill,
@@ -131,6 +136,171 @@ def test_trade_ledger_rehydrates_trades_and_snapshots_from_shared_backend() -> N
     assert len(portfolio) == 1
     assert portfolio.loc[0, "date"] == "2026-04-13"
     assert portfolio.loc[0, "equity"] == pytest.approx(99_998.4995)
+
+
+def test_ledger_records_expose_identity_defaults() -> None:
+    account = AccountSnapshot(cash=100_000.0, equity=100_000.0)
+    position = Position(ticker="AAPL", shares=10, avg_cost=100.05)
+    fill_record = LedgerFillRecord(
+        fill=Fill(
+            order_id="order-1",
+            fill_price=100.05,
+            fill_qty=10,
+            fee=1.0005,
+            slippage=0.5,
+        ),
+        ticker="AAPL",
+        side="BUY",
+        realized_pnl=-1.5005,
+        position_after=position,
+        account_after=account,
+    )
+    snapshot_record = LedgerSnapshotRecord(date="2026-04-13", account=account)
+
+    assert fill_record.strategy_id == ""
+    assert fill_record.account_id == "default"
+    assert fill_record.session_id == ""
+    assert fill_record.decision_id == ""
+    assert snapshot_record.strategy_id == ""
+    assert snapshot_record.account_id == "default"
+    assert snapshot_record.session_id == ""
+    assert snapshot_record.decision_id == ""
+
+
+def test_in_memory_ledger_backend_round_trips_identity_fields() -> None:
+    backend = InMemoryLedgerBackend()
+    account = AccountSnapshot(
+        cash=98_998.4995,
+        equity=99_998.4995,
+        positions=[
+            Position(
+                ticker="AAPL",
+                shares=10,
+                avg_cost=100.05,
+                strategy_id="strategy-1",
+                account_id="account-1",
+                session_id="session-1",
+                decision_id="decision-1",
+            )
+        ],
+        strategy_id="strategy-1",
+        account_id="account-1",
+        session_id="session-1",
+        decision_id="decision-1",
+    )
+    backend.persist_fill(
+        LedgerFillRecord(
+            fill=Fill(
+                order_id="order-1",
+                fill_price=100.05,
+                fill_qty=10,
+                fee=1.0005,
+                slippage=0.5,
+                strategy_id="strategy-1",
+                account_id="account-1",
+                session_id="session-1",
+                decision_id="decision-1",
+            ),
+            ticker="AAPL",
+            side="BUY",
+            realized_pnl=-1.5005,
+            position_after=account.positions[0],
+            account_after=account,
+            strategy_id="strategy-1",
+            account_id="account-1",
+            session_id="session-1",
+            decision_id="decision-1",
+        )
+    )
+    backend.persist_daily_snapshot(
+        LedgerSnapshotRecord(
+            date="2026-04-13",
+            account=account,
+            strategy_id="strategy-1",
+            account_id="account-1",
+            session_id="session-1",
+            decision_id="decision-1",
+        )
+    )
+
+    fill_records = backend.load_fill_records(session_id="session-1")
+    snapshot_records = backend.load_snapshot_records(session_id="session-1")
+
+    assert len(fill_records) == 1
+    assert fill_records[0].strategy_id == "strategy-1"
+    assert fill_records[0].account_id == "account-1"
+    assert fill_records[0].session_id == "session-1"
+    assert fill_records[0].decision_id == "decision-1"
+    assert fill_records[0].fill.strategy_id == "strategy-1"
+    assert fill_records[0].position_after.account_id == "account-1"
+    assert fill_records[0].account_after.decision_id == "decision-1"
+    assert len(snapshot_records) == 1
+    assert snapshot_records[0].strategy_id == "strategy-1"
+    assert snapshot_records[0].account_id == "account-1"
+    assert snapshot_records[0].session_id == "session-1"
+    assert snapshot_records[0].decision_id == "decision-1"
+
+
+def test_trade_ledger_keeps_previous_positions_isolated_by_account_id() -> None:
+    ledger = TradeLedger()
+    account_a_position = Position(
+        ticker="AAPL",
+        shares=10,
+        avg_cost=100.05,
+        account_id="account-a",
+        session_id="shared-session",
+    )
+    account_b_position = Position(
+        ticker="AAPL",
+        shares=5,
+        avg_cost=101.05,
+        account_id="account-b",
+        session_id="shared-session",
+    )
+    ledger.record_fill(
+        fill=Fill(
+            order_id="account-a-order",
+            fill_price=100.05,
+            fill_qty=10,
+            fee=1.0005,
+            slippage=0.5,
+            account_id="account-a",
+            session_id="shared-session",
+        ),
+        position=account_a_position,
+        account=AccountSnapshot(
+            cash=98_998.4995,
+            equity=99_998.4995,
+            positions=[account_a_position],
+            account_id="account-a",
+            session_id="shared-session",
+        ),
+    )
+
+    ledger.record_fill(
+        fill=Fill(
+            order_id="account-b-order",
+            fill_price=101.05,
+            fill_qty=5,
+            fee=0.50525,
+            slippage=0.25,
+            account_id="account-b",
+            session_id="shared-session",
+        ),
+        position=account_b_position,
+        account=AccountSnapshot(
+            cash=99_494.24475,
+            equity=99_999.49475,
+            positions=[account_b_position],
+            account_id="account-b",
+            session_id="shared-session",
+        ),
+    )
+
+    trades = ledger.to_trades_dataframe()
+
+    assert trades.loc[1, "side"] == "BUY"
+    assert trades.loc[1, "realized_pnl"] == pytest.approx(-0.75525)
 
 
 def test_trade_ledger_exports_csv_from_persisted_backend_records(tmp_path) -> None:

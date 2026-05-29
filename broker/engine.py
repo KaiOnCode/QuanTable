@@ -240,7 +240,10 @@ class MockBrokerEngine(BrokerGateway):
             ticker=order.ticker,
             signed_qty=signed_qty,
             fill_price=fill_price,
+            strategy_id=order.strategy_id,
+            account_id=order.account_id,
             session_id=order.session_id,
+            decision_id=order.decision_id,
         )
 
         if updated_position is None:
@@ -255,7 +258,10 @@ class MockBrokerEngine(BrokerGateway):
             fill_qty=order.qty,
             fee=fee,
             slippage=slippage,
+            strategy_id=order.strategy_id,
+            account_id=order.account_id,
             session_id=order.session_id,
+            decision_id=order.decision_id,
         )
         self._fills.append(fill)
         order.status = OrderStatus.FILLED
@@ -267,9 +273,16 @@ class MockBrokerEngine(BrokerGateway):
                 ticker=order.ticker,
                 shares=0.0,
                 avg_cost=0.0,
+                strategy_id=order.strategy_id,
+                account_id=order.account_id,
                 session_id=order.session_id,
+                decision_id=order.decision_id,
             )
         account_after = self.get_account()
+        account_after.strategy_id = order.strategy_id
+        account_after.account_id = order.account_id
+        account_after.session_id = order.session_id
+        account_after.decision_id = order.decision_id
         self._record_order_event("order_filled", order)
         for callback in self._on_fill_callbacks:
             callback(
@@ -286,7 +299,10 @@ class MockBrokerEngine(BrokerGateway):
             shares=position.shares,
             avg_cost=position.avg_cost,
             unrealized_pnl=(mark_price - position.avg_cost) * position.shares,
+            strategy_id=position.strategy_id,
+            account_id=position.account_id,
             session_id=position.session_id,
+            decision_id=position.decision_id,
         )
 
     def _get_reference_price(self, ticker: str) -> float | None:
@@ -307,7 +323,10 @@ class MockBrokerEngine(BrokerGateway):
         ticker: str,
         signed_qty: float,
         fill_price: float,
+        strategy_id: str,
+        account_id: str,
         session_id: str,
+        decision_id: str,
     ) -> Position | None:
         existing_position = self._positions.get(ticker)
         if existing_position is None or existing_position.shares == 0:
@@ -315,7 +334,10 @@ class MockBrokerEngine(BrokerGateway):
                 ticker=ticker,
                 shares=signed_qty,
                 avg_cost=fill_price,
+                strategy_id=strategy_id,
+                account_id=account_id,
                 session_id=session_id,
+                decision_id=decision_id,
             )
 
         shares_before = existing_position.shares
@@ -332,7 +354,10 @@ class MockBrokerEngine(BrokerGateway):
                 ticker=ticker,
                 shares=shares_after,
                 avg_cost=total_cost / abs(shares_after),
+                strategy_id=strategy_id,
+                account_id=account_id,
                 session_id=session_id,
+                decision_id=decision_id,
             )
 
         if shares_before * shares_after > 0:
@@ -340,14 +365,20 @@ class MockBrokerEngine(BrokerGateway):
                 ticker=ticker,
                 shares=shares_after,
                 avg_cost=existing_position.avg_cost,
+                strategy_id=strategy_id,
+                account_id=account_id,
                 session_id=session_id,
+                decision_id=decision_id,
             )
 
         return Position(
             ticker=ticker,
             shares=shares_after,
             avg_cost=fill_price,
+            strategy_id=strategy_id,
+            account_id=account_id,
             session_id=session_id,
+            decision_id=decision_id,
         )
 
     def _record_order_event(
@@ -378,7 +409,10 @@ class MockBrokerEngine(BrokerGateway):
         self._event_log.append(
             BrokerEvent(
                 event_type=event_type,
+                strategy_id=order.strategy_id,
+                account_id=order.account_id,
                 session_id=order.session_id,
+                decision_id=order.decision_id,
                 ticker=order.ticker,
                 details=details,
             )

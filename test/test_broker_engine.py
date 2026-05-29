@@ -660,3 +660,57 @@ def test_account_snapshot_tracks_multiple_tickers_through_public_queries() -> No
     assert account.cash == pytest.approx(97_996.999)
     assert account.equity == pytest.approx(99_996.999)
     assert {position.ticker for position in account.positions} == {"AAPL", "MSFT"}
+
+
+def test_legacy_account_snapshot_keeps_default_identity_for_global_account() -> None:
+    broker = MockBrokerEngine(
+        BrokerConfig(
+            initial_cash=100_000.0,
+            commission_rate=0.001,
+            slippage_rate=0.0005,
+        )
+    )
+    broker.on_bar(
+        {
+            "AAPL": {
+                "open": 99.0,
+                "high": 101.0,
+                "low": 98.0,
+                "close": 100.0,
+            },
+            "MSFT": {
+                "open": 199.0,
+                "high": 201.0,
+                "low": 198.0,
+                "close": 200.0,
+            },
+        }
+    )
+
+    broker.place_order(
+        Order(
+            ticker="AAPL",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            qty=10,
+            strategy_id="strategy-a",
+            account_id="account-a",
+        )
+    )
+    broker.place_order(
+        Order(
+            ticker="MSFT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            qty=5,
+            strategy_id="strategy-b",
+            account_id="account-b",
+        )
+    )
+
+    account = broker.get_account()
+
+    assert account.strategy_id == ""
+    assert account.account_id == "default"
+    assert account.session_id == ""
+    assert account.decision_id == ""
