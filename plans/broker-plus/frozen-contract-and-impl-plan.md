@@ -204,6 +204,95 @@ Execution backtest supports multiple tickers in one shared strategy account. Ben
 
 ## 5. Implementation Plan
 
+This section is the only implementation schedule for broker-plus. `plans/broker-plus/02-premerge-adjustments.md` is only a four-bucket premerge checklist and has been folded into the phase index below; implementation must treat this section and the frozen contract above as authoritative.
+
+### 5.0 Phase Index And 02 Checklist Disposition
+
+#### Phase 0: Immediate Documentation Alignment
+
+- **02 disposition:** Immediate.
+- **Scope:** Demote `02-premerge-adjustments.md` to a scheduling checklist, lock the responsibility boundary between broker-plus and the integration branch, and preserve the Streamlit broker smoke as regression evidence.
+- **Dependencies:** Only this frozen contract. `01-broker-extension-directions.md` and `03-merge-order-recommendation.md` are background inputs only.
+- **File scope:** `plans/broker-plus/02-premerge-adjustments.md`, `plans/broker-plus/frozen-contract-and-impl-plan.md`.
+- **Acceptance gate:** The documentation does not place React, full FastAPI, ContextStore, MCP, notification systems, full HITL workflow, or the 15-agent pipeline inside broker-plus implementation scope.
+- **Non-goals:** No broker code changes, no branch merge conflict resolution, and no README merge.
+
+#### Phase 1: Identity And Event Foundation
+
+- **02 disposition:** Execute with the implementation schedule.
+- **Scope:** Task 1 identity fields and ledger propagation; Task 3 broker event sink protocol and in-memory implementation.
+- **Dependencies:** Frozen identity semantics, event/ledger boundary, and default account semantics.
+- **File scope:** `broker/models.py`, `broker/events.py`, `broker/ledger.py`, `broker/engine.py`, `broker/__init__.py`, `test/test_broker_models.py`, `test/test_broker_ledger.py`, `test/test_broker_engine.py`.
+- **Acceptance gate:** Identity default tests, ledger round-trip tests, event field tests, and independent `sequence` tests per `(strategy_id, account_id)` pass; `session_id` is not interpreted as strategy/account/decision identity.
+- **Non-goals:** Do not generate `decision_id`; do not implement a SQLite event store; do not integrate ContextStore; do not add permissions, encryption, or production-grade audit compliance.
+
+#### Phase 2: Account Isolation
+
+- **02 disposition:** Execute with the implementation schedule.
+- **Scope:** Task 2 makes `MockBrokerEngine` isolate cash, positions, orders, fills, and event logs by `account_id`, while preserving `"default"` compatibility behavior.
+- **Dependencies:** Phase 1 identity fields and event sink boundary.
+- **File scope:** `broker/engine.py`, `broker/gateway.py`, `test/test_broker_engine.py`.
+- **Acceptance gate:** Account snapshots, positions, orders, fills, and events for two accounts do not contaminate each other; legacy default-account tests continue to pass.
+- **Non-goals:** Do not implement multi-strategy scheduling; do not implement users or permissions; do not convert backtests into per-ticker isolated accounts.
+
+#### Phase 3: Broker-Owned View/Serializer Contract
+
+- **02 disposition:** Execute with the implementation schedule.
+- **Scope:** Task 4 adds `broker/views.py` and freezes the execution-domain view contract and pure serializers consumable by API/front-end layers.
+- **Dependencies:** Phase 1 identity fields and event/ledger boundary; Phase 2 account isolation semantics.
+- **File scope:** `broker/views.py`, `broker/__init__.py`, `test/test_broker_views.py`.
+- **Acceptance gate:** Lower-case enum mapping, internal decimal fractions vs external percentage points, order fill aggregation, `PositionView.price_source`, and ledger-derived `TradeView` behavior are fixed by tests.
+- **Non-goals:** Do not implement FastAPI routes; do not make React depend on broker internals; do not broadly rename internal broker enums.
+
+#### Phase 4: Execution Reports And HITL Safety Semantics
+
+- **02 disposition:** Execute with the implementation schedule.
+- **Scope:** Task 5 converts every execution-node branch to structured `ExecutionReportView` JSON and fixes the safety semantics for `approval_status="pending"`.
+- **Dependencies:** Phase 1 event sink and identity propagation; Phase 3 `ExecutionReportView`.
+- **File scope:** `agentgraph/execution_node.py`, `agentgraph/state.py`, `test/test_execution_node.py`, `test/test_orchestrator.py`.
+- **Acceptance gate:** `pending`, `skipped`, `held`, `executed`, `rejected`, and `failed` branches are covered by tests; `skipped/held` do not write broker events; `modified` records original and modified target percentages.
+- **Non-goals:** Do not implement a HITL manager, approval policy rules, notifications, interrupt/resume, front-end approval pages, or the formal approval domain.
+
+#### Phase 5: Backtest JSON Contract
+
+- **02 disposition:** Execute with the implementation schedule.
+- **Scope:** Task 6 produces a synchronous completed `BacktestResultView` with config, summary, series, trades, and `benchmark_symbol`.
+- **Dependencies:** Phase 3 view/serializer layer and ledger-derived trade semantics.
+- **File scope:** `broker/backtest_runner.py`, `broker/views.py`, `test/test_backtest_runner.py`, `test/test_broker_views.py`.
+- **Acceptance gate:** `status="completed"`, default `benchmark_symbol="SPY"`, benchmark/excess return, percentage-point summary values, portfolio-level series, and ledger-derived trades are fixed by tests.
+- **Non-goals:** Do not implement an async job queue; do not implement `/api/backtest`; do not implement a prediction-accuracy backtest contract.
+
+#### Phase 6: Orchestrator Execution Hook
+
+- **02 disposition:** Execute with the implementation schedule.
+- **Scope:** Task 7 promotes `on_execution_complete` to an `IntelliFin_Assistant` constructor parameter and passes it through to the execution node.
+- **Dependencies:** Phase 4 structured `ExecutionReportView`.
+- **File scope:** `agentgraph/orchestrator.py`, `test/test_orchestrator.py`.
+- **Acceptance gate:** The callback receives the broker-owned report and state exactly once.
+- **Non-goals:** Do not change graph topology; do not integrate ContextStore, notification, or audit services in broker-plus.
+
+#### Phase 7: Contract Mapping And Final Regression
+
+- **02 disposition:** Execute with the implementation schedule.
+- **Scope:** Task 8 adds the final contract mapping document, collapses `WIP.md`, and runs the full broker-plus regression gate.
+- **Dependencies:** Phases 1 through 6 are complete and pass their gates.
+- **File scope:** `plans/broker-plus/05-contract-mapping.md`, `plans/broker-plus/WIP.md`, existing broker/agentgraph/streamlit tests.
+- **Acceptance gate:** The mapping document covers identity fields, percent units, enum mapping, execution report statuses, event/ledger boundary, backtest JSON shape, and non-goals; the full broker-plus regression command passes.
+- **Non-goals:** Do not merge README; do not expand the mapping document into a FastAPI/server manual.
+
+#### Phase 8: Integration Branch Work
+
+- **02 disposition:** Execute on the integration branch.
+- **Scope:** README merge, FastAPI adapters/routes, React/Next.js wiring, strategy/account resource binding, platform persistence, ContextStore, MCP, notifications, full HITL, and audit queries.
+- **Dependencies:** Phase 7 passes; frontend-foundation is first aligned with current `main`; the integration branch is cut from `main` or the team-designated trunk.
+- **File scope:** `README.md`, future server/FastAPI app, `frontend/`, storage/server/hitl/notification/MCP modules, integration tracker.
+- **Acceptance gate:** The API layer is only a thin adapter over broker views/serializers; front-end types align with back-end response contracts; integration smoke records blocker ownership.
+- **Non-goals:** Do not complete these platform or front-end tasks early in broker-plus.
+
+#### Explicit Non-Goals
+
+The following items are outside broker-plus first-stage scope: React/Next.js pages, full FastAPI app, ContextStore, MCP, Memory/reflection, notification channels, full HITL manager, SQLite adapter, production-grade audit storage, permissions, encryption, 15-agent pipeline, async backtest job queue, prediction-accuracy backtest contract, README merge, removal of the Streamlit broker smoke, and writing failed orders or risk rejections to the trade ledger.
+
 ### Task 1: Add Identity Fields To Core Models
 
 **Files:**
@@ -680,30 +769,33 @@ Expected: all pass.
 
 ## 6. Implementation Order
 
-1. Task 1: identity fields
-2. Task 3: event sink protocol
-3. Task 2: account-isolated engine
-4. Task 4: view/serializer layer
-5. Task 5: structured execution report and HITL safety
-6. Task 6: backtest JSON contract
-7. Task 7: orchestrator hook passthrough
-8. Task 8: contract mapping and regression gate
+1. Phase 0: documentation alignment, including the `02` checklist rewrite and this section's schedule fold-in.
+2. Phase 1 / Task 1: identity fields.
+3. Phase 1 / Task 3: event sink protocol.
+4. Phase 2 / Task 2: account-isolated engine.
+5. Phase 3 / Task 4: view/serializer layer.
+6. Phase 4 / Task 5: structured execution reports and HITL safety semantics.
+7. Phase 5 / Task 6: backtest JSON contract.
+8. Phase 6 / Task 7: orchestrator hook passthrough.
+9. Phase 7 / Task 8: contract mapping and regression gate.
+10. Phase 8: integration branch work for FastAPI, React, ContextStore/MCP/notifications, README merge, and end-to-end smoke.
 
-This order fixes identity and event boundaries before account isolation, then stabilizes external views before changing execution-node return shape.
+This order fixes identity and event boundaries before account isolation, then stabilizes the external view contract before changing the execution-node return shape. Platform integration work must wait until the broker-owned contract passes the Phase 7 gate and then proceed on the integration branch.
 
 ## 7. Non-Goals
 
-- No FastAPI routes.
-- No React/Next.js work.
+- No FastAPI routes or full FastAPI app.
+- No React/Next.js pages, front-end routes, front-end components, or API client.
 - No ContextStore implementation.
-- No SQLite adapter.
-- No notification channels.
-- No full HITL manager, policy engine, or approval workflow.
+- No MCP, Memory/reflection, or notification channels.
+- No SQLite adapter or production-grade audit storage.
+- No full HITL manager, policy engine, approval workflow, interrupt/resume, or front-end approval page.
 - No user/permission system.
 - No async backtest job queue.
 - No prediction-accuracy backtest contract.
 - No broad renaming of internal broker enums.
 - No removal of Streamlit broker smoke coverage.
+- No README merge on the broker-plus branch.
 
 ## 8. Acceptance Gate
 
@@ -714,6 +806,7 @@ Broker-plus is ready for integration planning when:
 - Broker events and trade ledger have non-overlapping responsibilities.
 - Backtest result JSON can be produced without binding API code to pandas column names.
 - Multi-account engine tests prove account isolation.
+- Streamlit broker smoke coverage has not been removed.
 - Quality gates pass:
 
 ```bash
