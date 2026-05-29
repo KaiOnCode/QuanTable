@@ -3,8 +3,11 @@
 import { useState } from "react";
 import { Shell } from "@/components/layout/shell";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
 
 export default function TestPage() {
   const [status, setStatus] = useState<string>("not tried");
@@ -24,9 +27,9 @@ export default function TestPage() {
       const data = await res.json();
       setStatus("fetch success");
       setResult(JSON.stringify(data, null, 2));
-    } catch (e: any) {
+    } catch (error: unknown) {
       setStatus("fetch failed");
-      setResult(e.message || String(e));
+      setResult(getErrorMessage(error));
     }
   };
 
@@ -68,9 +71,9 @@ export default function TestPage() {
         }
         setStatus("stream complete");
       })
-      .catch((e) => {
+      .catch((error: unknown) => {
         setStatus("sse error");
-        setResult(e.message || String(e));
+        setResult(getErrorMessage(error));
       });
   };
 

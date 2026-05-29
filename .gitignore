@@ -213,6 +213,8 @@ __marimo__/
 # Frontend (Node.js)
 frontend/node_modules/
 frontend/.next/
+!frontend/lib/
+!frontend/lib/**
 
 # Claude Code (personal state, not project-level)
 .claude/
@@ -223,6 +225,8 @@ properties.env
 # Runtime data
 data/*.db
 data/*.db-journal
+data/*.db-shm
+data/*.db-wal
 *.db-journal
 
 # Vibe-Trading reference (local only — key files extracted to skills/ and mcp/)
