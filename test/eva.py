@@ -1,11 +1,12 @@
+import matplotlib.pyplot as plt
 import pandas as pd
 import yfinance as yf
-import matplotlib.pyplot as plt
 
 # ======== 配置 / Config ========
-PORTFOLIO_FILE = "portfolio_daily.csv"   # 你的回测输出
-SP500_TICKER = "^GSPC"                   # S&P 500 指数
-NASDAQ100_TICKER = "^NDX"                # Nasdaq 100 指数（如果拉不下来可以改成 QQQ ETF）
+PORTFOLIO_FILE = "portfolio_daily.csv"  # 你的回测输出
+SP500_TICKER = "^GSPC"  # S&P 500 指数
+NASDAQ100_TICKER = "^NDX"  # Nasdaq 100 指数（如果拉不下来可以改成 QQQ ETF）
+
 
 def load_strategy_equity(portfolio_file: str) -> pd.Series:
     """
@@ -19,6 +20,7 @@ def load_strategy_equity(portfolio_file: str) -> pd.Series:
     equity = df["equity"].astype(float)
     return equity
 
+
 def compute_returns_from_equity(equity: pd.Series):
     """
     由净值计算日收益率 & 累计收益
@@ -27,6 +29,7 @@ def compute_returns_from_equity(equity: pd.Series):
     daily_ret = equity.pct_change().fillna(0.0)
     cum_ret = (1 + daily_ret).cumprod() - 1
     return daily_ret, cum_ret
+
 
 def download_benchmarks(start_date, end_date):
     """
@@ -53,8 +56,10 @@ def download_benchmarks(start_date, end_date):
     cum_ret = (1 + daily_ret).cumprod() - 1
     return prices, daily_ret, cum_ret
 
-def align_to_strategy_index(strategy_index: pd.DatetimeIndex,
-                            bench_cum_ret: pd.DataFrame) -> pd.DataFrame:
+
+def align_to_strategy_index(
+    strategy_index: pd.DatetimeIndex, bench_cum_ret: pd.DataFrame
+) -> pd.DataFrame:
     """
     把基准的累计收益对齐到策略的日期索引（前向填充）
     Align benchmark cumulative returns to strategy date index.
@@ -62,8 +67,8 @@ def align_to_strategy_index(strategy_index: pd.DatetimeIndex,
     aligned = bench_cum_ret.reindex(strategy_index).ffill()
     return aligned
 
-def plot_cumulative_returns(strategy_cum: pd.Series,
-                            bench_cum: pd.DataFrame):
+
+def plot_cumulative_returns(strategy_cum: pd.Series, bench_cum: pd.DataFrame):
     """
     画策略 vs S&P 500 vs Nasdaq 100 的累计收益曲线
     Plot cumulative returns comparison.
@@ -84,6 +89,7 @@ def plot_cumulative_returns(strategy_cum: pd.Series,
     plt.grid(True)
     plt.tight_layout()
     plt.show()
+
 
 def main():
     # 1) 读取策略净值
@@ -111,6 +117,7 @@ def main():
     print(f"Strategy   : {strategy_cum_ret.iloc[-1]:.2%}")
     print(f"S&P 500    : {bench_cum_aligned[SP500_TICKER].iloc[-1]:.2%}")
     print(f"Nasdaq 100 : {bench_cum_aligned[NASDAQ100_TICKER].iloc[-1]:.2%}")
+
 
 if __name__ == "__main__":
     main()

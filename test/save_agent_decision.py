@@ -1,8 +1,7 @@
 import csv
 import re
 from datetime import datetime
-import uuid
-from datetime import datetime
+
 
 def parse_agent_output(text):
     """解析 agent 的自然语言输出"""
@@ -31,7 +30,7 @@ def parse_agent_output(text):
         "time_range": time_range,
         "confidence": confidence,
         "one_sentence": one_sentence,
-        "pm_reason": pm_reason
+        "pm_reason": pm_reason,
     }
 
 
@@ -56,19 +55,36 @@ def save_agent_csv(ticker, date_time, agent_text, final_decision, target_pos_pct
         writer = csv.writer(f)
 
         if write_header:
-            writer.writerow([
-                "date", "time", "ticker", "decision_id",
-                "final_decision", "target_pos_pct",
-                "direction","time_range", "confidence", "one_sentence", "pm_reason"
-            ])
+            writer.writerow(
+                [
+                    "date",
+                    "time",
+                    "ticker",
+                    "decision_id",
+                    "final_decision",
+                    "target_pos_pct",
+                    "direction",
+                    "time_range",
+                    "confidence",
+                    "one_sentence",
+                    "pm_reason",
+                ]
+            )
 
-        writer.writerow([
-            date_str, time_str, ticker, decision_id,final_decision,target_pos_pct,
-            parsed["direction"],
-            parsed["time_range"],
-            parsed["confidence"],
-            parsed["one_sentence"],
-            parsed["pm_reason"]
-        ])
+        writer.writerow(
+            [
+                date_str,
+                time_str,
+                ticker,
+                decision_id,
+                final_decision,
+                target_pos_pct,
+                parsed["direction"],
+                parsed["time_range"],
+                parsed["confidence"],
+                parsed["one_sentence"],
+                parsed["pm_reason"],
+            ]
+        )
 
     print(f"决策已保存到 {filename}，决策ID={decision_id}")
