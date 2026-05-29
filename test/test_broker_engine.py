@@ -658,6 +658,151 @@ def test_engine_preserves_injected_falsy_event_sink() -> None:
     ]
 
 
+def test_orders_with_different_account_ids_keep_isolated_state() -> None:
+    broker = MockBrokerEngine(
+        BrokerConfig(
+            initial_cash=100_000.0,
+            commission_rate=0.001,
+            slippage_rate=0.0005,
+        )
+    )
+    broker.on_bar(
+        {
+            "AAPL": {
+                "open": 99.0,
+                "high": 101.0,
+                "low": 98.0,
+                "close": 100.0,
+            },
+            "MSFT": {
+                "open": 199.0,
+                "high": 201.0,
+                "low": 198.0,
+                "close": 200.0,
+            },
+        }
+    )
+
+    account_a_order = broker.place_order(
+        Order(
+            ticker="AAPL",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            qty=10,
+            strategy_id="strategy-a",
+            account_id="account-a",
+        )
+    )
+    account_b_order = broker.place_order(
+        Order(
+            ticker="MSFT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            qty=3,
+            strategy_id="strategy-b",
+            account_id="account-b",
+        )
+    )
+
+    account_a = broker.get_account(account_id="account-a")
+    account_b = broker.get_account(account_id="account-b")
+
+    assert account_a.account_id == "account-a"
+    assert account_a.strategy_id == "strategy-a"
+    assert account_a.cash == pytest.approx(98_998.4995)
+    assert {position.ticker for position in account_a.positions} == {"AAPL"}
+    assert broker.get_position("AAPL", account_id="account-a") is not None
+    assert broker.get_position("MSFT", account_id="account-a") is None
+    assert [order.id for order in broker.get_orders(account_id="account-a")] == [
+        account_a_order.id
+    ]
+    assert [fill.order_id for fill in broker.get_fills(account_id="account-a")] == [
+        account_a_order.id
+    ]
+    assert [
+        event.event_type for event in broker.get_event_log(account_id="account-a")
+    ] == ["order_placed", "order_filled"]
+
+    assert account_b.account_id == "account-b"
+    assert account_b.strategy_id == "strategy-b"
+    assert account_b.cash == pytest.approx(99_399.0997)
+    assert {position.ticker for position in account_b.positions} == {"MSFT"}
+    assert broker.get_position("AAPL", account_id="account-b") is None
+    assert broker.get_position("MSFT", account_id="account-b") is not None
+    assert [order.id for order in broker.get_orders(account_id="account-b")] == [
+        account_b_order.id
+    ]
+    assert [fill.order_id for fill in broker.get_fills(account_id="account-b")] == [
+        account_b_order.id
+    ]
+    assert [
+        event.event_type for event in broker.get_event_log(account_id="account-b")
+    ] == ["order_placed", "order_filled"]
+
+    assert broker.get_account().cash == pytest.approx(100_000.0)
+    assert broker.get_positions() == []
+    assert broker.get_orders() == []
+    assert broker.get_fills() == []
+
+
+def test_default_queries_do_not_cross_non_default_accounts() -> None:
+    broker = MockBrokerEngine(
+        BrokerConfig(
+            initial_cash=100_000.0,
+            commission_rate=0.001,
+            slippage_rate=0.0005,
+        )
+    )
+    broker.on_bar(
+        {
+            "AAPL": {
+                "open": 99.0,
+                "high": 101.0,
+                "low": 98.0,
+                "close": 100.0,
+            }
+        }
+    )
+    filled_order = broker.place_order(
+        Order(
+            ticker="AAPL",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            qty=10,
+            account_id="account-a",
+        )
+    )
+    pending_order = broker.place_order(
+        Order(
+            ticker="AAPL",
+            side=OrderSide.BUY,
+            type=OrderType.LIMIT,
+            qty=5,
+            limit_price=95.0,
+            account_id="account-a",
+        )
+    )
+
+    assert broker.get_order(filled_order.id) is None
+    assert broker.get_fills(filled_order.id) == []
+    assert broker.get_event_log() == []
+    with pytest.raises(KeyError):
+        broker.cancel_order(pending_order.id)
+
+    canceled_order = broker.cancel_order(pending_order.id, account_id="account-a")
+
+    assert canceled_order.status is OrderStatus.CANCELED
+    assert broker.get_order(filled_order.id, account_id="account-a") is not None
+    assert len(broker.get_fills(filled_order.id, account_id="account-a")) == 1
+    assert len(broker.get_fills(filled_order.id, account_id=None)) == 1
+    assert [event.event_type for event in broker.get_event_log(account_id=None)] == [
+        "order_placed",
+        "order_filled",
+        "order_placed",
+        "order_canceled",
+    ]
+
+
 def test_rejected_and_canceled_orders_are_recorded_in_event_log() -> None:
     broker = MockBrokerEngine(
         BrokerConfig(
