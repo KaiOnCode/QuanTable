@@ -1,6 +1,8 @@
 # dataflow/service.py
 import os
 from typing import List, Dict, Any,Optional
+from datetime import datetime, timezone
+
 # 1. 导入新的 provider 函数
 from .providers.YFinance import (
     df_get_prices,
@@ -9,18 +11,32 @@ from .providers.YFinance import (
     df_get_sector_context
 )
 
-from .providers.news_google import get_company_news  # 假设这个也按规范修改，或暂时保留
+from .providers.news_google import get_company_news
+from .providers.news_akshare import get_company_news_akshare
 from .portfolio_manager import PortfolioManager
 from .providers.macro_calendar import df_get_macro_calendar
 from .providers.fundamentals_akshare import df_get_fundamentals_pit
+from .store import MarketDataStore
 
 ONLINE = os.getenv("ONLINE_DATA", "true").lower() == "true"
+STORE_ENABLED = os.getenv("MARKET_DATA_STORE", "true").lower() == "true"
+
+
+def _today_str() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
 class DataService:
     def __init__(self, fallback_local_root: str = "data"):
         self.local_root = fallback_local_root
         self.portfolio_manager = PortfolioManager()
+        self._store: MarketDataStore | None = None
+
+    @property
+    def store(self) -> MarketDataStore:
+        if self._store is None:
+            self._store = MarketDataStore()
+        return self._store
 
     # 2. 严格按照规范 v1.0 实现函数签名 [cite: 26-35]
 
@@ -35,9 +51,16 @@ class DataService:
         获取价格
         """
         if ONLINE:
-            # 更改：传递 end_date
             data = df_get_prices(ticker, lookback_days, end_date=end_date)
             if data:
+                # Persist to MarketDataStore for accumulation
+                if STORE_ENABLED:
+                    try:
+                        rows = data.get("rows", [])
+                        if rows:
+                            self.store.upsert_ohlcv(ticker, rows)
+                    except Exception:
+                        pass
                 return data
         return {}
 
@@ -80,6 +103,13 @@ class DataService:
             data = df_get_fundamentals_pit(ticker, end_date)
 
         if data:
+            # Persist to MarketDataStore
+            if STORE_ENABLED:
+                try:
+                    as_of = end_date or _today_str()
+                    self.store.upsert_fundamentals(ticker, as_of, data)
+                except Exception:
+                    pass
             return data
         return {}
 
@@ -109,14 +139,28 @@ class DataService:
         """
         lang = os.getenv("NEWS_LANG", "en")
         if ONLINE:
-            # 更改：传递 end_date
+            # Try Google News first
             items = get_company_news(
                 ticker,
                 days=window_days,
                 lang=lang,
                 end_date=end_date
             )
-            # TODO: 在这里将 items 转换为规范要求的格式
+
+            # Fallback to AkShare if Google News returns nothing
+            if not items:
+                items = get_company_news_akshare(
+                    ticker,
+                    days=window_days,
+                    max_items=max_items,
+                )
+
+            # Persist to MarketDataStore for accumulation
+            if STORE_ENABLED and items:
+                try:
+                    self.store.add_news_articles(ticker, items[:max_items])
+                except Exception:
+                    pass
             return items[:max_items]
         return []
 

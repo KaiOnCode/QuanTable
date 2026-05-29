@@ -121,28 +121,40 @@ class DataCollector:
     # ── Refresh jobs ────────────────────────────────────────
 
     def _refresh_prices(self) -> None:
-        """Fetch latest prices for all watched tickers (forces cache refresh)."""
+        """Fetch latest prices for stale tickers first, then all watched."""
         from dataflow.service import DataService
+        from dataflow.store import MarketDataStore
         svc = DataService()
+        store = MarketDataStore()
+
+        # Prioritize stale tickers (no data in 24h)
+        stale = set(store.get_stale_tickers("ohlcv", max_age_hours=24))
+        prioritized = list(stale) + [t for t in self.tickers if t not in stale]
+
         count = 0
-        for ticker in self.tickers:
+        for ticker in prioritized:
             try:
                 result = svc.df_get_prices(ticker, lookback_days=5)
                 if result:
                     count += 1
             except Exception as exc:
+                store.mark_error(ticker, "ohlcv", str(exc))
                 logger.debug("price refresh failed for %s: %s", ticker, exc)
-        logger.debug("price refresh: %d/%d tickers updated", count, len(self.tickers))
+        logger.debug("price refresh: %d/%d tickers updated (%d stale)", count, len(prioritized), len(stale))
 
     def _refresh_news(self) -> None:
-        """Invalidate stale news caches for watched tickers."""
+        """Fetch and store news for watched tickers."""
+        from dataflow.service import DataService
+        svc = DataService()
+        count = 0
         for ticker in self.tickers:
             try:
-                ck = cache_key("sentiment", ticker, "7", "en")
-                invalidate_cache(ck)
+                articles = svc.df_get_news(ticker, window_days=1, max_items=10)
+                if articles:
+                    count += 1
             except Exception:
                 pass
-        logger.debug("news cache invalidated for %d tickers", len(self.tickers))
+        logger.debug("news refresh: %d/%d tickers with new articles", count, len(self.tickers))
 
     def _refresh_sentiment(self) -> None:
         """Pre-compute sentiment for watched tickers."""

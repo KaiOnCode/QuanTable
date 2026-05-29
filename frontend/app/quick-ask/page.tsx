@@ -97,6 +97,7 @@ export default function QuickAskPage() {
     setDebates([]);
     setError(null);
 
+    // Immediately mark PM as "started" so user sees feedback
     const initialStatuses = new Map<string, AgentStatus>();
     AGENTS.forEach((a) => {
       initialStatuses.set(a.name, {
@@ -138,22 +139,8 @@ export default function QuickAskPage() {
           setAnalyzing(false);
         },
         onError: (event) => {
-          if (event.agent !== "connection") {
-            setAgentStatuses((prev) => {
-              const next = new Map(prev);
-              next.set(event.agent, {
-                name: event.agent,
-                status: "error",
-                error: event.error,
-                stage:
-                  AGENTS.find((a) => a.name === event.agent)?.stage || 0,
-              });
-              return next;
-            });
-          } else {
-            setError(event.error);
-            setAnalyzing(false);
-          }
+          setAnalyzing(false);
+          setError(`[${event.agent}] ${event.error}`);
         },
         onComplete: () => {
           setAnalyzing(false);
@@ -230,9 +217,10 @@ export default function QuickAskPage() {
                   onClick={handleAnalyze}
                   disabled={!ticker.trim()}
                   className="h-12 px-6"
+                  title={!ticker.trim() ? "Enter a ticker symbol first" : "Start analysis"}
                 >
                   <Send className="mr-2 h-4 w-4" />
-                  Analyze
+                  {!ticker.trim() ? "Enter Ticker" : "Analyze"}
                 </Button>
               )}
             </div>

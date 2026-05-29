@@ -80,10 +80,14 @@ class IntelliFin_Assistant:
         #     openai_api_key="",
         #     openai_api_base="",
         #     )
+        api_base = os.getenv("OPENAI_API_BASE", "")
         self.llm = ChatOpenAI(
-            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-            openai_api_key=os.getenv("OPENAI_API_KEY")
-            )
+            model=os.getenv("OPENAI_MODEL", "deepseek-chat"),
+            openai_api_key=os.getenv("OPENAI_API_KEY"),
+            openai_api_base=api_base if api_base else None,
+            temperature=0.0,
+            max_tokens=4096,
+        )
 
         self.tool_nodes = self._create_tool_nodes()
         self.agent_nodes = self._create_agent_nodes()

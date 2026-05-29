@@ -25,7 +25,7 @@ import {
 import { useState } from "react";
 
 const navItems = [
-  { href: "/", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/quick-ask", label: "Quick Ask", icon: Zap },
   { href: "/strategies", label: "Strategies", icon: TrendingUp },
   { href: "/backtest", label: "Backtest", icon: LineChart },
