@@ -304,7 +304,7 @@ The following items are outside broker-plus first-stage scope: React/Next.js pag
 - Test: `test/test_broker_models.py`
 - Test: `test/test_broker_ledger.py`
 
-- [ ] **Step 1: Write failing tests for identity defaults and propagation**
+- [x] **Step 1: Write failing tests for identity defaults and propagation**
 
 Add tests that assert `Order`, `Fill`, `Position`, `AccountSnapshot`, `ExecutionReport`, `BrokerEvent`, `LedgerFillRecord`, and `LedgerSnapshotRecord` expose:
 
@@ -317,7 +317,7 @@ decision_id == ""
 
 Also add a ledger test where a fill with all IDs persists and reloads through `InMemoryLedgerBackend`.
 
-- [ ] **Step 2: Run the focused failing tests**
+- [x] **Step 2: Run the focused failing tests**
 
 Run:
 
@@ -327,7 +327,7 @@ uv run pytest test/test_broker_models.py test/test_broker_ledger.py -q
 
 Expected: fail on missing identity fields.
 
-- [ ] **Step 3: Add fields to models and ledger records**
+- [x] **Step 3: Add fields to models and ledger records**
 
 Add optional string fields with these defaults:
 
@@ -339,11 +339,11 @@ decision_id: str = ""
 
 Keep existing `session_id: str = ""`. Ensure nested records copy these fields through existing `model_copy(deep=True)` paths.
 
-- [ ] **Step 4: Export any new public types**
+- [x] **Step 4: Export any new public types**
 
 Update `broker/__init__.py` only for new public classes. Do not export private helpers.
 
-- [ ] **Step 5: Verify**
+- [x] **Step 5: Verify**
 
 Run:
 
@@ -364,7 +364,7 @@ Expected: all pass.
 - Modify: `broker/gateway.py`
 - Test: `test/test_broker_engine.py`
 
-- [ ] **Step 1: Write failing tests for account isolation**
+- [x] **Step 1: Write failing tests for account isolation**
 
 Add tests showing two orders with different `account_id` values keep separate cash, positions, orders, fills, and event logs:
 
@@ -375,7 +375,7 @@ account_b_order = Order(..., strategy_id="strategy-b", account_id="account-b")
 
 Assert `get_account(account_id="account-a")` only includes account A state and `get_account(account_id="account-b")` only includes account B state.
 
-- [ ] **Step 2: Run the focused failing test**
+- [x] **Step 2: Run the focused failing test**
 
 Run:
 
@@ -385,7 +385,7 @@ uv run pytest test/test_broker_engine.py -q
 
 Expected: fail because current engine stores one global cash/positions/orders/fills set.
 
-- [ ] **Step 3: Introduce an internal account state container**
+- [x] **Step 3: Introduce an internal account state container**
 
 Add an internal dataclass or Pydantic-free helper in `broker/engine.py`:
 
@@ -401,7 +401,7 @@ class _AccountState:
 
 Store `self._accounts: dict[str, _AccountState]`, keyed by `account_id`.
 
-- [ ] **Step 4: Preserve backwards-compatible defaults**
+- [x] **Step 4: Preserve backwards-compatible defaults**
 
 All public methods keep working when no `account_id` is passed by defaulting to `"default"`.
 
@@ -417,7 +417,7 @@ def get_fills(self, order_id: str | None = None, account_id: str = "default") ->
 
 When placing or canceling orders, use `order.account_id`.
 
-- [ ] **Step 5: Verify legacy tests still pass**
+- [x] **Step 5: Verify legacy tests still pass**
 
 Run:
 
@@ -437,7 +437,7 @@ Expected: all pass with default account behavior unchanged.
 - Test: `test/test_broker_models.py`
 - Test: `test/test_broker_engine.py`
 
-- [ ] **Step 1: Write failing tests for event IDs and per-account sequence**
+- [x] **Step 1: Write failing tests for event IDs and per-account sequence**
 
 Assert events contain:
 
@@ -457,7 +457,7 @@ timestamp
 
 Add a test that account A event sequence is `1, 2` while account B starts at `1`.
 
-- [ ] **Step 2: Run the focused failing tests**
+- [x] **Step 2: Run the focused failing tests**
 
 Run:
 
@@ -467,7 +467,7 @@ uv run pytest test/test_broker_models.py test/test_broker_engine.py -q
 
 Expected: fail on missing event fields and sink behavior.
 
-- [ ] **Step 3: Define protocol and in-memory implementation**
+- [x] **Step 3: Define protocol and in-memory implementation**
 
 In `broker/events.py`, add:
 
@@ -486,13 +486,13 @@ class BrokerEventSink(Protocol):
 
 `InMemoryBrokerEventSink.publish()` assigns `event_id` if missing and increments `sequence` per `(strategy_id, account_id)`.
 
-- [ ] **Step 4: Wire engine to event sink**
+- [x] **Step 4: Wire engine to event sink**
 
 `MockBrokerEngine` should accept `event_sink: BrokerEventSink | None = None`; default to `InMemoryBrokerEventSink`.
 
 Keep `get_event_log()` as a compatibility wrapper over the sink for default account queries.
 
-- [ ] **Step 5: Verify**
+- [x] **Step 5: Verify**
 
 Run:
 
@@ -513,7 +513,7 @@ Expected: all pass.
 - Modify: `broker/__init__.py`
 - Test: `test/test_broker_views.py`
 
-- [ ] **Step 1: Write failing tests for enum and percent mappings**
+- [x] **Step 1: Write failing tests for enum and percent mappings**
 
 Create `test/test_broker_views.py`. Cover:
 
@@ -529,7 +529,7 @@ Position.side "LONG" -> "long"
 
 Also assert external `weight_pct` and return metrics use percentage points.
 
-- [ ] **Step 2: Write failing tests for OrderView aggregates**
+- [x] **Step 2: Write failing tests for OrderView aggregates**
 
 Use one order with two fills and assert:
 
@@ -547,11 +547,11 @@ filled_avg_price is None
 commission == 0
 ```
 
-- [ ] **Step 3: Write failing tests for PositionView price source**
+- [x] **Step 3: Write failing tests for PositionView price source**
 
 Assert market price produces `price_source="market"`, last known close produces `price_source="last_close"`, and final fallback produces `price_source="avg_cost_fallback"`.
 
-- [ ] **Step 4: Implement view models and serializers**
+- [x] **Step 4: Implement view models and serializers**
 
 In `broker/views.py`, define focused Pydantic models and pure serializer functions. Keep these functions free of engine mutation.
 
@@ -569,7 +569,7 @@ to_performance_metrics_view(...)
 to_backtest_result_view(...)
 ```
 
-- [ ] **Step 5: Verify**
+- [x] **Step 5: Verify**
 
 Run:
 
@@ -591,7 +591,7 @@ Expected: all pass.
 - Test: `test/test_execution_node.py`
 - Test: `test/test_orchestrator.py`
 
-- [ ] **Step 1: Write failing tests for skipped, held, pending, rejected, failed**
+- [x] **Step 1: Write failing tests for skipped, held, pending, rejected, failed**
 
 Expected results:
 
@@ -607,7 +607,7 @@ missing price -> status == "failed"
 
 Assert no order is placed for all seven cases.
 
-- [ ] **Step 2: Write failing tests for modified approval**
+- [x] **Step 2: Write failing tests for modified approval**
 
 Assert:
 
@@ -618,19 +618,19 @@ approval.modified_target_pct == 20.0
 order.qty reflects 20.0
 ```
 
-- [ ] **Step 3: Write failing tests for identity propagation**
+- [x] **Step 3: Write failing tests for identity propagation**
 
 Pass `strategy_id`, `account_id`, `session_id`, and `decision_id` in state. Assert report, order, fills, and events carry those IDs.
 
-- [ ] **Step 4: Implement report construction through broker views**
+- [x] **Step 4: Implement report construction through broker views**
 
 Update `create_execution_node()` so every branch returns JSON for `ExecutionReportView`, not raw strings. Keep `AgentState.execution_report` as serialized JSON string for compatibility.
 
-- [ ] **Step 5: Event behavior**
+- [x] **Step 5: Event behavior**
 
 Write `execution_pending`, `execution_rejected`, and `execution_failed` only for pending/rejected/failed execution-domain states. Do not write broker events for skipped/held.
 
-- [ ] **Step 6: Verify**
+- [x] **Step 6: Verify**
 
 Run:
 
@@ -652,7 +652,7 @@ Expected: all pass.
 - Test: `test/test_backtest_runner.py`
 - Test: `test/test_broker_views.py`
 
-- [ ] **Step 1: Write failing tests for BacktestResultView**
+- [x] **Step 1: Write failing tests for BacktestResultView**
 
 Assert:
 
@@ -666,15 +666,15 @@ series contains strategy_equity and benchmark_equity
 trades come from TradeView shape
 ```
 
-- [ ] **Step 2: Add benchmark symbol to runner-facing config path**
+- [x] **Step 2: Add benchmark symbol to runner-facing config path**
 
 Keep default `benchmark_symbol="SPY"` in the view/config contract. Do not introduce async job IDs in broker.
 
-- [ ] **Step 3: Support shared-account multi-ticker contract at serializer level**
+- [x] **Step 3: Support shared-account multi-ticker contract at serializer level**
 
 The serializer must accept a result/config with multiple tickers and represent it as one portfolio-level result. The runner can remain single-ticker until a later execution task expands orchestration; the JSON contract must not imply per-ticker isolated accounts.
 
-- [ ] **Step 4: Verify**
+- [x] **Step 4: Verify**
 
 Run:
 
@@ -694,11 +694,11 @@ Expected: all pass.
 - Modify: `agentgraph/orchestrator.py`
 - Test: `test/test_orchestrator.py`
 
-- [ ] **Step 1: Write failing test for hook passthrough**
+- [x] **Step 1: Write failing test for hook passthrough**
 
 Construct `IntelliFin_Assistant(broker=broker, on_execution_complete=callback)` and assert callback receives the execution report and state exactly once after execution.
 
-- [ ] **Step 2: Add constructor parameter**
+- [x] **Step 2: Add constructor parameter**
 
 Add:
 
@@ -708,11 +708,11 @@ on_execution_complete: Callable[[ExecutionReportView, Mapping[str, object]], Non
 
 This hook receives the broker-owned view contract, not the old internal `ExecutionReport`.
 
-- [ ] **Step 3: Pass hook into `create_execution_node`**
+- [x] **Step 3: Pass hook into `create_execution_node`**
 
 Only change orchestrator wiring. Do not alter graph topology.
 
-- [ ] **Step 4: Verify**
+- [x] **Step 4: Verify**
 
 Run:
 
@@ -733,7 +733,7 @@ Expected: all pass.
 - Modify: `plans/broker-plus/WIP.md`
 - Test: existing broker and agentgraph tests
 
-- [ ] **Step 1: Write mapping document**
+- [x] **Step 1: Write mapping document**
 
 Create `plans/broker-plus/05-contract-mapping.md` with:
 
@@ -745,7 +745,7 @@ Create `plans/broker-plus/05-contract-mapping.md` with:
 - backtest JSON shape
 - explicit non-goals
 
-- [ ] **Step 2: Collapse WIP**
+- [x] **Step 2: Collapse WIP**
 
 Replace `plans/broker-plus/WIP.md` with a short pointer to:
 
@@ -754,7 +754,7 @@ See plans/broker-plus/04-frozen-contract-and-impl-plan.md
 See plans/broker-plus/05-contract-mapping.md
 ```
 
-- [ ] **Step 3: Run broker-plus regression suite**
+- [x] **Step 3: Run broker-plus regression suite**
 
 Run:
 
