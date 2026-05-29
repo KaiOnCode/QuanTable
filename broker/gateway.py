@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from broker.events import BrokerEvent
 from broker.models import AccountSnapshot, Fill, Order, OrderStatus, Position
 
 
@@ -45,3 +46,5 @@ class BrokerGateway(Protocol):
         order_id: str | None = None,
         account_id: str | None = "default",
     ) -> list[Fill]: ...
+
+    def publish_event(self, event: BrokerEvent) -> BrokerEvent: ...

@@ -5,7 +5,7 @@ from langchain_core.messages import AIMessage
 from agentgraph.orchestrator import IntelliFin_Assistant
 from broker.config import BrokerConfig
 from broker.engine import MockBrokerEngine
-from broker.models import ExecutionReport, OrderStatus
+from broker.views import ExecutionReportView
 
 
 def _stub_tool_nodes():
@@ -78,10 +78,12 @@ def test_orchestrator_runs_execution_node_after_pm_agent_when_broker_is_enabled(
         session_id="session-graph",
     )
 
-    report = ExecutionReport.model_validate_json(result["execution_report"])
+    report = ExecutionReportView.model_validate_json(result["execution_report"])
 
-    assert report.order.status is OrderStatus.FILLED
-    assert report.order.qty == 500.0
+    assert report.status == "executed"
+    assert report.order is not None
+    assert report.order.status == "executed"
+    assert report.order.quantity == 500.0
     assert report.session_id == "session-graph"
 
 
@@ -146,10 +148,12 @@ def test_orchestrator_routes_through_hitl_approval_when_enabled() -> None:
         session_id="session-hitl",
     )
 
-    report = ExecutionReport.model_validate_json(result["execution_report"])
+    report = ExecutionReportView.model_validate_json(result["execution_report"])
 
     assert hitl_calls == ["AAPL"]
     assert result["approval_status"] == "modified"
     assert result["modified_target_pct"] == 20.0
-    assert report.order.status is OrderStatus.FILLED
-    assert report.order.qty == 200.0
+    assert report.status == "executed"
+    assert report.order is not None
+    assert report.order.status == "executed"
+    assert report.order.quantity == 200.0

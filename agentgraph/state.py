@@ -62,15 +62,22 @@ class AgentState(MessagesState):
     execution_enabled: Annotated[bool, "是否启用自动执行"]
 
     # ========== 新增：会话追踪 (Gap A 预留) ==========
+    strategy_id: NotRequired[Annotated[Optional[str], "策略ID，用于策略级归属"]]
+    account_id: NotRequired[Annotated[Optional[str], "账户ID，用于隔离交易账户"]]
     session_id: Annotated[Optional[str], "会话ID，用于持久化追踪"]
+    decision_id: NotRequired[Annotated[Optional[str], "PM决策ID，由上游生成"]]
 
     # ========== Gap B 预留：HITL 审批 ==========
     approval_status: NotRequired[
         Annotated[
             Optional[str],
-            "审批状态: auto_approved/pending/approved/rejected/modified",
+            "审批状态: auto_approved/pending/approved/rejected/timed_out/modified",
         ]
     ]
+    approval_id: NotRequired[Annotated[Optional[str], "审批快照ID"]]
+    approval_reason: NotRequired[Annotated[Optional[str], "审批原因"]]
+    reviewer: NotRequired[Annotated[Optional[str], "审批人"]]
+    reviewer_notes: NotRequired[Annotated[Optional[str], "审批备注"]]
     modified_target_pct: NotRequired[Annotated[Optional[float], "审批修改后的目标仓位"]]
 
     # ========== Gap E 预留：决策流审计（注释形式） ==========

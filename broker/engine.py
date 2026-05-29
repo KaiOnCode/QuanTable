@@ -128,6 +128,12 @@ class MockBrokerEngine(BrokerGateway):
             event_type=event_type,
         )
 
+    def publish_event(self, event: BrokerEvent) -> BrokerEvent:
+        published_event = self._event_sink.publish(event)
+        account_state = self._get_account_state(published_event.account_id)
+        account_state.event_log.append(published_event.model_copy(deep=True))
+        return published_event
+
     def place_order(self, order: Order) -> Order:
         account_state = self._get_account_state(order.account_id)
         stored_order = order.model_copy(deep=True)
@@ -478,7 +484,7 @@ class MockBrokerEngine(BrokerGateway):
         order: Order,
         details: dict[str, str],
     ) -> None:
-        published_event = self._event_sink.publish(
+        self.publish_event(
             BrokerEvent(
                 event_type=event_type,
                 entity_type="order",
@@ -492,8 +498,6 @@ class MockBrokerEngine(BrokerGateway):
                 details=details,
             )
         )
-        account_state = self._get_account_state(order.account_id)
-        account_state.event_log.append(published_event.model_copy(deep=True))
 
     def _get_account_state(self, account_id: str) -> _AccountState:
         if account_id not in self._accounts:
