@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from langchain_core.messages import AIMessage
 
 from agentgraph.orchestrator import IntelliFin_Assistant
@@ -157,3 +159,54 @@ def test_orchestrator_routes_through_hitl_approval_when_enabled() -> None:
     assert report.order is not None
     assert report.order.status == "executed"
     assert report.order.quantity == 200.0
+
+
+def test_orchestrator_passes_execution_complete_hook_to_execution_node() -> None:
+    broker = MockBrokerEngine(
+        BrokerConfig(
+            initial_cash=100_000.0,
+            commission_rate=0.001,
+            slippage_rate=0.0005,
+        )
+    )
+    broker.on_bar(
+        {
+            "AAPL": {
+                "open": 99.0,
+                "high": 101.0,
+                "low": 98.0,
+                "close": 100.0,
+            }
+        }
+    )
+    callback_payloads: list[tuple[ExecutionReportView, Mapping[str, object]]] = []
+
+    def on_execution_complete(
+        report: ExecutionReportView,
+        state: Mapping[str, object],
+    ) -> None:
+        callback_payloads.append((report, state))
+
+    assistant = IntelliFin_Assistant(
+        broker=broker,
+        on_execution_complete=on_execution_complete,
+        tool_nodes=_stub_tool_nodes(),
+        agent_nodes=_stub_agent_nodes(),
+    )
+
+    result = assistant.run(
+        "AAPL",
+        date="2026-04-13T00:00:00Z",
+        current_position_pct=0.0,
+        execution_enabled=True,
+        session_id="session-hook",
+    )
+
+    report = ExecutionReportView.model_validate_json(result["execution_report"])
+
+    assert len(callback_payloads) == 1
+    callback_report, callback_state = callback_payloads[0]
+    assert callback_report == report
+    assert callback_report.status == "executed"
+    assert callback_state["ticker"] == "AAPL"
+    assert callback_state["session_id"] == "session-hook"

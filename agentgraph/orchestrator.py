@@ -1,5 +1,6 @@
 import os
 import sys
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from dotenv import load_dotenv
@@ -23,6 +24,7 @@ from agents.utils.agent_tools import (
     get_price,
 )
 from broker.gateway import BrokerGateway
+from broker.views import ExecutionReportView
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 load_dotenv("properties.env")
@@ -97,6 +99,9 @@ class IntelliFin_Assistant:
         tool_nodes: dict[str, Any] | None = None,
         agent_nodes: dict[str, Any] | None = None,
         execution_node: Any | None = None,
+        on_execution_complete: (
+            Callable[[ExecutionReportView, Mapping[str, object]], None] | None
+        ) = None,
     ):
         self.llm = llm
         if self.llm is None and agent_nodes is None:
@@ -111,6 +116,7 @@ class IntelliFin_Assistant:
         self.tool_nodes: dict[str, Any] = tool_nodes or self._create_tool_nodes()
         self.agent_nodes: dict[str, Any] = agent_nodes or self._create_agent_nodes()
         self.execution_node = execution_node
+        self.on_execution_complete = on_execution_complete
         self.enable_hitl = enable_hitl
         self.hitl_approval_node = hitl_approval_node
         self.broker = broker
@@ -149,7 +155,10 @@ class IntelliFin_Assistant:
         else:
             execution_node_impl: Any = self.execution_node
             if execution_node_impl is None:
-                execution_node_impl = create_execution_node(self.broker)
+                execution_node_impl = create_execution_node(
+                    self.broker,
+                    on_execution_complete=self.on_execution_complete,
+                )
             wf.add_node("execution_node", execution_node_impl)
             if self.enable_hitl:
                 wf.add_node(
