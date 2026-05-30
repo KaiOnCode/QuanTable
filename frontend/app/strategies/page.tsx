@@ -34,9 +34,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { StatusBadge } from "@/components/shared/badges";
-import { formatPercent, formatDate } from "@/lib/utils";
+import { cn } from "@/lib/utils";
+import { formatDate } from "@/lib/utils";
+import { useQuery } from "@tanstack/react-query";
+import { strategiesApi } from "@/lib/api/strategies";
+import type { StrategyConfig } from "@/lib/types/models";
 import {
   Plus,
   Search,
@@ -48,49 +53,21 @@ import {
   Trash2,
   TrendingUp,
   ArrowUpRight,
+  RefreshCw,
 } from "lucide-react";
 import Link from "next/link";
-
-// Mock data for UI development (backend not running)
-const MOCK_STRATEGIES = [
-  {
-    id: "1",
-    name: "Tech Momentum",
-    description: "Momentum-based strategy focused on tech stocks",
-    type: "agent" as const,
-    status: "active" as const,
-    tickers: ["AAPL", "MSFT", "NVDA"],
-    created_at: "2026-05-01T09:00:00Z",
-    updated_at: "2026-05-28T06:00:00Z",
-  },
-  {
-    id: "2",
-    name: "Value Hunter",
-    description: "Deep value with PE/PB filters",
-    type: "quant" as const,
-    status: "active" as const,
-    tickers: ["BRK.B", "JPM", "XOM"],
-    created_at: "2026-04-15T09:00:00Z",
-    updated_at: "2026-05-27T06:00:00Z",
-  },
-  {
-    id: "3",
-    name: "HITL Safe Harbor",
-    description: "Conservative strategy with human oversight",
-    type: "hitl" as const,
-    status: "draft" as const,
-    tickers: ["SPY", "BND", "GLD"],
-    created_at: "2026-05-20T09:00:00Z",
-    updated_at: "2026-05-25T06:00:00Z",
-  },
-];
 
 export default function StrategiesPage() {
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
 
-  const strategies = MOCK_STRATEGIES;
+  const { data, isLoading, error, refetch } = useQuery({
+    queryKey: ["strategies", typeFilter, statusFilter],
+    queryFn: () => strategiesApi.list({ type: typeFilter === "all" ? undefined : typeFilter, status: statusFilter === "all" ? undefined : statusFilter }),
+  });
+
+  const strategies: StrategyConfig[] = data?.items || [];
 
   const filtered = strategies.filter((s) => {
     if (search && !s.name.toLowerCase().includes(search.toLowerCase()))
@@ -158,20 +135,40 @@ export default function StrategiesPage() {
         </Card>
 
         {/* Table */}
-        {filtered.length === 0 ? (
+        {isLoading ? (
+          <Card>
+            <CardContent className="pt-6 space-y-3">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Skeleton key={i} className="h-12 w-full" />
+              ))}
+            </CardContent>
+          </Card>
+        ) : error ? (
+          <Card>
+            <CardContent className="pt-8">
+              <EmptyState
+                title="Failed to load strategies"
+                description="Backend may not be running."
+                action={
+                  <Button onClick={() => refetch()}>
+                    <RefreshCw className="mr-2 h-4 w-4" /> Retry
+                  </Button>
+                }
+              />
+            </CardContent>
+          </Card>
+        ) : filtered.length === 0 ? (
           <Card>
             <CardContent className="pt-8">
               <EmptyState
                 title="No strategies found"
                 description={
-                  search || typeFilter !== "all" || statusFilter !== "all"
-                    ? "Try adjusting your filters."
-                    : "Create your first trading strategy to get started."
+                  strategies.length === 0
+                    ? "Create your first trading strategy to get started."
+                    : "Try adjusting your filters."
                 }
                 action={
-                  !search &&
-                  typeFilter === "all" &&
-                  statusFilter === "all" ? (
+                  strategies.length === 0 ? (
                     <Link href="/strategies/new" className={buttonVariants()}>
                       <Plus className="mr-2 h-4 w-4" />
                       Create Strategy

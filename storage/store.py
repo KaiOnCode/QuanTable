@@ -81,6 +81,38 @@ class ContextStore:
         ).fetchone()
         return json.loads(row[0]) if row else None
 
+    def list_strategies(
+        self, type: str | None = None, status: str | None = None, limit: int = 50
+    ) -> list[dict]:
+        """List strategies with optional filters."""
+        db = self._system_db()
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS strategies (id TEXT PRIMARY KEY, name TEXT, type TEXT, status TEXT, config_json TEXT, created_at TEXT, updated_at TEXT)"
+        )
+        conditions = ["1=1"]
+        params: list = []
+        if type:
+            conditions.append("type = ?")
+            params.append(type)
+        if status:
+            conditions.append("status = ?")
+            params.append(status)
+        where = " AND ".join(conditions)
+        rows = db.execute(
+            f"SELECT config_json FROM strategies WHERE {where} ORDER BY updated_at DESC LIMIT ?",
+            (*params, limit),
+        ).fetchall()
+        return [json.loads(r[0]) for r in rows]
+
+    def delete_strategy(self, strategy_id: str) -> bool:
+        """Delete a strategy from registry. Returns True if existed."""
+        db = self._system_db()
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS strategies (id TEXT PRIMARY KEY, name TEXT, type TEXT, status TEXT, config_json TEXT, created_at TEXT, updated_at TEXT)"
+        )
+        cur = db.execute("DELETE FROM strategies WHERE id = ?", (strategy_id,))
+        return cur.rowcount > 0
+
     # ── Strategy-level data ({strategy_id}.db) ──────────────
 
     def _strategy_db(self, strategy_id: str) -> sqlite3.Connection:
