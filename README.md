@@ -112,29 +112,57 @@ See `docs/reference/projects/` for detailed analyses and `docs/reusable-assets.m
 
 ## Quick Start
 
-### Backend
+### Prerequisites
+
+- Python 3.12
+- Node.js 22+
+- A DeepSeek API key (or any OpenAI-compatible key)
+
+### 1. Configure API key
 
 ```bash
-# Install dependencies
-uv sync
-
-# Configure API keys
 cp properties.env.example properties.env
-# Edit properties.env with your API keys
 ```
 
-### Frontend
+Edit `properties.env` with your credentials:
+
+```ini
+OPENAI_API_KEY=sk-your-deepseek-key
+OPENAI_API_BASE=https://api.deepseek.com/v1
+OPENAI_MODEL=deepseek-chat
+```
+
+> `properties.env` is gitignored — never commit real keys.
+
+### 2. Backend
+
+```bash
+uv sync
+uv run uvicorn server.main:app --host 0.0.0.0 --port 8000 --reload
+# → http://localhost:8000
+# → API docs: http://localhost:8000/docs
+```
+
+Verify:
+
+```bash
+curl http://localhost:8000/api/health
+```
+
+### 3. Frontend
+
+Open a second terminal:
 
 ```bash
 cd frontend
-
-# Install dependencies
 npm install
-
-# Start development server
 npm run dev
 # → http://localhost:3000
 ```
+
+### 4. Test
+
+Open `http://localhost:3000/quick-ask`, type `AAPL`, click **Analyze**. Watch the SSE progress stream and see the result.
 
 ### CLI (legacy)
 
