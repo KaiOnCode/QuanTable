@@ -13,7 +13,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
   TableBody,
@@ -25,9 +24,6 @@ import {
 import { EmptyState } from "@/components/shared/empty-state";
 import { StatusBadge, DirectionBadge, ActionBadge } from "@/components/shared/badges";
 import { formatCurrency, formatPercent, formatDate, formatDateTime } from "@/lib/utils";
-import { useQuery } from "@tanstack/react-query";
-import { strategiesApi } from "@/lib/api/strategies";
-import type { StrategyConfig, PerformanceMetrics, Position } from "@/lib/types/models";
 import {
   TrendingUp,
   BarChart3,
@@ -47,49 +43,95 @@ import {
 import Link from "next/link";
 
 // Mock data
+const MOCK_STRATEGY = {
+  id: "1",
+  name: "Tech Momentum",
+  description: "Momentum-based strategy focused on tech stocks with RSI/MA cross signals",
+  type: "agent" as const,
+  status: "active" as const,
+  tickers: ["AAPL", "MSFT", "NVDA"],
+  beliefs: ["聚焦科技股动量：关注RSI超卖反弹和均线金叉信号"],
+  active_agents: ["market", "news", "fundamentals", "bull_researcher", "bear_researcher", "pm"],
+  debate_rounds: 2,
+  execution_frequency: "daily",
+  execution_time: "09:30",
+  initial_capital: 100000,
+  created_at: "2026-05-01T09:00:00Z",
+  updated_at: "2026-05-28T06:00:00Z",
+  tags: ["tech", "momentum"],
+  creator: "team",
+  parent_strategy_id: null,
+};
+
+const MOCK_ACCOUNT = {
+  equity: 105230.45,
+  cash: 32100.20,
+  total_pnl_pct: 5.23,
+  benchmark_return_pct: 2.15,
+  excess_return_pct: 3.08,
+  sharpe_ratio: 1.35,
+  max_drawdown_pct: -8.45,
+  win_rate_pct: 62.5,
+  total_trades: 24,
+};
+
+const MOCK_DECISIONS = [
+  {
+    id: "d1",
+    ticker: "AAPL",
+    direction: "Bullish",
+    action: "BUY",
+    confidence: 0.78,
+    target_position_pct: 15,
+    winning_belief: "科技股动量",
+    timestamp: "2026-05-28T09:35:00Z",
+    report: "RSI(14)=32 超卖区域，均线金叉信号确认，MACD底部背离。",
+  },
+  {
+    id: "d2",
+    ticker: "MSFT",
+    direction: "Bullish",
+    action: "BUY",
+    confidence: 0.65,
+    target_position_pct: 10,
+    winning_belief: "科技股动量",
+    timestamp: "2026-05-27T09:35:00Z",
+    report: "财报超预期后回调至20日均线，机构增持明显。",
+  },
+  {
+    id: "d3",
+    ticker: "NVDA",
+    direction: "Neutral",
+    action: "HOLD",
+    confidence: 0.55,
+    target_position_pct: 10,
+    winning_belief: null,
+    timestamp: "2026-05-26T09:35:00Z",
+    report: "估值偏高但AI需求强劲，暂持观望。",
+  },
+];
+
+const MOCK_HOLDINGS = [
+  { ticker: "AAPL", quantity: 50, avg_entry_price: 185.20, current_price: 192.45, weight_pct: 28.3 },
+  { ticker: "MSFT", quantity: 20, avg_entry_price: 420.50, current_price: 445.30, weight_pct: 26.5 },
+  { ticker: "NVDA", quantity: 30, avg_entry_price: 880.00, current_price: 950.20, weight_pct: 18.2 },
+];
+
+const MOCK_EQUITY_CURVE = [
+  { date: "2026-04-01", equity: 100000, benchmark: 100000 },
+  { date: "2026-04-15", equity: 102500, benchmark: 101200 },
+  { date: "2026-05-01", equity: 104000, benchmark: 101800 },
+  { date: "2026-05-15", equity: 105800, benchmark: 102500 },
+  { date: "2026-05-28", equity: 105230, benchmark: 102150 },
+];
+
 export default function StrategyDetailPage() {
   const { id } = useParams<{ id: string }>();
-
-  const { data: strategy, isLoading: strategyLoading } = useQuery({
-    queryKey: ["strategy", id],
-    queryFn: () => strategiesApi.get(id),
-    enabled: !!id,
-  });
-
-  const { data: performance } = useQuery({
-    queryKey: ["performance", id],
-    queryFn: () => strategiesApi.getPerformance(id),
-    enabled: !!id,
-  });
-
-  const { data: decisionsData } = useQuery({
-    queryKey: ["decisions", id],
-    queryFn: () => strategiesApi.getDecisions(id),
-    enabled: !!id,
-  });
-
-  const { data: positionsData } = useQuery({
-    queryKey: ["positions", id],
-    queryFn: () => strategiesApi.getPositions(id),
-    enabled: !!id,
-  });
-
-  const decisions = (decisionsData as any)?.decisions || [];
-  const holdings: Position[] = positionsData?.positions || [];
-  const account = performance as PerformanceMetrics | undefined;
-
-  if (strategyLoading) {
-    return (
-      <Shell>
-        <div className="p-6 space-y-6">
-          <Skeleton className="h-8 w-64" />
-          <Skeleton className="h-64 w-full" />
-        </div>
-      </Shell>
-    );
-  }
-
-  const s = strategy || ({} as StrategyConfig);
+  const strategy = MOCK_STRATEGY;
+  const account = MOCK_ACCOUNT;
+  const decisions = MOCK_DECISIONS;
+  const holdings = MOCK_HOLDINGS;
+  const equityCurve = MOCK_EQUITY_CURVE;
 
   return (
     <Shell>
@@ -99,17 +141,21 @@ export default function StrategyDetailPage() {
           <div className="flex items-center gap-3">
             <div>
               <div className="flex items-center gap-2 mb-1">
-                <h1 className="text-xl font-bold">{s.name || "Loading..."}</h1>
-                {s.type && <Badge variant="outline" className="uppercase text-xs">{s.type}</Badge>}
-                {s.status && <StatusBadge status={s.status} />}
+                <h1 className="text-xl font-bold">{strategy.name}</h1>
+                <Badge variant="outline" className="uppercase text-xs">
+                  {strategy.type}
+                </Badge>
+                <StatusBadge status={strategy.status} />
               </div>
-              <p className="text-sm text-muted-foreground">{s.description || ""}</p>
+              <p className="text-sm text-muted-foreground">
+                {strategy.description}
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm">
               <Play className="mr-2 h-4 w-4" />
-              {((s.status as string) || "draft") === "active" ? "Restart" : "Start"}
+              {strategy.status === "active" ? "Restart" : "Start"}
             </Button>
             <Button variant="outline" size="sm">
               <Pause className="mr-2 h-4 w-4" />
@@ -171,7 +217,7 @@ export default function StrategyDetailPage() {
                 <CardHeader className="pb-2">
                   <CardDescription>Total Equity</CardDescription>
                   <CardTitle className="text-2xl font-mono">
-                    {formatCurrency((account || {} as any).equity)}
+                    {formatCurrency(account.equity)}
                   </CardTitle>
                 </CardHeader>
               </Card>
@@ -179,7 +225,7 @@ export default function StrategyDetailPage() {
                 <CardHeader className="pb-2">
                   <CardDescription>Total Return</CardDescription>
                   <CardTitle className="text-2xl font-mono text-green-500">
-                    {formatPercent((account || {} as any).total_pnl_pct)}
+                    {formatPercent(account.total_pnl_pct)}
                   </CardTitle>
                 </CardHeader>
               </Card>
@@ -187,7 +233,7 @@ export default function StrategyDetailPage() {
                 <CardHeader className="pb-2">
                   <CardDescription>vs Benchmark</CardDescription>
                   <CardTitle className="text-2xl font-mono text-green-500">
-                    {formatPercent((account || {} as any).excess_return_pct)}
+                    {formatPercent(account.excess_return_pct)}
                   </CardTitle>
                 </CardHeader>
               </Card>
@@ -195,7 +241,7 @@ export default function StrategyDetailPage() {
                 <CardHeader className="pb-2">
                   <CardDescription>Sharpe</CardDescription>
                   <CardTitle className="text-2xl font-mono">
-                    {(account || {} as any).sharpe_ratio?.toFixed(2) || "—"}
+                    {account.sharpe_ratio?.toFixed(2) || "—"}
                   </CardTitle>
                 </CardHeader>
               </Card>
@@ -203,7 +249,7 @@ export default function StrategyDetailPage() {
                 <CardHeader className="pb-2">
                   <CardDescription>Max Drawdown</CardDescription>
                   <CardTitle className="text-2xl font-mono text-red-500">
-                    {formatPercent((account || {} as any).max_drawdown_pct)}
+                    {formatPercent(account.max_drawdown_pct)}
                   </CardTitle>
                 </CardHeader>
               </Card>
@@ -211,7 +257,7 @@ export default function StrategyDetailPage() {
                 <CardHeader className="pb-2">
                   <CardDescription>Win Rate</CardDescription>
                   <CardTitle className="text-2xl font-mono">
-                    {(account || {} as any).win_rate_pct}%
+                    {account.win_rate_pct}%
                   </CardTitle>
                 </CardHeader>
               </Card>
@@ -219,7 +265,7 @@ export default function StrategyDetailPage() {
                 <CardHeader className="pb-2">
                   <CardDescription>Total Trades</CardDescription>
                   <CardTitle className="text-2xl font-mono">
-                    {(account || {} as any).total_trades}
+                    {account.total_trades}
                   </CardTitle>
                 </CardHeader>
               </Card>
@@ -254,7 +300,7 @@ export default function StrategyDetailPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {((account as any)?.equity_curve || []).map((p: Record<string, any>) => (
+                      {equityCurve.map((p) => (
                         <TableRow key={p.date}>
                           <TableCell className="text-sm">{p.date}</TableCell>
                           <TableCell className="text-right font-mono text-sm">
@@ -285,35 +331,35 @@ export default function StrategyDetailPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
                   <div>
                     <span className="text-muted-foreground">Type:</span>{" "}
-                    <Badge variant="outline" className="uppercase">{s.type}</Badge>
+                    <Badge variant="outline" className="uppercase">{strategy.type}</Badge>
                   </div>
                   <div>
                     <span className="text-muted-foreground">Frequency:</span>{" "}
-                    <span className="font-medium capitalize">{s.execution_frequency}</span>
+                    <span className="font-medium capitalize">{strategy.execution_frequency}</span>
                   </div>
                   <div>
                     <span className="text-muted-foreground">Execution Time:</span>{" "}
-                    <span className="font-medium">{s.execution_time}</span>
+                    <span className="font-medium">{strategy.execution_time}</span>
                   </div>
                   <div>
                     <span className="text-muted-foreground">Active Agents:</span>{" "}
-                    <span className="font-medium">{(s.active_agents || []).length} agents</span>
+                    <span className="font-medium">{strategy.active_agents.length} agents</span>
                   </div>
                   <div>
                     <span className="text-muted-foreground">Debate Rounds:</span>{" "}
-                    <span className="font-medium">{s.debate_rounds}</span>
+                    <span className="font-medium">{strategy.debate_rounds}</span>
                   </div>
                   <div>
                     <span className="text-muted-foreground">Initial Capital:</span>{" "}
-                    <span className="font-medium">{formatCurrency(s.initial_capital)}</span>
+                    <span className="font-medium">{formatCurrency(strategy.initial_capital)}</span>
                   </div>
                   <div>
                     <span className="text-muted-foreground">Tickers:</span>{" "}
-                    <span className="font-mono">{s.tickers.join(", ")}</span>
+                    <span className="font-mono">{strategy.tickers.join(", ")}</span>
                   </div>
                   <div>
                     <span className="text-muted-foreground">Beliefs:</span>{" "}
-                    <span className="font-medium">{s.beliefs.length} configured</span>
+                    <span className="font-medium">{strategy.beliefs.length} configured</span>
                   </div>
                 </div>
               </CardContent>
@@ -328,7 +374,7 @@ export default function StrategyDetailPage() {
                 description="Decisions will appear after the strategy executes its first analysis."
               />
             ) : (
-              decisions.map((d: Record<string, any>) => (
+              decisions.map((d) => (
                 <Card key={d.id}>
                   <CardHeader className="pb-2">
                     <div className="flex items-center justify-between">
@@ -368,7 +414,7 @@ export default function StrategyDetailPage() {
                 {holdings.length === 0 ? (
                   <EmptyState
                     title="No holdings"
-                    description="No current positions in this s."
+                    description="No current positions in this strategy."
                   />
                 ) : (
                   <Table>
@@ -482,26 +528,26 @@ export default function StrategyDetailPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <span className="text-muted-foreground">Name:</span>{" "}
-                    <span className="font-medium">{s.name}</span>
+                    <span className="font-medium">{strategy.name}</span>
                   </div>
                   <div>
                     <span className="text-muted-foreground">Type:</span>{" "}
-                    <span className="font-medium uppercase">{s.type}</span>
+                    <span className="font-medium uppercase">{strategy.type}</span>
                   </div>
                   <div>
                     <span className="text-muted-foreground">Execution:</span>{" "}
                     <span className="font-medium">
-                      {s.execution_frequency} @ {s.execution_time}
+                      {strategy.execution_frequency} @ {strategy.execution_time}
                     </span>
                   </div>
                   <div>
                     <span className="text-muted-foreground">Debate Rounds:</span>{" "}
-                    <span className="font-medium">{s.debate_rounds}</span>
+                    <span className="font-medium">{strategy.debate_rounds}</span>
                   </div>
                   <div>
                     <span className="text-muted-foreground">Beliefs:</span>
                     <ul className="list-disc list-inside mt-1">
-                      {s.beliefs.map((b, i) => (
+                      {strategy.beliefs.map((b, i) => (
                         <li key={i} className="text-xs text-muted-foreground">
                           {b}
                         </li>
@@ -511,7 +557,7 @@ export default function StrategyDetailPage() {
                   <div>
                     <span className="text-muted-foreground">Active Agents:</span>
                     <div className="flex flex-wrap gap-1 mt-1">
-                      {(s.active_agents || []).map((a) => (
+                      {strategy.active_agents.map((a) => (
                         <Badge key={a} variant="secondary" className="text-xs">
                           {a}
                         </Badge>
