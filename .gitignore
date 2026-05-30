@@ -236,3 +236,6 @@ skills/Vibe-Trading/
 .idea/
 *.swp
 *.swo
+
+# Draft
+userDraft.md
