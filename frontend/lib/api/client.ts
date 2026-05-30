@@ -124,3 +124,32 @@ export function createSSEStream(
 
   return controller;
 }
+
+// ── Standard JSON request helpers ──────────────────────────
+
+async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const url = apiUrl(path);
+  const res = await fetch(url, {
+    headers: { "Content-Type": "application/json", ...options.headers as Record<string, string> },
+    ...options,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`HTTP ${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
+export const api = {
+  get<T>(path: string): Promise<T> { return request<T>(path); },
+  post<T>(path: string, body?: unknown): Promise<T> {
+    return request<T>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined });
+  },
+  put<T>(path: string, body?: unknown): Promise<T> {
+    return request<T>(path, { method: "PUT", body: body ? JSON.stringify(body) : undefined });
+  },
+  delete<T>(path: string): Promise<T> {
+    return request<T>(path, { method: "DELETE" });
+  },
+  sse: createSSEStream,
+};
