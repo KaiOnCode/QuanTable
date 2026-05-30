@@ -1,46 +1,66 @@
 # dataflow/service.py
 import os
-from typing import Any, Dict, List, Optional
-
-from .portfolio_manager import PortfolioManager
-from .providers.fundamentals_akshare import df_get_fundamentals_pit
-from .providers.macro_calendar import df_get_macro_calendar
-from .providers.news_google import get_company_news  # 假设这个也按规范修改，或暂时保留
-from .providers.YFinance import (
-    df_get_fundamentals as df_get_fundamentals_live,
-)
+from typing import List, Dict, Any,Optional
+from datetime import datetime, timezone
 
 # 1. 导入新的 provider 函数
 from .providers.YFinance import (
-    df_get_indicators,
     df_get_prices,
-    df_get_sector_context,
+    df_get_indicators,
+    df_get_fundamentals as df_get_fundamentals_live,
+    df_get_sector_context
 )
 
+from .providers.news_google import get_company_news
+from .providers.news_akshare import get_company_news_akshare
+from .portfolio_manager import PortfolioManager
+from .providers.macro_calendar import df_get_macro_calendar
+from .providers.fundamentals_akshare import df_get_fundamentals_pit
+from .store import MarketDataStore
+
 ONLINE = os.getenv("ONLINE_DATA", "true").lower() == "true"
+STORE_ENABLED = os.getenv("MARKET_DATA_STORE", "true").lower() == "true"
+
+
+def _today_str() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
 class DataService:
     def __init__(self, fallback_local_root: str = "data"):
         self.local_root = fallback_local_root
         self.portfolio_manager = PortfolioManager()
+        self._store: MarketDataStore | None = None
+
+    @property
+    def store(self) -> MarketDataStore:
+        if self._store is None:
+            self._store = MarketDataStore()
+        return self._store
 
     # 2. 严格按照规范 v1.0 实现函数签名 [cite: 26-35]
 
     def df_get_prices(
-        self,
-        ticker: str,
-        lookback_days: int = 180,
-        # 更改：添加 end_date
-        end_date: Optional[str] = None,
+            self,
+            ticker: str,
+            lookback_days: int = 180,
+            # 更改：添加 end_date
+            end_date: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         获取价格
         """
         if ONLINE:
-            # 更改：传递 end_date
             data = df_get_prices(ticker, lookback_days, end_date=end_date)
             if data:
+                # Persist to MarketDataStore for accumulation
+                if STORE_ENABLED:
+                    try:
+                        rows = data.get("rows", [])
+                        if rows:
+                            self.store.upsert_ohlcv(ticker, rows)
+                    except Exception:
+                        pass
                 return data
         return {}
 
@@ -49,7 +69,7 @@ class DataService:
         ticker: str,
         lookback_days: int = 180,
         # 更改：添加 end_date
-        end_date: Optional[str] = None,
+        end_date: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         获取技术指标
@@ -63,7 +83,9 @@ class DataService:
 
     # 3. (修改) df_get_fundamentals 现在是路由器
     def df_get_fundamentals(
-        self, ticker: str, end_date: Optional[str] = None
+            self,
+            ticker: str,
+            end_date: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         获取基本面数据。
@@ -81,6 +103,13 @@ class DataService:
             data = df_get_fundamentals_pit(ticker, end_date)
 
         if data:
+            # Persist to MarketDataStore
+            if STORE_ENABLED:
+                try:
+                    as_of = end_date or _today_str()
+                    self.store.upsert_fundamentals(ticker, as_of, data)
+                except Exception:
+                    pass
             return data
         return {}
 
@@ -97,12 +126,12 @@ class DataService:
     # --- 以下是规范中其他需要您实现的数据源 ---
 
     def df_get_news(
-        self,
-        ticker: str,
-        window_days: int = 7,
-        max_items: int = 20,
-        # 更改：添加 end_date
-        end_date: Optional[str] = None,
+            self,
+            ticker: str,
+            window_days: int = 7,
+            max_items: int = 20,
+            # 更改：添加 end_date
+            end_date: Optional[str] = None
     ) -> List[Dict]:
         """
         获取新闻
@@ -110,11 +139,28 @@ class DataService:
         """
         lang = os.getenv("NEWS_LANG", "en")
         if ONLINE:
-            # 更改：传递 end_date
+            # Try Google News first
             items = get_company_news(
-                ticker, days=window_days, lang=lang, end_date=end_date
+                ticker,
+                days=window_days,
+                lang=lang,
+                end_date=end_date
             )
-            # TODO: 在这里将 items 转换为规范要求的格式
+
+            # Fallback to AkShare if Google News returns nothing
+            if not items:
+                items = get_company_news_akshare(
+                    ticker,
+                    days=window_days,
+                    max_items=max_items,
+                )
+
+            # Persist to MarketDataStore for accumulation
+            if STORE_ENABLED and items:
+                try:
+                    self.store.add_news_articles(ticker, items[:max_items])
+                except Exception:
+                    pass
             return items[:max_items]
         return []
 
@@ -130,10 +176,28 @@ class DataService:
 
         return []
 
+    def df_get_sentiment(
+        self,
+        ticker: str,
+        window_days: int = 7,
+        end_date: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        获取新闻情绪评分 [-1.0, 1.0]。
+        Uses cache (SHA256 integrity, 4h TTL) and keyword-based aggregation.
+        """
+        from .providers.sentiment import df_get_sentiment
+
+        return df_get_sentiment(
+            ticker,
+            window_days=window_days,
+            end_date=end_date,
+        )
+
     def df_get_policy_expectations(self) -> Dict[str, Any]:
         """
         获取利率预期
-        TODO: (这是您的下一个任务)
+        TODO: Integrate with CME FedWatch or similar source.
         """
         print("[DataService] df_get_policy_expectations not implemented.")
         return {}
