@@ -133,12 +133,30 @@ async def analyze(request: AnalyzeRequest):
             })
 
         except Exception as exc:
-            logger.exception("Analysis failed for %s", request.ticker)
-            yield _sse_event("error", {
-                "agent": "orchestrator",
-                "error": str(exc),
-                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            })
+            err_msg = str(exc)
+            # PM often returns valid text but JSON parsing fails.
+            # Extract the report from the error message.
+            if "Invalid json output:" in err_msg and "方向:" in err_msg:
+                report_text = err_msg.split("Invalid json output:", 1)[1].strip()
+                direction, confidence, timeframe = _parse_pm_report(report_text, "HOLD")
+                yield _sse_event("result", {
+                    "session_id": session_id,
+                    "action": "HOLD",
+                    "direction": direction,
+                    "confidence": confidence,
+                    "timeframe": timeframe,
+                    "report": report_text[:2000],
+                    "target_position_pct": 0,
+                    "debate_records": [],
+                    "elapsed_s": round(time.time() - started_at, 2),
+                })
+            else:
+                logger.exception("Analysis failed for %s", request.ticker)
+                yield _sse_event("error", {
+                    "agent": "orchestrator",
+                    "error": err_msg[:500],
+                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                })
 
     return StreamingResponse(
         event_stream(),
