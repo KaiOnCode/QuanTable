@@ -20,7 +20,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
-DEFAULT_DB_PATH = Path("data/market_data.db")
+DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "market_data.db"
 
 
 def _now() -> str:
@@ -39,7 +39,7 @@ class MarketDataStore:
     """
 
     def __init__(self, db_path: str | Path = DEFAULT_DB_PATH):
-        self.db_path = Path(db_path)
+        self.db_path = Path(db_path).resolve()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
@@ -114,6 +114,20 @@ class MarketDataStore:
                     error_count INTEGER DEFAULT 0,
                     last_error TEXT,
                     PRIMARY KEY (ticker, data_type)
+                );
+
+                -- Ticker metadata from YFinance info (one-time fetch, immutable)
+                CREATE TABLE IF NOT EXISTS ticker_meta (
+                    ticker TEXT PRIMARY KEY,
+                    name TEXT DEFAULT '',
+                    short_name TEXT DEFAULT '',
+                    sector TEXT DEFAULT '',
+                    industry TEXT DEFAULT '',
+                    market TEXT DEFAULT '',
+                    exchange TEXT DEFAULT '',
+                    currency TEXT DEFAULT '',
+                    country TEXT DEFAULT '',
+                    fetched_at TEXT NOT NULL
                 );
             """)
 
@@ -417,6 +431,42 @@ class MarketDataStore:
                 self.db_path.stat().st_size / (1024 * 1024), 2
             ) if self.db_path.exists() else 0,
         }
+
+    # ── Ticker Metadata ──────────────────────────────────────
+
+    def upsert_ticker_meta(self, ticker: str, **fields: str) -> None:
+        """Store metadata for a ticker. Accepts: name, short_name, sector,
+        industry, market, exchange, currency, country. One-time fetch."""
+        now = _now()
+        cols = ["ticker", "name", "short_name", "sector", "industry",
+                "market", "exchange", "currency", "country", "fetched_at"]
+        vals = [ticker.upper()] + [fields.get(c, "") for c in cols[1:-1]] + [now]
+        with self._conn() as db:
+            db.execute(
+                f"INSERT OR REPLACE INTO ticker_meta ({', '.join(cols)}) "
+                f"VALUES ({', '.join('?' for _ in cols)})",
+                vals,
+            )
+
+    def get_ticker_meta(self, ticker: str) -> dict | None:
+        """Get metadata for a ticker."""
+        with self._conn() as db:
+            row = db.execute(
+                "SELECT * FROM ticker_meta WHERE ticker = ?", (ticker.upper(),)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def get_ticker_meta_batch(self, tickers: list[str]) -> dict[str, dict]:
+        """Get metadata for multiple tickers at once."""
+        if not tickers:
+            return {}
+        placeholders = ",".join("?" for _ in tickers)
+        with self._conn() as db:
+            rows = db.execute(
+                f"SELECT * FROM ticker_meta WHERE ticker IN ({placeholders})",
+                [t.upper() for t in tickers],
+            ).fetchall()
+        return {r["ticker"]: dict(r) for r in rows}
 
     # ── Internal ────────────────────────────────────────────
 

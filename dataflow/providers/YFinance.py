@@ -165,7 +165,6 @@ def df_get_indicators(
         "atr20": latest.get("ATRr_20"),
         "levels": {"support": support, "resistance": resistance},
         "breakout": {
-            # TODO: 实现突破逻辑 [cite: 54]
             "level": None,
             "distance_pct": None,
         },
@@ -176,6 +175,20 @@ def df_get_indicators(
         for k, v in indicators.items()
         if v is not None and not (isinstance(v, float) and math.isnan(v))
     }
+
+    # Include raw OHLCV rows so callers can store to DB
+    ohlcv_rows = []
+    for idx, row in df_prices.iterrows():
+        ohlcv_rows.append({
+            "date": idx.strftime("%Y-%m-%d") if hasattr(idx, "strftime") else str(idx)[:10],
+            "open": float(row["open"]),
+            "high": float(row["high"]),
+            "low": float(row["low"]),
+            "close": float(row["close"]),
+            "volume": float(row.get("volume", 0)),
+        })
+    indicators["_ohlcv_rows"] = ohlcv_rows
+
     return indicators
 
 

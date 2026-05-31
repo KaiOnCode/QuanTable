@@ -116,6 +116,7 @@ async def delete_strategy(strategy_id: str, confirm: bool = Query(False)):
     # Also remove from system.db registry
     db = store._system_db()
     db.execute("DELETE FROM strategies WHERE id = ?", (strategy_id,))
+    db.commit()
 
     return {"deleted": strategy_id}
 

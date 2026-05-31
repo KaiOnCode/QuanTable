@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-DEFAULT_DATA_DIR = Path("data")
+DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 
 def _now() -> str:
@@ -34,7 +34,7 @@ class ContextStore:
     """
 
     def __init__(self, data_dir: str | Path = DEFAULT_DATA_DIR):
-        self.data_dir = Path(data_dir)
+        self.data_dir = Path(data_dir).resolve()
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self._conns: dict[str, sqlite3.Connection] = {}
 
@@ -70,6 +70,7 @@ class ContextStore:
                 _now(),
             ),
         )
+        db.commit()
 
     def get_strategy(self, strategy_id: str) -> dict | None:
         db = self._system_db()
@@ -129,6 +130,7 @@ class ContextStore:
                 strategy_id,
             ),
         )
+        db.commit()
         return merged
 
     # ── Strategy-level data ({strategy_id}.db) ──────────────
@@ -188,16 +190,20 @@ class ContextStore:
         self, strategy_id: str, session_id: str, ticker: str, status: str = "running"
     ) -> None:
         self._init_strategy_db(strategy_id)
-        self._strategy_db(strategy_id).execute(
+        db = self._strategy_db(strategy_id)
+        db.execute(
             "INSERT OR REPLACE INTO sessions (id, ticker, status, started_at) VALUES (?, ?, ?, ?)",
             (session_id, ticker, status, _now()),
         )
+        db.commit()
 
     def complete_session(self, strategy_id: str, session_id: str, status: str = "completed") -> None:
-        self._strategy_db(strategy_id).execute(
+        db = self._strategy_db(strategy_id)
+        db.execute(
             "UPDATE sessions SET status = ?, completed_at = ? WHERE id = ?",
             (status, _now(), session_id),
         )
+        db.commit()
 
     def record_report(
         self, strategy_id: str, session_id: str, agent_name: str,
@@ -206,19 +212,22 @@ class ContextStore:
         import uuid
         self._init_strategy_db(strategy_id)
         rid = str(uuid.uuid4())
-        self._strategy_db(strategy_id).execute(
+        db = self._strategy_db(strategy_id)
+        db.execute(
             """INSERT INTO agent_reports (id, session_id, agent_name, report_type, content, metadata_json, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (rid, session_id, agent_name, report_type, content,
              json.dumps(metadata or {}, ensure_ascii=False), _now()),
         )
+        db.commit()
         return rid
 
     def record_decision(self, strategy_id: str, decision: dict) -> str:
         import uuid
         self._init_strategy_db(strategy_id)
         did = decision.get("id") or str(uuid.uuid4())
-        self._strategy_db(strategy_id).execute(
+        db = self._strategy_db(strategy_id)
+        db.execute(
             """INSERT OR REPLACE INTO decisions
                (id, session_id, ticker, action, direction, confidence, target_position_pct, report, winning_belief, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -235,6 +244,7 @@ class ContextStore:
                 decision.get("created_at", _now()),
             ),
         )
+        db.commit()
         return did
 
     def record_event(
@@ -243,11 +253,13 @@ class ContextStore:
     ) -> None:
         import uuid
         self._init_strategy_db(strategy_id)
-        self._strategy_db(strategy_id).execute(
+        db = self._strategy_db(strategy_id)
+        db.execute(
             "INSERT INTO events (id, session_id, event_type, actor, payload_json, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
             (str(uuid.uuid4()), session_id, event_type, actor,
              json.dumps(payload or {}, ensure_ascii=False), _now()),
         )
+        db.commit()
 
     # ── Queries ─────────────────────────────────────────────
 
@@ -296,6 +308,8 @@ class ContextStore:
             path = self.data_dir / db_name
             conn = sqlite3.connect(str(path))
             conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
             self._conns[db_name] = conn
         return self._conns[db_name]
 
@@ -303,6 +317,9 @@ class ContextStore:
         for conn in self._conns.values():
             conn.close()
         self._conns.clear()
+        # Reset singleton so next get_store() creates a fresh instance
+        global _store
+        _store = None
 
     def delete_strategy_data(self, strategy_id: str) -> None:
         """Delete a strategy's database file."""

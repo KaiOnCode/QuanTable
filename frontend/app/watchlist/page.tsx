@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Shell } from "@/components/layout/shell";
 import {
@@ -24,38 +24,91 @@ import type { Watchlist } from "@/lib/types/models";
 
 function TickerRow({
   ticker,
+  meta,
+  isNew,
   onRemove,
 }: {
   ticker: string;
+  meta?: { name?: string; short_name?: string; currency?: string; country?: string; exchange?: string };
+  isNew?: boolean;
   onRemove: () => void;
 }) {
-  const { data: priceData } = useQuery({
+  const currency = meta?.currency || "USD";
+  const companyName = meta?.name || meta?.short_name || "";
+  const startDate = new Date(Date.now() - 7 * 86400000).toISOString().split("T")[0];
+  const { data: priceData, isLoading, isFetching } = useQuery({
     queryKey: ["market", "prices", ticker],
-    queryFn: () => api.get<{ bars: { close: number }[] }>(`/market/prices/${ticker}?start=${new Date(Date.now() - 7 * 86400000).toISOString().split("T")[0]}`),
+    queryFn: () => api.get<{ bars: { close: number; date: string }[] }>(`/market/prices/${ticker}?start=${startDate}`),
+    staleTime: 10_000,
+    refetchInterval: isNew ? 3_000 : 0,  // Fast poll for new tickers, no poll for existing
+  });
+
+  const { data: indData } = useQuery({
+    queryKey: ["market", "indicators", ticker],
+    queryFn: () => api.get<{ rsi14: number | null; macd_signal: string | null }>(`/market/indicators/${ticker}`),
     staleTime: 60_000,
+    enabled: !isLoading,  // Only fetch indicators when price data exists
   });
 
   const bars = priceData?.bars ?? [];
   const latest = bars[bars.length - 1];
   const prev = bars.length > 1 ? bars[bars.length - 2] : null;
   const changePct = prev && latest ? ((latest.close - prev.close) / prev.close) * 100 : 0;
+  const hasData = bars.length > 0;
+  // Show fetching for: new tickers awaiting data, or active queries
+  const showFetching = !hasData && (isNew || isLoading || isFetching);
+
+  // When price data first arrives, retry meta with delays (meta is written right after prices by the bg thread)
+  const queryClient = useQueryClient();
+  const hadData = useRef(false);
+  useEffect(() => {
+    if (hasData && !hadData.current) {
+      hadData.current = true;
+      // Immediate invalidation
+      queryClient.invalidateQueries({ queryKey: ["market", "meta"] });
+      // Retry after 2s in case bg thread hasn't written meta yet
+      setTimeout(() => queryClient.invalidateQueries({ queryKey: ["market", "meta"] }), 2000);
+      // Final retry after 5s
+      setTimeout(() => queryClient.invalidateQueries({ queryKey: ["market", "meta"] }), 5000);
+    }
+  }, [hasData, queryClient]);
+  const rsi = indData?.rsi14 ?? null;
+  const macd = indData?.macd_signal ?? null;
 
   return (
     <TableRow>
-      <TableCell className="font-mono font-bold">${ticker}</TableCell>
+      <TableCell>
+        <div className="font-mono font-bold">${ticker}</div>
+        {companyName && (
+          <div className="text-xs text-muted-foreground truncate max-w-[180px]">{companyName}</div>
+        )}
+        {meta?.country && (
+          <div className="text-xs text-muted-foreground/60">{meta.country}{meta.exchange ? ` · ${meta.exchange}` : ""}</div>
+        )}
+      </TableCell>
       <TableCell className="text-right font-mono">
-        {latest ? formatCurrency(latest.close) : <Loader2 className="h-3 w-3 animate-spin inline" />}
+        {showFetching ? (
+          <Loader2 className="h-3 w-3 animate-spin inline" />
+        ) : hasData ? (
+          formatCurrency(latest!.close, currency)
+        ) : (
+          <span className="text-xs text-muted-foreground">no data</span>
+        )}
       </TableCell>
       <TableCell className={`text-right font-mono ${changePct >= 0 ? "text-green-500" : "text-red-500"}`}>
-        {latest ? formatPercent(changePct) : "—"}
+        {hasData ? formatPercent(changePct) : "—"}
       </TableCell>
-      <TableCell className="text-right text-sm text-muted-foreground">—</TableCell>
+      <TableCell className="text-right text-xs font-mono">
+        {rsi != null ? rsi.toFixed(1) : "—"}
+      </TableCell>
       <TableCell className="text-right">
-        {latest ? (
-          changePct > 0 ? <Badge variant="outline" className="text-green-500 border-green-500/20">bullish</Badge> :
-          changePct < 0 ? <Badge variant="outline" className="text-red-500 border-red-500/20">bearish</Badge> :
-          <Badge variant="outline">neutral</Badge>
-        ) : null}
+        {macd === "bullish" ? (
+          <Badge variant="outline" className="text-green-500 border-green-500/20 text-xs">bullish</Badge>
+        ) : macd === "bearish" ? (
+          <Badge variant="outline" className="text-red-500 border-red-500/20 text-xs">bearish</Badge>
+        ) : (
+          <span className="text-xs text-muted-foreground">—</span>
+        )}
       </TableCell>
       <TableCell className="text-right">
         <DropdownMenu>
@@ -80,6 +133,8 @@ export default function WatchlistPage() {
   const [activeTab, setActiveTab] = useState<string>("");
   const [newTicker, setNewTicker] = useState("");
   const [newWatchlistName, setNewWatchlistName] = useState("");
+  // Track tickers added in last 30s that are still fetching data
+  const [pendingTickers, setPendingTickers] = useState<Record<string, number>>({});
 
   const { data, isLoading } = useQuery({
     queryKey: ["watchlists"],
@@ -93,6 +148,18 @@ export default function WatchlistPage() {
   }
 
   const active = watchlists.find((w) => w.id === activeTab);
+  const activeTickers = active?.tickers ?? [];
+
+  // Fetch company names for active watchlist tickers
+  const { data: metaData } = useQuery({
+    queryKey: ["market", "meta", activeTickers.join(",")],
+    queryFn: () => api.get<{ meta: Record<string, { name?: string; short_name?: string; currency?: string; country?: string; exchange?: string }> }>(
+      `/market/meta?tickers=${activeTickers.join(",")}`
+    ),
+    enabled: activeTickers.length > 0,
+    staleTime: 30_000,
+  });
+  const meta = metaData?.meta ?? {};
 
   const createMutation = useMutation({
     mutationFn: (name: string) => watchlistApi.create({ name, tickers: [] }),
@@ -106,8 +173,19 @@ export default function WatchlistPage() {
   const addTickerMutation = useMutation({
     mutationFn: ({ wid, ticker }: { wid: string; ticker: string }) =>
       watchlistApi.addTicker(wid, { ticker }),
-    onSuccess: () => {
+    onSuccess: (_, { ticker }) => {
       queryClient.invalidateQueries({ queryKey: ["watchlists"] });
+      queryClient.invalidateQueries({ queryKey: ["market", "meta"] });
+      // Mark as pending → shows "fetching..." until data arrives
+      setPendingTickers((prev) => ({ ...prev, [ticker.toUpperCase()]: Date.now() }));
+      // Auto-clear pending after 30s (if data never arrives)
+      setTimeout(() => {
+        setPendingTickers((prev) => {
+          const next = { ...prev };
+          delete next[ticker.toUpperCase()];
+          return next;
+        });
+      }, 30_000);
       setNewTicker("");
     },
   });
@@ -217,6 +295,8 @@ export default function WatchlistPage() {
                           <TickerRow
                             key={t}
                             ticker={t}
+                            meta={meta[t]}
+                            isNew={!!pendingTickers[t]}
                             onRemove={() => removeTickerMutation.mutate({ wid: active.id, ticker: t })}
                           />
                         ))}

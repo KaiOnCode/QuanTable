@@ -116,7 +116,7 @@ class DataCollector:
         self._running = True
         logger.info(
             "DataCollector started — %d tickers, price every %dm, news every %dm",
-            len(self.tickers),
+            len(self._get_active_tickers()),
             price_interval,
             news_interval,
         )
@@ -130,6 +130,26 @@ class DataCollector:
 
     # ── Refresh jobs ────────────────────────────────────────
 
+    def _get_active_tickers(self) -> list[str]:
+        """Return all tickers that should be refreshed: default + watchlist."""
+        tickers = set(self.tickers)
+        try:
+            import json
+            from storage import get_store
+            db = get_store()._system_db()
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS watchlists (id TEXT, tickers_json TEXT DEFAULT '[]')"
+            )
+            rows = db.execute("SELECT tickers_json FROM watchlists").fetchall()
+            for r in rows:
+                try:
+                    tickers.update(json.loads(r[0]))
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        return list(tickers)
+
     def _refresh_prices(self) -> None:
         """Fetch latest prices for stale tickers first, then all watched."""
         from dataflow.service import DataService
@@ -137,9 +157,10 @@ class DataCollector:
         svc = DataService()
         store = MarketDataStore()
 
+        active = self._get_active_tickers()
         # Prioritize stale tickers (no data in 24h)
         stale = set(store.get_stale_tickers("ohlcv", max_age_hours=24))
-        prioritized = list(stale) + [t for t in self.tickers if t not in stale]
+        prioritized = list(stale & set(active)) + [t for t in active if t not in stale]
 
         count = 0
         for ticker in prioritized:
@@ -156,28 +177,30 @@ class DataCollector:
         """Fetch and store news for watched tickers."""
         from dataflow.service import DataService
         svc = DataService()
+        active = self._get_active_tickers()
         count = 0
-        for ticker in self.tickers:
+        for ticker in active:
             try:
                 articles = svc.df_get_news(ticker, window_days=1, max_items=10)
                 if articles:
                     count += 1
             except Exception:
                 pass
-        logger.debug("news refresh: %d/%d tickers with new articles", count, len(self.tickers))
+        logger.debug("news refresh: %d/%d tickers with new articles", count, len(self._get_active_tickers()))
 
     def _refresh_sentiment(self) -> None:
         """Pre-compute sentiment for watched tickers."""
         from dataflow.providers.sentiment import df_get_sentiment
+        active = self._get_active_tickers()
         count = 0
-        for ticker in self.tickers:
+        for ticker in active:
             try:
                 result = df_get_sentiment(ticker, window_days=7, force_refresh=True)
                 if result.get("article_count", 0) > 0:
                     count += 1
             except Exception as exc:
                 logger.debug("sentiment refresh failed for %s: %s", ticker, exc)
-        logger.debug("sentiment refresh: %d/%d tickers", count, len(self.tickers))
+        logger.debug("sentiment refresh: %d/%d tickers", count, len(self._get_active_tickers()))
 
     def _refresh_macro(self) -> None:
         """Refresh macro calendar cache."""
@@ -283,7 +306,7 @@ class DataCollector:
         return {
             "running": self._running,
             "tickers": self.tickers,
-            "ticker_count": len(self.tickers),
+            "ticker_count": len(self._get_active_tickers()),
             "discovery_tickers": getattr(self, "_discovery_tickers", []),
             "discovery_count": len(getattr(self, "_discovery_tickers", [])),
             "schedules": self.schedules,

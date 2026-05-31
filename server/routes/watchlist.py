@@ -6,6 +6,7 @@ All data stored in system.db (watchlists table).
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 
 from fastapi import APIRouter, HTTPException, Query
@@ -13,6 +14,7 @@ from fastapi import APIRouter, HTTPException, Query
 from storage import get_store
 
 router = APIRouter(tags=["watchlists"])
+logger = logging.getLogger(__name__)
 
 
 def _now() -> str:
@@ -33,6 +35,54 @@ def _init_watchlists_table():
             updated_at TEXT NOT NULL
         )
     """)
+
+
+def _fetch_ticker_data(ticker: str):
+    """Fetch data for a newly added ticker in background thread.
+    API returns immediately; data appears when fetch completes.
+    Also fetches company name/metadata for display.
+    Supports US stocks, HK (.HK), and A-shares (.SS/.SZ).
+    """
+    import threading
+
+    def _fetch():
+        try:
+            from dataflow.service import DataService
+            from dataflow.store import MarketDataStore
+            svc = DataService()
+            svc.df_get_prices(ticker, lookback_days=90)
+            svc.df_get_fundamentals(ticker)
+            svc.df_get_news(ticker, window_days=7, max_items=10)
+
+            # Fetch company name & metadata from YFinance
+            try:
+                import yfinance as yf
+                info = yf.Ticker(ticker).info
+                store = MarketDataStore()
+                store.upsert_ticker_meta(
+                    ticker,
+                    name=info.get("longName") or "",
+                    short_name=info.get("shortName") or "",
+                    sector=info.get("sector") or "",
+                    industry=info.get("industry") or "",
+                    market=info.get("market") or "",
+                    exchange=info.get("exchange") or "",
+                    currency=info.get("currency") or "",
+                    country=info.get("country") or "",
+                )
+                logger.info("Meta: %s (%s %s)",
+                    info.get("longName") or info.get("shortName") or "",
+                    info.get("currency") or "",
+                    info.get("country") or "",
+                )
+            except Exception:
+                pass
+
+            logger.info("Background fetch complete for %s", ticker)
+        except Exception as exc:
+            logger.warning("Background fetch failed for %s: %s", ticker, exc)
+
+    threading.Thread(target=_fetch, daemon=True).start()
 
 
 # ── CRUD ────────────────────────────────────────────────────
@@ -70,6 +120,7 @@ async def create_watchlist(data: dict):
            VALUES (?, ?, ?, ?, ?, ?)""",
         (wid, name, json.dumps(tickers), json.dumps(data.get("notes", {})), now, now),
     )
+    db.commit()
     return {"id": wid, "name": name, "tickers": tickers, "notes": {}, "created_at": now, "updated_at": now}
 
 
@@ -105,6 +156,7 @@ async def update_watchlist(watchlist_id: str, data: dict):
         "UPDATE watchlists SET name = ?, tickers_json = ?, notes_json = ?, updated_at = ? WHERE id = ?",
         (name, json.dumps(tickers), json.dumps(notes), now, watchlist_id),
     )
+    db.commit()
     return {"id": watchlist_id, "name": name, "tickers": tickers, "notes": notes, "updated_at": now}
 
 
@@ -114,12 +166,13 @@ async def delete_watchlist(watchlist_id: str):
     _init_watchlists_table()
     db = get_store()._system_db()
     db.execute("DELETE FROM watchlists WHERE id = ?", (watchlist_id,))
+    db.commit()
     return {"deleted": watchlist_id}
 
 
 @router.post("/watchlists/{watchlist_id}/tickers")
 async def add_ticker(watchlist_id: str, data: dict):
-    """Add a ticker to a watchlist."""
+    """Add a ticker to a watchlist. Triggers on-demand data fetch for new tickers."""
     _init_watchlists_table()
     db = get_store()._system_db()
     row = db.execute("SELECT * FROM watchlists WHERE id = ?", (watchlist_id,)).fetchone()
@@ -131,11 +184,15 @@ async def add_ticker(watchlist_id: str, data: dict):
     if ticker and ticker not in tickers:
         tickers.append(ticker)
 
+        # Trigger on-demand data fetch for the new ticker
+        _fetch_ticker_data(ticker)
+
     now = _now()
     db.execute(
         "UPDATE watchlists SET tickers_json = ?, updated_at = ? WHERE id = ?",
         (json.dumps(tickers), now, watchlist_id),
     )
+    db.commit()
     return {"tickers": tickers}
 
 
@@ -158,4 +215,5 @@ async def remove_ticker(watchlist_id: str, ticker: str):
         "UPDATE watchlists SET tickers_json = ?, updated_at = ? WHERE id = ?",
         (json.dumps(tickers), now, watchlist_id),
     )
+    db.commit()
     return {"tickers": tickers}
