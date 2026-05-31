@@ -301,6 +301,168 @@ class ContextStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    # ── MonitorTasks ────────────────────────────────────────
+
+    def _init_monitor_db(self) -> None:
+        """Ensure monitor tables exist in system.db and insights.db."""
+        db = self._system_db()
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS monitor_tasks (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                mode TEXT NOT NULL DEFAULT 'keyword',
+                targets_json TEXT DEFAULT '{}',
+                sources_json TEXT DEFAULT '[]',
+                schedule_json TEXT DEFAULT '{}',
+                agent_json TEXT DEFAULT '{}',
+                output_json TEXT DEFAULT '{}',
+                status TEXT DEFAULT 'active',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                last_run_at TEXT
+            )
+        """)
+        db.commit()
+
+        # monitoring_reports go in insights.db
+        idb = self._get_conn("insights.db")
+        idb.execute("""
+            CREATE TABLE IF NOT EXISTS monitoring_reports (
+                id TEXT PRIMARY KEY,
+                monitor_id TEXT NOT NULL,
+                session_id TEXT DEFAULT '',
+                summary TEXT DEFAULT '',
+                key_findings_json TEXT DEFAULT '[]',
+                sentiment TEXT DEFAULT 'neutral',
+                related_tickers_json TEXT DEFAULT '[]',
+                alerts_json TEXT DEFAULT '[]',
+                raw_data_json TEXT DEFAULT '{}',
+                generated_at TEXT NOT NULL
+            )
+        """)
+        idb.execute("CREATE INDEX IF NOT EXISTS idx_reports_monitor ON monitoring_reports(monitor_id)")
+        idb.execute("CREATE INDEX IF NOT EXISTS idx_reports_generated ON monitoring_reports(generated_at)")
+        idb.commit()
+
+    def register_monitor(self, config: dict) -> str:
+        import uuid
+        self._init_monitor_db()
+        mid = config.get("id") or str(uuid.uuid4())
+        now = _now()
+        db = self._system_db()
+        db.execute(
+            """INSERT OR REPLACE INTO monitor_tasks
+               (id, name, description, mode, targets_json, sources_json,
+                schedule_json, agent_json, output_json, status, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (mid, config.get("name", ""), config.get("description", ""),
+             config.get("mode", "keyword"),
+             json.dumps(config.get("targets", {})),
+             json.dumps(config.get("sources", ["news", "prices"])),
+             json.dumps(config.get("schedule", {})),
+             json.dumps(config.get("agent", {})),
+             json.dumps(config.get("output", {})),
+             config.get("status", "active"),
+             config.get("created_at", now), now),
+        )
+        db.commit()
+        return mid
+
+    def list_monitors(self, status: str | None = None) -> list[dict]:
+        self._init_monitor_db()
+        db = self._system_db()
+        if status:
+            rows = db.execute(
+                "SELECT * FROM monitor_tasks WHERE status = ? ORDER BY updated_at DESC",
+                (status,)
+            ).fetchall()
+        else:
+            rows = db.execute(
+                "SELECT * FROM monitor_tasks ORDER BY updated_at DESC"
+            ).fetchall()
+        return [_monitor_row_to_dict(r) for r in rows]
+
+    def get_monitor(self, monitor_id: str) -> dict | None:
+        self._init_monitor_db()
+        db = self._system_db()
+        row = db.execute(
+            "SELECT * FROM monitor_tasks WHERE id = ?", (monitor_id,)
+        ).fetchone()
+        return _monitor_row_to_dict(row) if row else None
+
+    def update_monitor(self, monitor_id: str, updates: dict) -> dict | None:
+        existing = self.get_monitor(monitor_id)
+        if existing is None:
+            return None
+        merged = {**existing, **updates, "id": monitor_id, "updated_at": _now()}
+        db = self._system_db()
+        db.execute(
+            """UPDATE monitor_tasks SET name=?, description=?, mode=?,
+               targets_json=?, sources_json=?, schedule_json=?, agent_json=?,
+               output_json=?, status=?, updated_at=?, last_run_at=?
+               WHERE id=?""",
+            (merged["name"], merged.get("description", ""), merged["mode"],
+             json.dumps(merged.get("targets", {})),
+             json.dumps(merged.get("sources", [])),
+             json.dumps(merged.get("schedule", {})),
+             json.dumps(merged.get("agent", {})),
+             json.dumps(merged.get("output", {})),
+             merged.get("status", "active"), merged["updated_at"],
+             merged.get("last_run_at"), monitor_id),
+        )
+        db.commit()
+        return merged
+
+    def delete_monitor(self, monitor_id: str) -> bool:
+        self._init_monitor_db()
+        db = self._system_db()
+        db.execute("DELETE FROM monitor_tasks WHERE id = ?", (monitor_id,))
+        db.commit()
+        return True
+
+    def touch_monitor_run(self, monitor_id: str) -> None:
+        db = self._system_db()
+        db.execute(
+            "UPDATE monitor_tasks SET last_run_at = ? WHERE id = ?",
+            (_now(), monitor_id),
+        )
+        db.commit()
+
+    # ── Monitoring Reports ──────────────────────────────────
+
+    def save_monitoring_report(self, report: dict) -> str:
+        import uuid
+        self._init_monitor_db()
+        rid = report.get("id") or str(uuid.uuid4())
+        now = _now()
+        idb = self._get_conn("insights.db")
+        idb.execute(
+            """INSERT INTO monitoring_reports
+               (id, monitor_id, session_id, summary, key_findings_json,
+                sentiment, related_tickers_json, alerts_json, raw_data_json, generated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (rid, report.get("monitor_id", ""), report.get("session_id", ""),
+             report.get("summary", ""),
+             json.dumps(report.get("key_findings", [])),
+             report.get("sentiment", "neutral"),
+             json.dumps(report.get("related_tickers", [])),
+             json.dumps(report.get("alerts", [])),
+             json.dumps(report.get("raw_data", {})),
+             report.get("generated_at", now)),
+        )
+        idb.commit()
+        return rid
+
+    def list_monitoring_reports(self, monitor_id: str, limit: int = 20) -> list[dict]:
+        self._init_monitor_db()
+        idb = self._get_conn("insights.db")
+        rows = idb.execute(
+            "SELECT * FROM monitoring_reports WHERE monitor_id = ? ORDER BY generated_at DESC LIMIT ?",
+            (monitor_id, limit),
+        ).fetchall()
+        return [_report_row_to_dict(r) for r in rows]
+
     # ── Storage management ──────────────────────────────────
 
     def _get_conn(self, db_name: str) -> sqlite3.Connection:
@@ -328,6 +490,26 @@ class ContextStore:
             self._conns[strategy_id].close()
             del self._conns[strategy_id]
         path.unlink(missing_ok=True)
+
+
+def _monitor_row_to_dict(row) -> dict:
+    d = dict(row)
+    for k in ("targets_json", "sources_json", "schedule_json", "agent_json", "output_json"):
+        try:
+            d[k.replace("_json", "")] = json.loads(d.pop(k, "{}"))
+        except Exception:
+            d[k.replace("_json", "")] = {}
+    return d
+
+
+def _report_row_to_dict(row) -> dict:
+    d = dict(row)
+    for k in ("key_findings_json", "related_tickers_json", "alerts_json", "raw_data_json"):
+        try:
+            d[k.replace("_json", "")] = json.loads(d.pop(k, "[]"))
+        except Exception:
+            d[k.replace("_json", "")] = []
+    return d
 
 
 # Singleton

@@ -48,41 +48,21 @@ def _fetch_ticker_data(ticker: str):
     def _fetch():
         try:
             from dataflow.service import DataService
-            from dataflow.store import MarketDataStore
             svc = DataService()
-            svc.df_get_prices(ticker, lookback_days=90)
-            svc.df_get_fundamentals(ticker)
-            svc.df_get_news(ticker, window_days=7, max_items=10)
-
-            # Fetch company name & metadata from YFinance
-            try:
-                import yfinance as yf
-                info = yf.Ticker(ticker).info
-                store = MarketDataStore()
-                store.upsert_ticker_meta(
-                    ticker,
-                    name=info.get("longName") or "",
-                    short_name=info.get("shortName") or "",
-                    sector=info.get("sector") or "",
-                    industry=info.get("industry") or "",
-                    market=info.get("market") or "",
-                    exchange=info.get("exchange") or "",
-                    currency=info.get("currency") or "",
-                    country=info.get("country") or "",
-                )
-                logger.info("Meta: %s (%s %s)",
-                    info.get("longName") or info.get("shortName") or "",
-                    info.get("currency") or "",
-                    info.get("country") or "",
-                )
-            except Exception:
-                pass
-
+            svc.get_prices(ticker, _today_minus(90))
+            svc.get_fundamentals(ticker)
+            svc.get_news(ticker, window_days=7)
+            svc.get_meta(ticker)
             logger.info("Background fetch complete for %s", ticker)
         except Exception as exc:
             logger.warning("Background fetch failed for %s: %s", ticker, exc)
 
     threading.Thread(target=_fetch, daemon=True).start()
+
+
+def _today_minus(days: int) -> str:
+    from datetime import datetime, timedelta, timezone
+    return (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
 
 
 # ── CRUD ────────────────────────────────────────────────────

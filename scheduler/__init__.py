@@ -47,10 +47,12 @@ class DataCollector:
         self,
         tickers: list[str] | None = None,
         schedules: dict | None = None,
+        scheduler: BackgroundScheduler | None = None,
     ):
         self.tickers = tickers or DEFAULT_WATCH_TICKERS
         self.schedules = schedules or DEFAULT_SCHEDULES
-        self._scheduler: BackgroundScheduler | None = None
+        self._scheduler = scheduler
+        self._owns_scheduler = scheduler is None
         self._running = False
 
     def start(self) -> None:
@@ -58,10 +60,11 @@ class DataCollector:
         if self._running:
             return
 
-        self._scheduler = BackgroundScheduler(
-            timezone="UTC",
-            job_defaults={"misfire_grace_time": 300, "coalesce": True},
-        )
+        if self._scheduler is None:
+            self._scheduler = BackgroundScheduler(
+                timezone="UTC",
+                job_defaults={"misfire_grace_time": 300, "coalesce": True},
+            )
 
         # Price refresh
         price_interval = self.schedules["price_cache"]["interval_minutes"]
@@ -112,7 +115,8 @@ class DataCollector:
             replace_existing=True,
         )
 
-        self._scheduler.start()
+        if self._owns_scheduler:
+            self._scheduler.start()
         self._running = True
         logger.info(
             "DataCollector started — %d tickers, price every %dm, news every %dm",
@@ -122,8 +126,8 @@ class DataCollector:
         )
 
     def stop(self) -> None:
-        """Stop the background scheduler."""
-        if self._scheduler and self._running:
+        """Stop the background scheduler (if we own it)."""
+        if self._scheduler and self._running and self._owns_scheduler:
             self._scheduler.shutdown(wait=False)
             self._running = False
             logger.info("DataCollector stopped")
@@ -311,3 +315,107 @@ class DataCollector:
             "discovery_count": len(getattr(self, "_discovery_tickers", [])),
             "schedules": self.schedules,
         }
+
+
+class MonitorRunner:
+    """Scheduled execution of MonitorTasks.
+
+    Periodically reads active monitor tasks from system.db and executes them
+    according to their configured frequency. Uses the same APScheduler instance
+    as the DataCollector.
+    """
+
+    def __init__(self, scheduler: BackgroundScheduler):
+        self._scheduler = scheduler
+        self._job_ids: set[str] = set()
+
+    def start(self) -> None:
+        # Register a master refresh job that picks up new/changed tasks
+        self._scheduler.add_job(
+            self._refresh_and_run,
+            IntervalTrigger(minutes=5),
+            id="monitor_master",
+            name="MonitorTask master refresh",
+            replace_existing=True,
+        )
+        logger.info("MonitorRunner started (refresh every 5 min)")
+
+    def stop(self) -> None:
+        for jid in list(self._job_ids):
+            try:
+                self._scheduler.remove_job(jid)
+            except Exception:
+                pass
+        self._job_ids.clear()
+        logger.info("MonitorRunner stopped")
+
+    def _refresh_and_run(self) -> None:
+        """Read active tasks from DB and trigger those due to run."""
+        try:
+            from storage import get_store
+            store = get_store()
+            tasks = store.list_monitors(status="active")
+        except Exception as exc:
+            logger.warning("MonitorRunner: failed to read tasks: %s", exc)
+            return
+
+        now = datetime.now(timezone.utc)
+        for task in tasks:
+            if not self._should_run(task, now):
+                continue
+            self._execute(task)
+
+    def _should_run(self, task: dict, now) -> bool:
+        """Check if a task is due to run based on its schedule."""
+        schedule = task.get("schedule", {})
+        freq = schedule.get("frequency", "daily")
+        last_run = task.get("last_run_at")
+
+        if not last_run:
+            return True  # Never run before
+
+        try:
+            last_dt = datetime.fromisoformat(last_run.replace("Z", "+00:00"))
+        except Exception:
+            return True
+
+        since_minutes = (now - last_dt).total_seconds() / 60
+
+        if freq == "hourly":
+            return since_minutes >= 55
+        elif freq == "daily":
+            time_str = schedule.get("time", "09:00")
+            target_hour, target_min = map(int, time_str.split(":"))
+            return (
+                since_minutes >= 20 * 60  # At least 20h since last run
+                and now.hour >= target_hour
+                and now.minute >= target_min
+            )
+        elif freq == "weekly":
+            return since_minutes >= 6 * 24 * 60  # Roughly a week
+        return False
+
+    def _execute(self, task: dict) -> None:
+        """Execute one monitor task in a background thread."""
+        import threading
+
+        def _run():
+            try:
+                # Touch last_run first to avoid duplicate execution
+                store = get_store()
+                store.touch_monitor_run(task["id"])
+
+                # Import and execute
+                from server.routes.monitor import _execute_monitor_task
+                report = _execute_monitor_task(task)
+                report["monitor_id"] = task["id"]
+                rid = store.save_monitoring_report(report)
+                logger.info(
+                    "MonitorRunner: executed %s → report %s (%d findings)",
+                    task.get("name", ""), rid[:8], len(report.get("key_findings", [])),
+                )
+            except Exception as exc:
+                logger.warning("MonitorRunner: execution failed for %s: %s",
+                              task.get("name", ""), exc)
+
+        threading.Thread(target=_run, daemon=True).start()

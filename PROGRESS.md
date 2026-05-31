@@ -1,12 +1,12 @@
 # Progress & Roadmap
 
-Last updated: 2026-05-30 22:15 | Branch: `feat/frontend-backend`
+Last updated: 2026-05-31 22:45 | Branch: `feat/frontend-backend`
 
 ## Phase 1 Progress: Data Foundation ✅
 
 | # | Task | Status | Verified |
 |---|------|--------|----------|
-| 1.1 | Install APScheduler + activate DataCollector | Done | 9 tickers, 4 scheduled jobs, 114 OHLCV bars |
+| 1.1 | Install APScheduler + activate DataCollector | Done | 32 tickers (dynamic from watchlists), 5 jobs, 192 OHLCV bars |
 | 1.2 | MarketDataStore Python API | Done | JSON-safe, clean interface, no wrapper needed |
 | 1.3 | Market Data REST routes | Done | 5 endpoints: prices, fundamentals, news, search, stats |
 | 1.4 | Server integration | Done | collector starts with server, status in health endpoint |
@@ -54,6 +54,11 @@ Last updated: 2026-05-30 22:15 | Branch: `feat/frontend-backend`
 | C2 | Watchlist frontend | Done | Real CRUD + live price data from market API |
 | D1 | Memory Lab → real memory API | Done | Memories tab with OWM scores + ticker filter |
 | E1 | Agent-driven data discovery | Done | New scheduler job, LLM discovery agent, discovery pool |
+| F1 | MonitorTask CRUD + Runner | Done | 7 endpoints, keyword/ticker/domain modes, Agent summary |
+| F2 | MonitorTask frontend | Done | Task list, create form, Run Now, report view with search trace |
+| G1 | DataService unified layer | Done | Single entry point for all data access, 6 new methods, 17ms/700ms fast/slow |
+| G2 | Consumer migration | Done | market.py, monitor.py, watchlist.py all use DataService only |
+| H1 | Data layer fixes | Done | WAL mode, absolute paths, explicit commits, persistence verified |
 
 **Cleanup:**
 - `app.py` — marked as LEGACY/DEPRECATED. All analysis now via FastAPI `/api/analyze`.
@@ -79,15 +84,16 @@ Last updated: 2026-05-30 22:15 | Branch: `feat/frontend-backend`
 
 **Frontend pages now connected to real API:**
 - Quick Ask (SSE) — was working before
-- Strategy List + Strategy Detail — Phase 2
+- Strategy List + Strategy Detail + New Strategy — Phase 2
 - Dashboard + Settings — Block A
 - Watchlist — Block C
 - Memory Lab (Memories tab) — Block D
-- **Total: 7 of 15 pages connected** (was 1 at session start)
+- Monitor — Block F
+- **Total: 8 of 15 pages connected** (was 1 at session start)
 
 ## Current State: Backend Audit Summary
 
-**99 API endpoints in contract → 32 implemented (32%). Of those 32, 20 return real data (up from 5 at session start).**
+**99 API endpoints in contract → 38 implemented (38%). Of those 38, 25 return real data.**
 
 | Category | Endpoints in Contract | Implemented | Return Real Data |
 |----------|----------------------|-------------|------------------|
@@ -106,6 +112,7 @@ Last updated: 2026-05-30 22:15 | Branch: `feat/frontend-backend`
 | Approvals | 5 | 0 | — |
 | Scanner | 4 | 0 | — |
 | Watchlists | 8 | 8 | 8 (all real) |
+| Monitors | 7 | 7 | 7 (all real) |
 | Risk | 4 | 0 | — |
 | Reports | 4 | 0 | — |
 | Conversations | 4 | 0 | — |
@@ -137,15 +144,15 @@ Last updated: 2026-05-30 22:15 | Branch: `feat/frontend-backend`
 
 ## Data Layer Status
 
-| Module | Status | Gaps |
-|--------|--------|------|
-| **MarketDataStore** (`dataflow/store.py`) | Complete | Minor: no batch transactions |
-| **ContextStore** (`storage/store.py`) | Core CRUD works | Strategy stored as JSON blob; 7+ DB backends missing (insights, knowledge, accounts, orders, trades, approvals, watchlists) |
-| **MemoryStore** (`memory/store.py`) | Core CRUD + OWM works | Missing: Reflection store, PreTradeCheck store, `affective_state` field |
-| **DataService** (`dataflow/service.py`) | 9/10 methods work | `df_get_policy_expectations()` is stub |
-| **DataCollector** (`scheduler/__init__.py`) | Code complete | APScheduler not installed; not running |
-| **MarketData DB** (`data/market_data.db`) | Has real data | 82 OHLCV, 11 news, 10 fundamentals (manual runs only) |
-| **Pydantic Models** | 3 of ~20 exist | Missing: Account, Position, Order, Trade, KnowledgeEntry, Hypothesis, Approval, Watchlist, Alert, ScannerQuery, SystemConfig, etc. |
+| Module | Status | Notes |
+|--------|--------|-------|
+| **MarketDataStore** (`dataflow/store.py`) | Complete | OHLCV, fundamentals, news (FTS5), ticker_meta, freshness |
+| **ContextStore** (`storage/store.py`) | Stable | Strategies, watchlists, monitor_tasks, monitoring_reports. WAL mode, absolute paths, explicit commits. |
+| **MemoryStore** (`memory/store.py`) | Core + OWM | Missing: Reflection store |
+| **DataService** (`dataflow/service.py`) | Unified | Single entry point: get_prices, get_news, get_meta, get_indicators, get_fundamentals, search_news. All consumers go through it. |
+| **DataCollector** (`scheduler/__init__.py`) | Running | 5 jobs, 32 tickers (dynamic from watchlists). MonitorRunner integrated. |
+| **MonitorRunner** (`scheduler/__init__.py`) | Running | 5-min master refresh, per-task scheduling |
+| **MarketData DB** (`data/market_data.db`) | Live | 192 OHLCV, 12 fundamentals, 131 news, 10 tickers, ticker_meta populated |
 
 ## Verified Modules
 
@@ -180,30 +187,17 @@ See `docs/development-plan.md` for full data strategy design.
 
 ## Development Phases
 
-### Phase 1: Data Foundation (in progress)
-1.1 Install APScheduler, activate DataCollector
-1.2 MarketDataStore Python API (read existing market_data.db)
-1.3 Market Data REST routes (prices, news, fundamentals by ticker)
+### ✅ Phase 1: Data Foundation
+### ✅ Phase 2: Strategy Management
+### ✅ Phase 3: Frontend Integration (Dashboard, Settings, Watchlist, Memory Lab, Monitor)
+### ✅ Phase 4: Agent Integration (Memory recall/remember, Discovery)
+### ✅ Data Layer Unification (DataService single entry point)
 
-### Phase 2: Strategy Management
-2.1 Refactor strategy storage (JSON blob -> structured table)
-2.2 Strategies CRUD with real persistence
-2.3 Performance, decisions endpoints from real data
-
-### Phase 3: Frontend Integration
-3.1 Strategies List -> API
-3.2 Strategy Detail -> API
-3.3 Dashboard -> API
-3.4 Memory Lab -> API
-
-### Phase 4: Agent Integration
-4.1 Memory recall/remember in orchestrator
-4.2 Strategy execution (run agent on strategy tickers)
-
-### Phase 5+: Advanced Features
-Backtest, Scanner, Risk, HITL, Reports, Insights, Watchlist, Knowledge, Hypotheses, Skills, MCP, Conversations
-
-See `docs/development-plan.md` for detailed phase descriptions and verification criteria.
+### Next priority:
+1. **Strategy Execution** — strategies actually run on schedule, produce decisions
+2. **Deep Research** — multi-agent deep analysis pipeline
+3. **Backtest** — historical simulation
+4. **Settings persistence** — system.db instead of in-memory DEFAULT_CONFIG
 
 ## Branch Strategy
 

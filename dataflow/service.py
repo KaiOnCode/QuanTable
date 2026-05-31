@@ -215,3 +215,85 @@ class DataService:
         TODO: 这应该从配置或上层读取，暂时硬编码
         """
         return self.portfolio_manager.get_risk_limits()
+
+    # ── Unified API (single entry point) ─────────────────────
+
+    def get_prices(self, ticker: str, start_date: str, end_date: str | None = None) -> list[dict]:
+        """Get OHLCV bars for a date range. Fills gaps from YFinance automatically.
+
+        Fast path: DB has data → <10ms return
+        Slow path: missing data → fetch only what's needed → store → return
+        """
+        end = end_date or _today_str()
+        bars = self.store.get_ohlcv(ticker, start_date, end)
+        if bars:
+            return bars  # Fast: DB hit, no network call
+
+        # DB miss: fetch. Use minimal lookback if only recent data is needed.
+        latest_in_db = self.store.get_latest_date(ticker)
+        if latest_in_db and latest_in_db < end:
+            # Only fetch from latest known date forward
+            self.df_get_prices(ticker, lookback_days=7)
+        else:
+            # Full first-time fetch
+            self.df_get_prices(ticker, lookback_days=180)
+        return self.store.get_ohlcv(ticker, start_date, end)
+
+    def get_news(self, ticker: str, window_days: int = 7) -> list[dict]:
+        """Get recent news for a ticker. Fetches live if DB is empty.
+
+        Fast path: DB has articles → <10ms return
+        Slow path: empty DB → fetch from providers → store → return
+        """
+        articles = self.store.get_news(ticker, window_days=window_days)
+        if articles:
+            return articles  # Fast: DB hit
+        self.df_get_news(ticker, window_days=window_days, max_items=10)
+        return self.store.get_news(ticker, window_days=window_days)
+
+    def search_news(self, query: str, ticker: str | None = None, limit: int = 20) -> list[dict]:
+        """FTS5 full-text search across news. Never triggers live fetch."""
+        return self.store.search_news(query, ticker=ticker, limit=limit)
+
+    def get_fundamentals(self, ticker: str, as_of_date: str | None = None) -> dict | None:
+        """Get latest fundamentals. Fetches live if missing or stale (>30d)."""
+        data = self.store.get_fundamentals(ticker, as_of_date)
+        if data is None:
+            self.df_get_fundamentals(ticker)
+            data = self.store.get_fundamentals(ticker, as_of_date)
+        return data
+
+    def get_meta(self, ticker: str) -> dict | None:
+        """Get ticker metadata (name, currency, country, etc.). Fetches once, caches forever."""
+        meta = self.store.get_ticker_meta(ticker)
+        if meta is None:
+            try:
+                import yfinance as yf
+                info = yf.Ticker(ticker).info
+                self.store.upsert_ticker_meta(
+                    ticker,
+                    name=info.get("longName") or "",
+                    short_name=info.get("shortName") or "",
+                    sector=info.get("sector") or "",
+                    industry=info.get("industry") or "",
+                    market=info.get("market") or "",
+                    exchange=info.get("exchange") or "",
+                    currency=info.get("currency") or "",
+                    country=info.get("country") or "",
+                )
+                meta = self.store.get_ticker_meta(ticker)
+            except Exception:
+                pass
+        return meta
+
+    def get_indicators(self, ticker: str, lookback_days: int = 100) -> dict:
+        """Get technical indicators computed from OHLCV data."""
+        result = df_get_indicators(ticker, lookback_days)
+        # Store OHLCV rows from the indicator fetch for future cache hits
+        rows = result.get("_ohlcv_rows", []) if isinstance(result, dict) else []
+        if rows and STORE_ENABLED:
+            try:
+                self.store.upsert_ohlcv(ticker, rows)
+            except Exception:
+                pass
+        return result

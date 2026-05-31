@@ -35,24 +35,39 @@ async def lifespan(app: FastAPI):
     """Startup / shutdown lifecycle."""
     logger.info("Agentic-Quant server starting...")
 
-    # Start data collector if enabled
+    # Start data collector and monitor runner if enabled
     if os.getenv("START_COLLECTOR", "").lower() == "true":
         try:
-            from scheduler import DataCollector
-            app.state.collector = DataCollector()
+            from apscheduler.schedulers.background import BackgroundScheduler
+            from scheduler import DataCollector, MonitorRunner
+
+            # Shared scheduler for both collector and monitor runner
+            scheduler = BackgroundScheduler(
+                timezone="UTC",
+                job_defaults={"misfire_grace_time": 300, "coalesce": True},
+            )
+            scheduler.start()
+
+            app.state.collector = DataCollector(scheduler=scheduler)
             app.state.collector.start()
             logger.info("DataCollector started")
+
+            app.state.monitor_runner = MonitorRunner(scheduler)
+            app.state.monitor_runner.start()
+            logger.info("MonitorRunner started")
         except Exception as exc:
-            logger.warning("DataCollector failed to start: %s", exc)
+            logger.warning("Background services failed to start: %s", exc)
 
     yield
 
     # Shutdown
-    if hasattr(app.state, "collector"):
-        try:
-            app.state.collector.stop()
-        except Exception:
-            pass
+    for attr in ("monitor_runner", "collector"):
+        svc = getattr(app.state, attr, None)
+        if svc:
+            try:
+                svc.stop()
+            except Exception:
+                pass
     logger.info("Agentic-Quant server stopped")
 
 
@@ -78,7 +93,7 @@ app.add_middleware(
 
 # ── Register routes ────────────────────────────────────────
 
-from server.routes import analyze, strategies, memory, settings, health, market, watchlist
+from server.routes import analyze, strategies, memory, settings, health, market, watchlist, monitor
 
 app.include_router(analyze.router, prefix="/api")
 app.include_router(strategies.router, prefix="/api")
@@ -87,3 +102,4 @@ app.include_router(settings.router, prefix="/api")
 app.include_router(health.router, prefix="/api")
 app.include_router(market.router, prefix="/api")
 app.include_router(watchlist.router, prefix="/api")
+app.include_router(monitor.router, prefix="/api")

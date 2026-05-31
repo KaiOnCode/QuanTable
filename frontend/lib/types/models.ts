@@ -320,3 +320,27 @@ export interface HealthResponse { status: string; uptime_seconds: number; versio
 export type CreateStrategyRequest = Omit<StrategyConfig, "id" | "created_at" | "updated_at" | "status"> & { status?: StrategyStatus; };
 export type UpdateStrategyRequest = Partial<CreateStrategyRequest>;
 export interface Hypothesis { id: string; strategy_id: string; status: string; claim: string; acceptance_criteria: string; evidence: { session_id: string; result: string; note: string; timestamp: string }[]; open_items: string[]; budget_rounds: number; completed_rounds: number; created_at: string; resolved_at: string | null; }
+
+// ── MonitorTask types ─────────────────────────────────────
+export type MonitorMode = "keyword" | "ticker" | "domain";
+export interface MonitorTargets { keywords?: string[]; tickers?: string[]; domain_prompt?: string; }
+export interface MonitorSchedule { frequency: string; time?: string; days?: string[]; }
+export interface MonitorAgentConfig { enabled: boolean; auto_discover?: boolean; }
+export interface MonitorOutput { format?: string; language?: string; }
+
+export interface MonitorTask {
+  id: string; name: string; description: string; mode: MonitorMode;
+  targets: MonitorTargets; sources: string[]; schedule: MonitorSchedule;
+  agent: MonitorAgentConfig; output: MonitorOutput;
+  status: string; created_at: string; updated_at: string; last_run_at: string | null;
+}
+
+export interface MonitoringReport {
+  id: string; monitor_id: string; session_id: string;
+  summary: string; key_findings: string[]; sentiment: string;
+  related_tickers: string[]; alerts: { level: string; message: string }[];
+  raw_data: Record<string, unknown>; generated_at: string;
+}
+
+export type CreateMonitorRequest = Omit<MonitorTask, "id" | "created_at" | "updated_at" | "last_run_at"> & { status?: string; };
+export type UpdateMonitorRequest = Partial<CreateMonitorRequest>;
