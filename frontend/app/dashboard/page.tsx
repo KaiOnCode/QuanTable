@@ -1,5 +1,6 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import { Shell } from "@/components/layout/shell";
 import {
   Card,
@@ -11,6 +12,10 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
+import { StatusBadge } from "@/components/shared/badges";
+import { formatCurrency, formatPercent } from "@/lib/utils";
+import { strategiesApi } from "@/lib/api/strategies";
+import type { StrategyConfig, PerformanceMetrics } from "@/lib/types/models";
 import {
   TrendingUp,
   BarChart3,
@@ -18,10 +23,67 @@ import {
   LineChart,
   Plus,
   ArrowUpRight,
+  Loader2,
 } from "lucide-react";
 import Link from "next/link";
 
+function StrategyCard({ strategy }: { strategy: StrategyConfig }) {
+  const { data: perf } = useQuery<PerformanceMetrics>({
+    queryKey: ["strategy", strategy.id, "performance"],
+    queryFn: () => strategiesApi.getPerformance(strategy.id),
+    staleTime: 60_000,
+  });
+
+  const pct = perf?.total_return_pct ?? 0;
+  const isPositive = pct >= 0;
+
+  return (
+    <Link href={`/strategies/${strategy.id}`}>
+      <Card className="hover:border-primary/50 transition-colors cursor-pointer h-full">
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-sm font-medium truncate">
+              {strategy.name}
+            </CardTitle>
+            <StatusBadge status={strategy.status ?? "draft"} />
+          </div>
+          <CardDescription className="text-xs truncate">
+            {strategy.description || "No description"}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="uppercase text-xs">
+                {strategy.type}
+              </Badge>
+              <span className="text-xs text-muted-foreground">
+                {(strategy.tickers ?? []).length} tickers
+              </span>
+            </div>
+            <span
+              className={`font-mono text-lg font-bold ${
+                isPositive ? "text-green-500" : "text-red-500"
+              }`}
+            >
+              {formatPercent(pct)}
+            </span>
+          </div>
+        </CardContent>
+      </Card>
+    </Link>
+  );
+}
+
 export default function DashboardPage() {
+  const { data, isLoading } = useQuery({
+    queryKey: ["strategies", undefined, undefined],
+    queryFn: () => strategiesApi.list({ limit: 6 }),
+  });
+
+  const strategies = data?.items ?? [];
+  const hasStrategies = strategies.length > 0;
+
   return (
     <Shell>
       <div className="p-6 space-y-6">
@@ -57,48 +119,55 @@ export default function DashboardPage() {
             </Link>
           </div>
 
-          <Card>
-            <CardContent className="pt-8">
-              <EmptyState
-                title="No strategies yet"
-                description="Create your first trading strategy to see performance metrics and leaderboard rankings."
-                action={
-                  <Link
-                    href="/strategies/new"
-                    className={buttonVariants()}
-                  >
-                    <Plus className="mr-2 h-4 w-4" />
-                    Create Strategy
-                  </Link>
-                }
-              />
-            </CardContent>
-          </Card>
+          {isLoading ? (
+            <Card>
+              <CardContent className="pt-8 flex items-center justify-center">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </CardContent>
+            </Card>
+          ) : !hasStrategies ? (
+            <Card>
+              <CardContent className="pt-8">
+                <EmptyState
+                  title="No strategies yet"
+                  description="Create your first trading strategy to see performance metrics and leaderboard rankings."
+                  action={
+                    <Link href="/strategies/new" className={buttonVariants()}>
+                      <Plus className="mr-2 h-4 w-4" />
+                      Create Strategy
+                    </Link>
+                  }
+                />
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {strategies.map((s) => (
+                <StrategyCard key={s.id} strategy={s} />
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Equity Chart + Alerts */}
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
           <Card className="xl:col-span-2">
             <CardHeader>
-              <CardTitle className="text-base">
-                Portfolio Performance
-              </CardTitle>
-              <CardDescription>
-                Equity curve overlay vs benchmark
-              </CardDescription>
+              <CardTitle className="text-base">Portfolio Performance</CardTitle>
+              <CardDescription>Equity curve overlay vs benchmark</CardDescription>
             </CardHeader>
             <CardContent className="h-80 flex items-center justify-center">
               <EmptyState
                 icon={<TrendingUp className="h-12 w-12" />}
                 title="Performance chart"
-                description="Equity curves will appear here once strategies have trade data."
+                description="Equity curves will appear once strategies have trade data from the broker engine."
               />
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Alerts & Pending</CardTitle>
+              <CardTitle className="text-base">Alerts &amp; Pending</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
@@ -122,17 +191,15 @@ export default function DashboardPage() {
         {/* Market Brief */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">
-              Today&apos;s Market Brief
-            </CardTitle>
+            <CardTitle className="text-base">Today&apos;s Market Brief</CardTitle>
             <CardDescription>
               Morning insight summary — updated at market open
             </CardDescription>
           </CardHeader>
           <CardContent>
             <p className="text-sm text-muted-foreground">
-              Market brief not yet available. Start the backend server and
-              configure daily insights to see content here.
+              Market brief will appear once the Daily Insights service is active.
+              DataCollector is running — {strategies.length} strategies configured.
             </p>
           </CardContent>
         </Card>

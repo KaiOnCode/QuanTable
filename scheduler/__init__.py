@@ -102,6 +102,16 @@ class DataCollector:
             replace_existing=True,
         )
 
+        # Discovery job: LLM-driven related ticker discovery (every 4h)
+        self._discovery_tickers: list[str] = []
+        self._scheduler.add_job(
+            self._refresh_discovery,
+            IntervalTrigger(hours=4),
+            id="refresh_discovery",
+            name="Refresh discovery pool",
+            replace_existing=True,
+        )
+
         self._scheduler.start()
         self._running = True
         logger.info(
@@ -179,6 +189,94 @@ class DataCollector:
         except Exception as exc:
             logger.debug("macro refresh failed: %s", exc)
 
+    def _refresh_discovery(self) -> None:
+        """LLM-driven discovery: find related tickers based on user context.
+
+        Reads watchlist + recent decisions → LLM suggests new tickers.
+        New tickers are added to discovery pool for lazy data collection.
+        """
+        try:
+            from agentgraph.discovery import discover_related_tickers, gather_user_interests
+            from storage import get_store
+            from dataflow.store import MarketDataStore
+            import sqlite3, json, os
+
+            # Gather user interests from watchlists + decisions
+            watchlist_tickers: list[str] = []
+            decision_tickers: list[str] = []
+
+            # Read watchlists from system.db
+            try:
+                store = get_store()
+                db = store._system_db()
+                db.execute("CREATE TABLE IF NOT EXISTS watchlists (id TEXT, tickers_json TEXT DEFAULT '[]')")
+                rows = db.execute("SELECT tickers_json FROM watchlists").fetchall()
+                for r in rows:
+                    tickers = json.loads(r[0]) if r[0] else []
+                    watchlist_tickers.extend(tickers)
+            except Exception:
+                pass
+
+            # Read recent decision tickers
+            try:
+                decisions = store.get_decisions("default", limit=20)
+                decision_tickers = list({d.get("ticker", "") for d in decisions if d.get("ticker")})
+            except Exception:
+                pass
+
+            interests = gather_user_interests(
+                list(set(watchlist_tickers)),
+                decision_tickers,
+            )
+
+            # Get recent headlines
+            news_store = MarketDataStore()
+            headlines: list[str] = []
+            try:
+                news_articles = news_store.get_news(
+                    next(iter(set(watchlist_tickers + decision_tickers)), "AAPL"),
+                    window_days=3,
+                )
+                headlines = [a.get("title", "") for a in news_articles[:10]]
+            except Exception:
+                pass
+
+            if not interests and not headlines:
+                logger.debug("Discovery skipped: no interests or headlines")
+                return
+
+            # Call LLM
+            suggestions = discover_related_tickers(interests, headlines, max_suggestions=5)
+            if not suggestions:
+                return
+
+            # Add to discovery pool (avoid duplicates with active pool)
+            existing = set(self.tickers)
+            new_count = 0
+            for s in suggestions:
+                ticker = s["ticker"]
+                if ticker not in existing and ticker not in self._discovery_tickers:
+                    self._discovery_tickers.append(ticker)
+                    new_count += 1
+                    logger.info(
+                        "Discovery: +%s (reason: %s, priority: %d)",
+                        ticker, s.get("reason", ""), s.get("priority", 2),
+                    )
+
+            # Lazy-fetch light data for new discovery tickers
+            if new_count > 0:
+                from dataflow.service import DataService
+                svc = DataService()
+                for ticker in self._discovery_tickers[-new_count:]:
+                    try:
+                        svc.df_get_prices(ticker, lookback_days=5)
+                        logger.debug("Discovery: fetched prices for %s", ticker)
+                    except Exception:
+                        pass
+
+        except Exception as exc:
+            logger.warning("Discovery refresh failed: %s", exc)
+
     @property
     def status(self) -> dict:
         """Return collector status for API/UI."""
@@ -186,5 +284,7 @@ class DataCollector:
             "running": self._running,
             "tickers": self.tickers,
             "ticker_count": len(self.tickers),
+            "discovery_tickers": getattr(self, "_discovery_tickers", []),
+            "discovery_count": len(getattr(self, "_discovery_tickers", [])),
             "schedules": self.schedules,
         }

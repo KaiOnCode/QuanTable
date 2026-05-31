@@ -1,5 +1,7 @@
 "use client";
 
+import { useState, useEffect } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Shell } from "@/components/layout/shell";
 import {
   Card,
@@ -22,6 +24,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { settingsApi } from "@/lib/api/settings";
+import { api } from "@/lib/api/client";
+import type { SystemConfig, HealthResponse } from "@/lib/types/models";
 import {
   Settings,
   Brain,
@@ -32,9 +37,73 @@ import {
   Bot,
   Server,
   Cpu,
+  Loader2,
+  CheckCircle2,
 } from "lucide-react";
 
 export default function SettingsPage() {
+  const { data: config, isLoading } = useQuery<SystemConfig>({
+    queryKey: ["settings"],
+    queryFn: () => settingsApi.get(),
+  });
+
+  const { data: dsStatus } = useQuery({
+    queryKey: ["data-sources-status"],
+    queryFn: () => api.get<Record<string, unknown>>("/data-sources/status"),
+  });
+
+  const saveMutation = useMutation({
+    mutationFn: (data: Partial<SystemConfig>) => settingsApi.update(data),
+    onSuccess: () => alert("Settings saved"),
+    onError: (e: Error) => alert("Save failed: " + e.message),
+  });
+
+  const handleSave = () => {
+    if (!config) return;
+    saveMutation.mutate({});
+  };
+
+  if (isLoading) {
+    return (
+      <Shell>
+        <div className="p-6 flex items-center justify-center h-64">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      </Shell>
+    );
+  }
+
+  const dataSources = [
+    {
+      name: "Yahoo Finance",
+      status: dsStatus?.providers
+        ? (dsStatus.providers as Record<string, { status: string }>).yahoo_finance
+            ?.status ?? "unknown"
+        : "unknown",
+    },
+    {
+      name: "Google News",
+      status: dsStatus?.providers
+        ? (dsStatus.providers as Record<string, { status: string }>).google_news?.status ??
+          "unknown"
+        : "unknown",
+    },
+    {
+      name: "AkShare",
+      status: dsStatus?.providers
+        ? (dsStatus.providers as Record<string, { status: string }>).akshare?.status ??
+          "unknown"
+        : "unknown",
+    },
+    {
+      name: "Finnhub",
+      status: dsStatus?.providers
+        ? (dsStatus.providers as Record<string, { status: string }>).finnhub?.status ??
+          "unknown"
+        : "unknown",
+    },
+  ];
+
   return (
     <Shell>
       <div className="p-6 max-w-4xl mx-auto space-y-6">
@@ -44,7 +113,7 @@ export default function SettingsPage() {
             Settings
           </h2>
           <p className="text-sm text-muted-foreground">
-            Configure your Agentic-Quant system — LLM, agents, notifications, and more.
+            Configure your Agentic-Quant system — LLM, agents, data, notifications.
           </p>
         </div>
 
@@ -55,58 +124,45 @@ export default function SettingsPage() {
               <Cpu className="h-4 w-4" />
               LLM Configuration
             </CardTitle>
-            <CardDescription>
-              API keys and model settings for the AI backend.
-            </CardDescription>
+            <CardDescription>API keys and model settings.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="api-key">API Key</Label>
+                <Label>API Key</Label>
                 <Input
-                  id="api-key"
                   type="password"
-                  placeholder="sk-..."
-                  value="sk-****hidden****"
+                  value={config?.llm_api_key ?? "sk-****"}
                   readOnly
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="base-url">Base URL</Label>
-                <Input
-                  id="base-url"
-                  placeholder="https://api.openai.com/v1"
-                  defaultValue="https://api.deepseek.com/v1"
-                />
+                <Label>Base URL</Label>
+                <Input value={config?.llm_base_url ?? ""} readOnly />
               </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Quick-Think Model</Label>
-                <Select defaultValue="deepseek-chat">
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="deepseek-chat">deepseek-chat</SelectItem>
-                    <SelectItem value="gpt-4o-mini">gpt-4o-mini</SelectItem>
-                  </SelectContent>
-                </Select>
+                <Input value={config?.llm_model ?? ""} readOnly />
               </div>
               <div className="space-y-2">
                 <Label>Deep-Think Model</Label>
-                <Select defaultValue="deepseek-chat">
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="deepseek-chat">deepseek-chat</SelectItem>
-                    <SelectItem value="claude-sonnet-4-6">claude-sonnet-4-6</SelectItem>
-                  </SelectContent>
-                </Select>
+                <Input value={config?.deep_think_model ?? ""} readOnly />
               </div>
             </div>
-            <Button variant="outline" size="sm">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={async () => {
+                try {
+                  const h = await api.get<HealthResponse>("/health");
+                  alert(`Connected — server uptime: ${h.uptime_seconds}s, version: ${h.version}`);
+                } catch {
+                  alert("Connection failed");
+                }
+              }}
+            >
               Test Connection
             </Button>
           </CardContent>
@@ -119,36 +175,23 @@ export default function SettingsPage() {
               <Bot className="h-4 w-4" />
               Agent Defaults
             </CardTitle>
-            <CardDescription>
-              Default agent configuration for new strategies.
-            </CardDescription>
+            <CardDescription>Default agent configuration for new strategies.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               {[
-                { id: "market", label: "Market Analyst" },
-                { id: "news", label: "News Analyst" },
-                { id: "fundamentals", label: "Fundamentals" },
-                { id: "sentiment", label: "Sentiment" },
-                { id: "technical", label: "Technical" },
-                { id: "macro", label: "Macro" },
-                { id: "company_overview", label: "Company Overview" },
-                { id: "bull_researcher", label: "Bull Researcher" },
-                { id: "bear_researcher", label: "Bear Researcher" },
-                { id: "aggressive_risk", label: "Aggressive Risk" },
-                { id: "safe_risk", label: "Safe Risk" },
-                { id: "neutral_risk", label: "Neutral Risk" },
-                { id: "risk_manager", label: "Risk Manager" },
-                { id: "pm", label: "PM Decision" },
-              ].map((agent) => (
+                "Market Analyst", "News Analyst", "Fundamentals", "Sentiment",
+                "Technical", "Macro", "Company Overview",
+                "Bull Researcher", "Bear Researcher",
+                "Aggressive Risk", "Safe Risk", "Neutral Risk",
+                "Risk Manager", "PM Decision",
+              ].map((label) => (
                 <div
-                  key={agent.id}
+                  key={label}
                   className="flex items-center justify-between p-3 rounded-lg bg-muted/50"
                 >
-                  <Label htmlFor={`agent-${agent.id}`} className="text-sm cursor-pointer">
-                    {agent.label}
-                  </Label>
-                  <Switch id={`agent-${agent.id}`} defaultChecked />
+                  <Label className="text-sm cursor-pointer">{label}</Label>
+                  <Switch defaultChecked />
                 </div>
               ))}
             </div>
@@ -156,26 +199,20 @@ export default function SettingsPage() {
               <div className="space-y-2">
                 <Label>Default Debate Rounds</Label>
                 <Select defaultValue="2">
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="1">1 Round</SelectItem>
-                    <SelectItem value="2">2 Rounds</SelectItem>
-                    <SelectItem value="3">3 Rounds</SelectItem>
-                    <SelectItem value="4">4 Rounds</SelectItem>
-                    <SelectItem value="5">5 Rounds</SelectItem>
+                    {[1, 2, 3, 4, 5].map((n) => (
+                      <SelectItem key={n} value={String(n)}>{n} Round{n > 1 ? "s" : ""}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
                 <div>
                   <Label className="text-sm">Cross-Review (Dual-LLM)</Label>
-                  <p className="text-xs text-muted-foreground">
-                    Second LLM reviews high-risk decisions
-                  </p>
+                  <p className="text-xs text-muted-foreground">Second LLM reviews high-risk decisions</p>
                 </div>
-                <Switch id="cross-review" defaultChecked={false} />
+                <Switch defaultChecked={false} />
               </div>
             </div>
           </CardContent>
@@ -188,53 +225,31 @@ export default function SettingsPage() {
               <Database className="h-4 w-4" />
               Data Sources
             </CardTitle>
-            <CardDescription>
-              Status and configuration of external data providers.
-            </CardDescription>
+            <CardDescription>External data provider status.</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {[
-                { name: "Yahoo Finance", status: "connected", latency: "120ms" },
-                { name: "Google News", status: "connected", latency: "350ms" },
-                { name: "AkShare", status: "connected", latency: "890ms" },
-                { name: "Finnhub", status: "degraded", latency: "2.1s" },
-              ].map((ds) => (
-                <div
-                  key={ds.name}
-                  className="flex items-center justify-between p-3 rounded-lg bg-muted/50"
-                >
+              {dataSources.map((ds) => (
+                <div key={ds.name} className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
                   <div className="flex items-center gap-3">
                     <span
                       className={`h-2 w-2 rounded-full ${
-                        ds.status === "connected"
-                          ? "bg-green-500"
-                          : ds.status === "degraded"
-                          ? "bg-yellow-500"
-                          : "bg-red-500"
+                        ds.status === "connected" ? "bg-green-500" : ds.status === "disabled" ? "bg-red-500" : "bg-yellow-500"
                       }`}
                     />
                     <span className="text-sm font-medium">{ds.name}</span>
                   </div>
-                  <div className="flex items-center gap-3 text-sm text-muted-foreground">
-                    <Badge
-                      variant="outline"
-                      className={
-                        ds.status === "connected"
-                          ? "text-green-500 border-green-500/20"
-                          : "text-yellow-500 border-yellow-500/20"
-                      }
-                    >
-                      {ds.status}
-                    </Badge>
-                    <span>{ds.latency}</span>
-                  </div>
+                  <Badge variant="outline">{ds.status}</Badge>
                 </div>
               ))}
             </div>
             <div className="mt-4 space-y-2">
               <Label>Data Cache TTL (minutes)</Label>
-              <Input type="number" defaultValue={15} className="max-w-[200px]" />
+              <Input
+                type="number"
+                defaultValue={config?.data_cache_ttl_minutes ?? 15}
+                className="max-w-[200px]"
+              />
             </div>
           </CardContent>
         </Card>
@@ -246,79 +261,52 @@ export default function SettingsPage() {
               <Bell className="h-4 w-4" />
               Notifications
             </CardTitle>
-            <CardDescription>
-              Multi-channel notification configuration.
-            </CardDescription>
+            <CardDescription>Multi-channel notification configuration.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {/* Email */}
             <div className="space-y-3">
               <h4 className="text-sm font-medium flex items-center gap-2">
-                <Mail className="h-4 w-4" />
-                Email (SMTP)
+                <Mail className="h-4 w-4" /> Email (SMTP)
               </h4>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <Input placeholder="SMTP Host" defaultValue="smtp.gmail.com" />
-                <Input placeholder="Port" defaultValue="587" />
-                <Input placeholder="Recipients (comma-separated)" />
+                <Input placeholder="SMTP Host" defaultValue={config?.email_smtp_host ?? ""} />
+                <Input placeholder="Port" defaultValue={String(config?.email_smtp_port ?? 587)} />
+                <Input placeholder="Recipients" />
               </div>
-              <Button variant="outline" size="sm">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => settingsApi.testEmail().then(() => alert("Test email sent"))}
+              >
                 Test Email
               </Button>
             </div>
             <Separator />
-            {/* Telegram */}
             <div className="space-y-3">
               <h4 className="text-sm font-medium flex items-center gap-2">
-                <MessageCircle className="h-4 w-4" />
-                Telegram
+                <MessageCircle className="h-4 w-4" /> Telegram
               </h4>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <Input placeholder="Bot Token" />
-                <Input placeholder="Chat IDs (comma-separated)" />
+                <Input placeholder="Chat IDs" />
               </div>
-              <Button variant="outline" size="sm">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => settingsApi.testTelegram().then(() => alert("Test telegram sent"))}
+              >
                 Test Telegram
               </Button>
             </div>
             <Separator />
-            {/* WeChat */}
             <div className="space-y-3">
-              <h4 className="text-sm font-medium flex items-center gap-2">
-                <MessageCircle className="h-4 w-4" />
-                Enterprise WeChat
-              </h4>
+              <h4 className="text-sm font-medium">Enterprise WeChat</h4>
               <Input placeholder="Webhook URL" className="max-w-lg" />
             </div>
             <Separator />
-            {/* Feishu */}
             <div className="space-y-3">
-              <h4 className="text-sm font-medium flex items-center gap-2">
-                <MessageCircle className="h-4 w-4" />
-                Feishu (Lark)
-              </h4>
+              <h4 className="text-sm font-medium">Feishu (Lark)</h4>
               <Input placeholder="Webhook URL" className="max-w-lg" />
-            </div>
-            <Separator />
-            {/* Discord */}
-            <div className="space-y-3">
-              <h4 className="text-sm font-medium flex items-center gap-2">
-                <MessageCircle className="h-4 w-4" />
-                Discord
-              </h4>
-              <Input placeholder="Webhook URL" className="max-w-lg" />
-            </div>
-            <Separator />
-            {/* Slack */}
-            <div className="space-y-3">
-              <h4 className="text-sm font-medium flex items-center gap-2">
-                <MessageCircle className="h-4 w-4" />
-                Slack
-              </h4>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <Input placeholder="Bot Token" />
-                <Input placeholder="Channel ID" />
-              </div>
             </div>
           </CardContent>
         </Card>
@@ -328,86 +316,59 @@ export default function SettingsPage() {
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
               <Brain className="h-4 w-4" />
-              Memory & Learning
+              Memory &amp; Learning
             </CardTitle>
-            <CardDescription>
-              Configure the OWM memory system and learning behavior.
-            </CardDescription>
+            <CardDescription>OWM memory system configuration.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
               <div>
                 <Label className="text-sm">Memory Enabled</Label>
-                <p className="text-xs text-muted-foreground">
-                  Record and recall trading decisions
-                </p>
+                <p className="text-xs text-muted-foreground">Record and recall trading decisions</p>
               </div>
-              <Switch id="memory-enabled" defaultChecked />
+              <Switch defaultChecked={config?.memory_enabled ?? true} />
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="space-y-2">
-                <Label>Memory Retention (days)</Label>
-                <Input type="number" defaultValue={365} />
+                <Label>Retention (days)</Label>
+                <Input type="number" defaultValue={config?.memory_retention_days ?? 365} />
               </div>
               <div className="space-y-2">
-                <Label>Weekly Reflection Day</Label>
-                <Select defaultValue="sunday">
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
+                <Label>Reflection Day</Label>
+                <Select defaultValue={config?.weekly_reflection_day ?? "sunday"}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"].map(
-                      (d) => (
-                        <SelectItem key={d} value={d}>
-                          {d.charAt(0).toUpperCase() + d.slice(1)}
-                        </SelectItem>
-                      )
-                    )}
+                    {["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"].map((d) => (
+                      <SelectItem key={d} value={d}>{d.charAt(0).toUpperCase() + d.slice(1)}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
                 <Label>Reflection Time</Label>
-                <Input type="time" defaultValue="18:00" />
+                <Input type="time" defaultValue={config?.weekly_reflection_time ?? "18:00"} />
               </div>
             </div>
           </CardContent>
         </Card>
 
-        {/* MCP Integration */}
+        {/* MCP */}
         <Card>
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
               <Server className="h-4 w-4" />
               MCP Integration
             </CardTitle>
-            <CardDescription>
-              Model Context Protocol — expose tools and load external servers.
-            </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent>
             <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
               <div>
                 <Label className="text-sm">MCP Server</Label>
-                <p className="text-xs text-muted-foreground">
-                  Expose Agentic-Quant tools to external AI agents (stdio / SSE / HTTP)
-                </p>
+                <p className="text-xs text-muted-foreground">Expose tools to external AI agents</p>
               </div>
               <div className="flex items-center gap-2">
                 <Badge variant="outline">Stopped</Badge>
-                <Button variant="outline" size="sm">
-                  Start
-                </Button>
-              </div>
-            </div>
-            <Separator />
-            <div>
-              <h4 className="text-sm font-medium mb-3">External MCP Servers</h4>
-              <div className="p-8">
-                <EmptyState
-                  title="No external servers"
-                  description="Add external MCP servers to extend agent capabilities with third-party tools."
-                />
+                <Button variant="outline" size="sm">Start</Button>
               </div>
             </div>
           </CardContent>
@@ -415,7 +376,17 @@ export default function SettingsPage() {
 
         {/* Save */}
         <div className="flex justify-end">
-          <Button>Save Settings</Button>
+          <Button
+            onClick={handleSave}
+            disabled={saveMutation.isPending}
+          >
+            {saveMutation.isPending ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : saveMutation.isSuccess ? (
+              <CheckCircle2 className="mr-2 h-4 w-4" />
+            ) : null}
+            Save Settings
+          </Button>
         </div>
       </div>
     </Shell>

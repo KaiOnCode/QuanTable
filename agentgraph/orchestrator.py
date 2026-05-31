@@ -1,5 +1,8 @@
 import os
 import sys
+import time
+import uuid
+import logging
 from dotenv import load_dotenv
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 load_dotenv("properties.env")
@@ -17,6 +20,8 @@ from agents.fundamentals_analyst import fundamentals_analyst_agent
 from agents.risk_analyst import risk_analyst_agent
 from agents.PM import PM_agent
 from langgraph.checkpoint.memory import MemorySaver
+
+logger = logging.getLogger(__name__)
 
 def create_tool_node_wrapper(node_name: str, tools):
     """创建工具节点包装器，使用各自的 messages 列表"""
@@ -73,6 +78,49 @@ def should_continue(node_name: str):
 
     return should_tool_node
 
+
+def _remember_memory_node(state: AgentState):
+    """Graph node: persist PM decision to MemoryStore after analysis completes."""
+    try:
+        from memory.store import MemoryStore
+        from memory.models import MemoryRecord
+
+        ticker = state.get("ticker", "")
+        action = state.get("Action", "HOLD")
+        pm_report = state.get("PM_report", "")
+        confidence_raw = state.get("confidence", 0.5)
+        session_id = state.get("session_id", str(uuid.uuid4()))
+        strategy_id = state.get("strategy_id", "default")
+
+        # Build memory record
+        record = MemoryRecord(
+            id=str(uuid.uuid4()),
+            strategy_id=strategy_id,
+            session_id=session_id,
+            ticker=ticker,
+            outcome_quality=0.0,  # unknown until trade resolves
+            confidence=float(confidence_raw) if confidence_raw else 0.5,
+            episodic=f"Analysis: {action} {ticker}. {pm_report[:300]}",
+            semantic="",
+            procedural="",
+            trade_record={
+                "action": action,
+                "target_position_pct": state.get("Target_position_pct", 0),
+                "date": state.get("date", ""),
+            },
+            tags=[ticker, action.lower()],
+            created_at=time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        )
+
+        store = MemoryStore("data/memory.db")
+        store.remember(record)
+        logger.info("Memory recorded: %s %s (owm=%.2f)", ticker, action, record.owm_score)
+    except Exception as exc:
+        logger.warning("Memory remember failed: %s", exc)
+
+    return {}  # no state changes needed
+
+
 class IntelliFin_Assistant:
     def __init__(self):
         # self.llm = ChatOpenAI(
@@ -122,27 +170,53 @@ class IntelliFin_Assistant:
             }
         ) # risk_analyst 的条件边：直接到 PM_agent 或结束
 
-        wf.add_node("PM_agent", self.agent_nodes["PM_agent"]) # PM节点
+        # 添加 PM + Remember 节点
+        wf.add_node("PM_agent", self.agent_nodes["PM_agent"])
+        wf.add_node("remember_memory", _remember_memory_node)
+        wf.add_edge("PM_agent", "remember_memory")
+        wf.add_edge("remember_memory", END)
 
         wf.add_edge(START, "market_analyst")
         wf.add_edge(START, "news_analyst")
         wf.add_edge(START, "fundamentals_analyst")
-        wf.add_edge("PM_agent", END)
 
         # 初始化内存，在图运行时存储状态（状态持久化）
         checkpoint=MemorySaver() # 可拓展redis,mongoDB
         self.wf=wf.compile(checkpointer=checkpoint)
 
-    def run(self, ticker: str, date: str = None, current_position_pct: float = 0.0):
+    def run(
+        self, ticker: str, date: str = None, current_position_pct: float = 0.0,
+        strategy_id: str = "default", session_id: str | None = None,
+    ):
+        # Generate session ID
+        sid = session_id or str(uuid.uuid4())
+
+        # ── Memory recall: inject relevant past decisions before PM sees them ──
+        relevant_memories = []
+        try:
+            from memory.store import MemoryStore
+            mem_store = MemoryStore("data/memory.db")
+            relevant_memories = mem_store.recall_by_context(
+                current_context={"ticker": ticker},
+                strategy_id=strategy_id,
+                limit=5,
+            )
+            logger.info("Recalled %d memories for %s", len(relevant_memories), ticker)
+        except Exception as exc:
+            logger.debug("Memory recall skipped: %s", exc)
+
         # 初始化状态
         initial_state = {
             "ticker": ticker,
             "date": date,
             "current_position_pct": current_position_pct,
+            "relevant_memories": relevant_memories,
+            "session_id": sid,
+            "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
         return self.wf.invoke(
             initial_state,
-            config={"configurable": {"thread_id": "42"}}  # 相当于会话id
+            config={"configurable": {"thread_id": sid}}
         ) 
     def visualize(self):
         with open("graph.png", "wb") as f:

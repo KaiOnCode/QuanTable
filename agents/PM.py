@@ -6,6 +6,23 @@ from agents.utils.output_prase import TradingDecision
 output_parser = PydanticOutputParser(pydantic_object=TradingDecision)
 
 
+def _format_memories(memories: list, limit: int = 3) -> str:
+    """Format OWM-scored memories for injection into the PM prompt."""
+    if not memories:
+        return "（无相关历史记忆）"
+
+    lines = []
+    for i, m in enumerate(memories[:limit], 1):
+        owm = m.owm_score if hasattr(m, 'owm_score') else m.get("owm_score", 0)
+        episodic = m.episodic if hasattr(m, 'episodic') else m.get("episodic", "")
+        trade = m.trade_record if hasattr(m, 'trade_record') else m.get("trade_record", {})
+        action = trade.get("action", "HOLD") if isinstance(trade, dict) else getattr(trade, "action", "HOLD")
+        lines.append(
+            f"  {i}. [OWM={owm:.2f}] {action} — {str(episodic)[:200]}"
+        )
+    return "\n".join(lines)
+
+
 def PM_agent(llm):
     def run(state):
         # 使用 .get() 安全访问，避免 KeyError
@@ -29,6 +46,9 @@ def PM_agent(llm):
         ):
             return {}
 
+        # ── Memory recall ──
+        memory_context = _format_memories(state.get("relevant_memories", []) or [])
+
         prompt = ChatPromptTemplate.from_messages(
             [
                 (
@@ -48,6 +68,9 @@ def PM_agent(llm):
                     "- 给出简要的 IF–THEN 逻辑：在什么价格/事件/时间条件下，你会改变当前结论及对应动作。\n"
                     "提供“Reasoning Outline（高层）”：权重如何映射到最终动作、哪些触发会改变结论及优先级。\n"
                     "只使用输入事实；未知项以“Unknown: …”标注并说明影响；\n "
+                    "━━━━ 历史相关决策（OWM 加权记忆）━━━━\n"
+                    "{memory_context}\n"
+                    "━━━━ 当前分析报告 ━━━━\n"
                     "MARKET_REPORT 文本:\n"
                     "{market_report}\n"
                     "FUNDAMENTAL_REPORT 文本:\n"
@@ -65,6 +88,7 @@ def PM_agent(llm):
         prompt = prompt.partial(fundamental_report=fundamental_report)
         prompt = prompt.partial(news_report=news_report)
         prompt = prompt.partial(risk_report=risk_report)
+        prompt = prompt.partial(memory_context=memory_context)
 
         # 使用独立的 messages 列表
         messages = state.get("PM_agent_messages", [])
@@ -74,7 +98,7 @@ def PM_agent(llm):
 
             messages = [
                 HumanMessage(
-                    content=f"当前持仓百分比为 {current_position_pct}，负数代表做空持仓，请综合所有报告，用json格式输出股票 {ticker} 在当前分析日期 {date} 下的最终动作,目标仓位百分比，如果是做空输出负数百分比,以及人类可读的中文报告。json格式：{output_parser.get_format_instructions()}"
+                    content=f"当前持仓百分比为 {current_position_pct}，负数代表做空持仓，请综合所有报告和记忆，用json格式输出股票 {ticker} 在当前分析日期 {date} 下的最终动作,目标仓位百分比，如果是做空输出负数百分比,以及人类可读的中文报告。json格式：{output_parser.get_format_instructions()}"
                 )
             ]
 

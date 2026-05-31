@@ -8,7 +8,7 @@ import type {
 } from "@/lib/types/models";
 
 export const watchlistApi = {
-  list(): Promise<Watchlist[]> {
+  list(): Promise<{ watchlists: Watchlist[]; total: number }> {
     return api.get("/watchlists");
   },
 

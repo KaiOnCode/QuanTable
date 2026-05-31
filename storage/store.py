@@ -81,6 +81,56 @@ class ContextStore:
         ).fetchone()
         return json.loads(row[0]) if row else None
 
+    def list_strategies(
+        self,
+        type: str | None = None,
+        status: str | None = None,
+    ) -> list[dict]:
+        """List all strategies, optionally filtered by type and/or status."""
+        db = self._system_db()
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS strategies (id TEXT PRIMARY KEY, name TEXT, type TEXT, status TEXT, config_json TEXT, created_at TEXT, updated_at TEXT)"
+        )
+        query = "SELECT config_json FROM strategies WHERE 1=1"
+        params: list[str] = []
+        if type:
+            query += " AND type = ?"
+            params.append(type)
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+        query += " ORDER BY updated_at DESC"
+        rows = db.execute(query, params).fetchall()
+        return [json.loads(row[0]) for row in rows]
+
+    def update_strategy(self, strategy_id: str, updates: dict) -> dict | None:
+        """Merge updates into an existing strategy's config_json. Returns updated config."""
+        existing = self.get_strategy(strategy_id)
+        if existing is None:
+            return None
+
+        # Deep merge: updates override existing keys
+        merged = {**existing, **updates}
+        # Ensure id doesn't change
+        merged["id"] = strategy_id
+        merged["updated_at"] = _now()
+
+        db = self._system_db()
+        db.execute(
+            """UPDATE strategies
+               SET name = ?, type = ?, status = ?, config_json = ?, updated_at = ?
+               WHERE id = ?""",
+            (
+                merged.get("name", ""),
+                merged.get("type", "agent"),
+                merged.get("status", "draft"),
+                json.dumps(merged, ensure_ascii=False),
+                merged["updated_at"],
+                strategy_id,
+            ),
+        )
+        return merged
+
     # ── Strategy-level data ({strategy_id}.db) ──────────────
 
     def _strategy_db(self, strategy_id: str) -> sqlite3.Connection:

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useParams } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import { Shell } from "@/components/layout/shell";
 import {
   Card,
@@ -24,6 +25,8 @@ import {
 import { EmptyState } from "@/components/shared/empty-state";
 import { StatusBadge, DirectionBadge, ActionBadge } from "@/components/shared/badges";
 import { formatCurrency, formatPercent, formatDate, formatDateTime } from "@/lib/utils";
+import { strategiesApi } from "@/lib/api/strategies";
+import type { StrategyConfig, PerformanceMetrics } from "@/lib/types/models";
 import {
   TrendingUp,
   BarChart3,
@@ -33,8 +36,7 @@ import {
   CheckSquare,
   History,
   Settings,
-  ArrowUpRight,
-  Plus,
+  Loader2,
   Play,
   Pause,
   Edit,
@@ -42,96 +44,67 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 
-// Mock data
-const MOCK_STRATEGY = {
-  id: "1",
-  name: "Tech Momentum",
-  description: "Momentum-based strategy focused on tech stocks with RSI/MA cross signals",
-  type: "agent" as const,
-  status: "active" as const,
-  tickers: ["AAPL", "MSFT", "NVDA"],
-  beliefs: ["聚焦科技股动量：关注RSI超卖反弹和均线金叉信号"],
-  active_agents: ["market", "news", "fundamentals", "bull_researcher", "bear_researcher", "pm"],
-  debate_rounds: 2,
-  execution_frequency: "daily",
-  execution_time: "09:30",
-  initial_capital: 100000,
-  created_at: "2026-05-01T09:00:00Z",
-  updated_at: "2026-05-28T06:00:00Z",
-  tags: ["tech", "momentum"],
-  creator: "team",
-  parent_strategy_id: null,
-};
-
-const MOCK_ACCOUNT = {
-  equity: 105230.45,
-  cash: 32100.20,
-  total_pnl_pct: 5.23,
-  benchmark_return_pct: 2.15,
-  excess_return_pct: 3.08,
-  sharpe_ratio: 1.35,
-  max_drawdown_pct: -8.45,
-  win_rate_pct: 62.5,
-  total_trades: 24,
-};
-
-const MOCK_DECISIONS = [
-  {
-    id: "d1",
-    ticker: "AAPL",
-    direction: "Bullish",
-    action: "BUY",
-    confidence: 0.78,
-    target_position_pct: 15,
-    winning_belief: "科技股动量",
-    timestamp: "2026-05-28T09:35:00Z",
-    report: "RSI(14)=32 超卖区域，均线金叉信号确认，MACD底部背离。",
-  },
-  {
-    id: "d2",
-    ticker: "MSFT",
-    direction: "Bullish",
-    action: "BUY",
-    confidence: 0.65,
-    target_position_pct: 10,
-    winning_belief: "科技股动量",
-    timestamp: "2026-05-27T09:35:00Z",
-    report: "财报超预期后回调至20日均线，机构增持明显。",
-  },
-  {
-    id: "d3",
-    ticker: "NVDA",
-    direction: "Neutral",
-    action: "HOLD",
-    confidence: 0.55,
-    target_position_pct: 10,
-    winning_belief: null,
-    timestamp: "2026-05-26T09:35:00Z",
-    report: "估值偏高但AI需求强劲，暂持观望。",
-  },
-];
-
-const MOCK_HOLDINGS = [
-  { ticker: "AAPL", quantity: 50, avg_entry_price: 185.20, current_price: 192.45, weight_pct: 28.3 },
-  { ticker: "MSFT", quantity: 20, avg_entry_price: 420.50, current_price: 445.30, weight_pct: 26.5 },
-  { ticker: "NVDA", quantity: 30, avg_entry_price: 880.00, current_price: 950.20, weight_pct: 18.2 },
-];
-
-const MOCK_EQUITY_CURVE = [
-  { date: "2026-04-01", equity: 100000, benchmark: 100000 },
-  { date: "2026-04-15", equity: 102500, benchmark: 101200 },
-  { date: "2026-05-01", equity: 104000, benchmark: 101800 },
-  { date: "2026-05-15", equity: 105800, benchmark: 102500 },
-  { date: "2026-05-28", equity: 105230, benchmark: 102150 },
-];
-
 export default function StrategyDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const strategy = MOCK_STRATEGY;
-  const account = MOCK_ACCOUNT;
-  const decisions = MOCK_DECISIONS;
-  const holdings = MOCK_HOLDINGS;
-  const equityCurve = MOCK_EQUITY_CURVE;
+
+  const {
+    data: strategy,
+    isLoading: strategyLoading,
+    isError: strategyError,
+  } = useQuery<StrategyConfig>({
+    queryKey: ["strategy", id],
+    queryFn: () => strategiesApi.get(id),
+    enabled: !!id,
+  });
+
+  const { data: performance } = useQuery<PerformanceMetrics>({
+    queryKey: ["strategy", id, "performance"],
+    queryFn: () => strategiesApi.getPerformance(id),
+    enabled: !!id,
+  });
+
+  const { data: decisionsData } = useQuery({
+    queryKey: ["strategy", id, "decisions"],
+    queryFn: () => strategiesApi.getDecisions(id),
+    enabled: !!id,
+  });
+  const decisions: any[] = decisionsData?.decisions ?? [];
+
+  if (strategyLoading) {
+    return (
+      <Shell>
+        <div className="p-6 flex items-center justify-center h-64">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      </Shell>
+    );
+  }
+
+  if (strategyError || !strategy) {
+    return (
+      <Shell>
+        <div className="p-6">
+          <Card className="border-destructive">
+            <CardContent className="pt-8">
+              <EmptyState
+                title="Strategy not found"
+                description="The requested strategy could not be loaded. It may have been deleted."
+                action={
+                  <Link href="/strategies" className={buttonVariants()}>
+                    Back to Strategies
+                  </Link>
+                }
+              />
+            </CardContent>
+          </Card>
+        </div>
+      </Shell>
+    );
+  }
+
+  const tickers = strategy.tickers ?? [];
+  const beliefs = strategy.beliefs ?? [];
+  const agents = strategy.active_agents ?? [];
 
   return (
     <Shell>
@@ -145,7 +118,7 @@ export default function StrategyDetailPage() {
                 <Badge variant="outline" className="uppercase text-xs">
                   {strategy.type}
                 </Badge>
-                <StatusBadge status={strategy.status} />
+                <StatusBadge status={strategy.status ?? "draft"} />
               </div>
               <p className="text-sm text-muted-foreground">
                 {strategy.description}
@@ -211,45 +184,20 @@ export default function StrategyDetailPage() {
 
           {/* Overview Tab */}
           <TabsContent value="overview" className="space-y-4">
-            {/* Metrics */}
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardDescription>Total Equity</CardDescription>
-                  <CardTitle className="text-2xl font-mono">
-                    {formatCurrency(account.equity)}
-                  </CardTitle>
-                </CardHeader>
-              </Card>
               <Card>
                 <CardHeader className="pb-2">
                   <CardDescription>Total Return</CardDescription>
                   <CardTitle className="text-2xl font-mono text-green-500">
-                    {formatPercent(account.total_pnl_pct)}
+                    {formatPercent(performance?.total_return_pct ?? 0)}
                   </CardTitle>
                 </CardHeader>
               </Card>
               <Card>
                 <CardHeader className="pb-2">
                   <CardDescription>vs Benchmark</CardDescription>
-                  <CardTitle className="text-2xl font-mono text-green-500">
-                    {formatPercent(account.excess_return_pct)}
-                  </CardTitle>
-                </CardHeader>
-              </Card>
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardDescription>Sharpe</CardDescription>
                   <CardTitle className="text-2xl font-mono">
-                    {account.sharpe_ratio?.toFixed(2) || "—"}
-                  </CardTitle>
-                </CardHeader>
-              </Card>
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardDescription>Max Drawdown</CardDescription>
-                  <CardTitle className="text-2xl font-mono text-red-500">
-                    {formatPercent(account.max_drawdown_pct)}
+                    {formatPercent(performance?.excess_return_pct ?? 0)}
                   </CardTitle>
                 </CardHeader>
               </Card>
@@ -257,7 +205,15 @@ export default function StrategyDetailPage() {
                 <CardHeader className="pb-2">
                   <CardDescription>Win Rate</CardDescription>
                   <CardTitle className="text-2xl font-mono">
-                    {account.win_rate_pct}%
+                    {performance?.win_rate_pct ?? 0}%
+                  </CardTitle>
+                </CardHeader>
+              </Card>
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardDescription>Max Drawdown</CardDescription>
+                  <CardTitle className="text-2xl font-mono text-red-500">
+                    {formatPercent(performance?.max_drawdown_pct ?? 0)}
                   </CardTitle>
                 </CardHeader>
               </Card>
@@ -265,7 +221,7 @@ export default function StrategyDetailPage() {
                 <CardHeader className="pb-2">
                   <CardDescription>Total Trades</CardDescription>
                   <CardTitle className="text-2xl font-mono">
-                    {account.total_trades}
+                    {performance?.total_trades ?? 0}
                   </CardTitle>
                 </CardHeader>
               </Card>
@@ -275,9 +231,7 @@ export default function StrategyDetailPage() {
             <Card>
               <CardHeader>
                 <CardTitle className="text-base">Equity Curve</CardTitle>
-                <CardDescription>
-                  Strategy vs Benchmark (SPY)
-                </CardDescription>
+                <CardDescription>Strategy vs Benchmark (SPY)</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="h-64 flex items-center justify-center bg-muted/30 rounded-lg">
@@ -288,41 +242,10 @@ export default function StrategyDetailPage() {
                     </p>
                   </div>
                 </div>
-                {/* Mini table of equity data points */}
-                <div className="mt-4">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Date</TableHead>
-                        <TableHead className="text-right">Equity</TableHead>
-                        <TableHead className="text-right">Benchmark</TableHead>
-                        <TableHead className="text-right">Excess</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {equityCurve.map((p) => (
-                        <TableRow key={p.date}>
-                          <TableCell className="text-sm">{p.date}</TableCell>
-                          <TableCell className="text-right font-mono text-sm">
-                            {formatCurrency(p.equity)}
-                          </TableCell>
-                          <TableCell className="text-right font-mono text-sm text-muted-foreground">
-                            {formatCurrency(p.benchmark)}
-                          </TableCell>
-                          <TableCell className="text-right font-mono text-sm">
-                            <span className={p.equity >= p.benchmark ? "text-green-500" : "text-red-500"}>
-                              {formatPercent(((p.equity - p.benchmark) / p.benchmark) * 100)}
-                            </span>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
               </CardContent>
             </Card>
 
-            {/* Strategy Info Card */}
+            {/* Strategy Info */}
             <Card>
               <CardHeader>
                 <CardTitle className="text-base">Configuration</CardTitle>
@@ -335,31 +258,27 @@ export default function StrategyDetailPage() {
                   </div>
                   <div>
                     <span className="text-muted-foreground">Frequency:</span>{" "}
-                    <span className="font-medium capitalize">{strategy.execution_frequency}</span>
+                    <span className="font-medium capitalize">{strategy.execution_frequency ?? "daily"}</span>
                   </div>
                   <div>
                     <span className="text-muted-foreground">Execution Time:</span>{" "}
-                    <span className="font-medium">{strategy.execution_time}</span>
+                    <span className="font-medium">{strategy.execution_time ?? "09:30"}</span>
                   </div>
                   <div>
                     <span className="text-muted-foreground">Active Agents:</span>{" "}
-                    <span className="font-medium">{strategy.active_agents.length} agents</span>
+                    <span className="font-medium">{agents.length} agents</span>
                   </div>
                   <div>
                     <span className="text-muted-foreground">Debate Rounds:</span>{" "}
-                    <span className="font-medium">{strategy.debate_rounds}</span>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">Initial Capital:</span>{" "}
-                    <span className="font-medium">{formatCurrency(strategy.initial_capital)}</span>
+                    <span className="font-medium">{strategy.debate_rounds ?? 2}</span>
                   </div>
                   <div>
                     <span className="text-muted-foreground">Tickers:</span>{" "}
-                    <span className="font-mono">{strategy.tickers.join(", ")}</span>
+                    <span className="font-mono">{tickers.join(", ") || "None"}</span>
                   </div>
                   <div>
                     <span className="text-muted-foreground">Beliefs:</span>{" "}
-                    <span className="font-medium">{strategy.beliefs.length} configured</span>
+                    <span className="font-medium">{beliefs.length} configured</span>
                   </div>
                 </div>
               </CardContent>
@@ -374,20 +293,20 @@ export default function StrategyDetailPage() {
                 description="Decisions will appear after the strategy executes its first analysis."
               />
             ) : (
-              decisions.map((d) => (
+              decisions.map((d: any) => (
                 <Card key={d.id}>
                   <CardHeader className="pb-2">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <span className="font-mono font-bold text-lg">${d.ticker}</span>
-                        <DirectionBadge direction={d.direction} />
-                        <ActionBadge action={d.action} />
+                        <DirectionBadge direction={d.direction ?? "Neutral"} />
+                        <ActionBadge action={d.action ?? "HOLD"} />
                         <Badge variant="outline" className="text-xs">
-                          Confidence: {(d.confidence * 100).toFixed(0)}%
+                          Confidence: {((d.confidence ?? 0) * 100).toFixed(0)}%
                         </Badge>
                       </div>
                       <span className="text-xs text-muted-foreground">
-                        {formatDateTime(d.timestamp)}
+                        {formatDateTime(d.created_at ?? d.timestamp ?? "")}
                       </span>
                     </div>
                   </CardHeader>
@@ -407,69 +326,11 @@ export default function StrategyDetailPage() {
           {/* Holdings Tab */}
           <TabsContent value="holdings">
             <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Current Holdings</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {holdings.length === 0 ? (
-                  <EmptyState
-                    title="No holdings"
-                    description="No current positions in this strategy."
-                  />
-                ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Ticker</TableHead>
-                        <TableHead className="text-right">Quantity</TableHead>
-                        <TableHead className="text-right">Entry Price</TableHead>
-                        <TableHead className="text-right">Current Price</TableHead>
-                        <TableHead className="text-right">Market Value</TableHead>
-                        <TableHead className="text-right">PnL</TableHead>
-                        <TableHead className="text-right">Weight</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {holdings.map((h) => {
-                        const pnl =
-                          (h.current_price - h.avg_entry_price) * h.quantity;
-                        const pnlPct =
-                          ((h.current_price - h.avg_entry_price) /
-                            h.avg_entry_price) *
-                          100;
-                        return (
-                          <TableRow key={h.ticker}>
-                            <TableCell className="font-mono font-bold">
-                              ${h.ticker}
-                            </TableCell>
-                            <TableCell className="text-right">
-                              {h.quantity}
-                            </TableCell>
-                            <TableCell className="text-right font-mono">
-                              {formatCurrency(h.avg_entry_price)}
-                            </TableCell>
-                            <TableCell className="text-right font-mono">
-                              {formatCurrency(h.current_price)}
-                            </TableCell>
-                            <TableCell className="text-right font-mono">
-                              {formatCurrency(h.current_price * h.quantity)}
-                            </TableCell>
-                            <TableCell
-                              className={`text-right font-mono ${
-                                pnl >= 0 ? "text-green-500" : "text-red-500"
-                              }`}
-                            >
-                              {formatPercent(pnlPct)}
-                            </TableCell>
-                            <TableCell className="text-right">
-                              {h.weight_pct}%
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
-                )}
+              <CardContent className="pt-8">
+                <EmptyState
+                  title="No holdings"
+                  description="Broker integration not yet connected. Holdings will appear when the broker engine is online."
+                />
               </CardContent>
             </Card>
           </TabsContent>
@@ -514,7 +375,7 @@ export default function StrategyDetailPage() {
                 <EmptyState
                   icon={<History className="h-12 w-12" />}
                   title="Audit Trail"
-                  description="System event timeline with expandable nodes will appear here."
+                  description="System event timeline will appear here."
                 />
               </CardContent>
             </Card>
@@ -537,31 +398,35 @@ export default function StrategyDetailPage() {
                   <div>
                     <span className="text-muted-foreground">Execution:</span>{" "}
                     <span className="font-medium">
-                      {strategy.execution_frequency} @ {strategy.execution_time}
+                      {strategy.execution_frequency ?? "daily"} @ {strategy.execution_time ?? "09:30"}
                     </span>
                   </div>
                   <div>
                     <span className="text-muted-foreground">Debate Rounds:</span>{" "}
-                    <span className="font-medium">{strategy.debate_rounds}</span>
+                    <span className="font-medium">{strategy.debate_rounds ?? 2}</span>
                   </div>
                   <div>
                     <span className="text-muted-foreground">Beliefs:</span>
                     <ul className="list-disc list-inside mt-1">
-                      {strategy.beliefs.map((b, i) => (
-                        <li key={i} className="text-xs text-muted-foreground">
-                          {b}
-                        </li>
-                      ))}
+                      {beliefs.length > 0 ? (
+                        beliefs.map((b, i) => (
+                          <li key={i} className="text-xs text-muted-foreground">{b}</li>
+                        ))
+                      ) : (
+                        <li className="text-xs text-muted-foreground">None configured</li>
+                      )}
                     </ul>
                   </div>
                   <div>
                     <span className="text-muted-foreground">Active Agents:</span>
                     <div className="flex flex-wrap gap-1 mt-1">
-                      {strategy.active_agents.map((a) => (
-                        <Badge key={a} variant="secondary" className="text-xs">
-                          {a}
-                        </Badge>
-                      ))}
+                      {agents.length > 0 ? (
+                        agents.map((a) => (
+                          <Badge key={a} variant="secondary" className="text-xs">{a}</Badge>
+                        ))
+                      ) : (
+                        <span className="text-xs text-muted-foreground">None</span>
+                      )}
                     </div>
                   </div>
                 </div>
