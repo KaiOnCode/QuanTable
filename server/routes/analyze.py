@@ -79,6 +79,56 @@ async def analyze(request: AnalyzeRequest):
             action = result.get("Action", "HOLD")
             direction, confidence, timeframe = _parse_pm_report(pm_report, action)
 
+            # ── HITL check ──────────────────────────────────────
+            approval_status = "auto_passed"
+            approval_id = None
+            triggered_rules = []
+            try:
+                from hitl import HITLRuleEngine, HITLRuleConfig, PMDecision as HITLDecision
+                from storage.store import get_store as _get_store
+
+                # 使用默认 HITL 配置（后续可从策略配置读取）
+                hitl_config = HITLRuleConfig(
+                    position_change_threshold_pct=20.0,
+                    min_confidence_threshold=0.9,
+                    max_single_ticker_pct=30.0,
+                )
+                engine = HITLRuleEngine(hitl_config)
+                pm_decision = HITLDecision(
+                    action=action,
+                    target_position_pct=float(result.get("Target_position_pct", 0)),
+                    confidence=confidence,
+                    report=pm_report,
+                )
+                needs_approval, rules = engine.evaluate(
+                    pm_decision, current_position_pct=request.current_position_pct
+                )
+                if needs_approval:
+                    approval_status = "pending"
+                    triggered_rules = rules
+                    # 创建审批记录
+                    store = _get_store()
+                    approval_data = {
+                        "session_id": session_id,
+                        "ticker": request.ticker,
+                        "original_action": action,
+                        "original_target_position_pct": float(result.get("Target_position_pct", 0)),
+                        "original_confidence": confidence,
+                        "pm_report": pm_report[:2000],
+                        "triggered_rules": rules,
+                        "status": "pending",
+                        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        "timeout_at": None,
+                    }
+                    approval_id = store.create_approval("default", approval_data)
+                    logger.info(
+                        "HITL triggered for %s: %s (approval_id=%s)",
+                        request.ticker, rules, approval_id,
+                    )
+            except Exception as hitl_exc:
+                logger.warning("HITL check failed for %s: %s", request.ticker, hitl_exc)
+                # HITL 检查失败不阻塞主流程，继续执行
+
             # Emit per-agent progress (post-hoc: mark agents with reports as completed)
             agent_reports = {
                 "market_analyst": result.get("market_report", ""),
@@ -130,6 +180,9 @@ async def analyze(request: AnalyzeRequest):
                 "target_position_pct": float(result.get("Target_position_pct", 0)),
                 "debate_records": debate_history,
                 "elapsed_s": elapsed,
+                "approval_status": approval_status,
+                "approval_id": approval_id,
+                "triggered_rules": triggered_rules,
             })
 
         except Exception as exc:

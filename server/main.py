@@ -78,10 +78,11 @@ app.add_middleware(
 
 # ── Register routes ────────────────────────────────────────
 
-from server.routes import analyze, strategies, memory, settings, health
+from server.routes import analyze, strategies, memory, settings, health, approvals
 
 app.include_router(analyze.router, prefix="/api")
 app.include_router(strategies.router, prefix="/api")
 app.include_router(memory.router, prefix="/api")
 app.include_router(settings.router, prefix="/api")
 app.include_router(health.router, prefix="/api")
+app.include_router(approvals.router, prefix="/api")

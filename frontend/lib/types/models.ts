@@ -176,16 +176,34 @@ export interface DebateRecord {
   timestamp: string;
 }
 
-export type ApprovalStatus = "pending" | "approved" | "rejected" | "modified" | "timed_out";
+export type ApprovalStatus = "pending" | "approved" | "rejected" | "modified" | "timed_out" | "auto_passed";
 
 export interface Approval {
-  id: string; strategy_id: string; decision_id: string; status: ApprovalStatus;
-  triggered_rules: string[]; original_decision: Record<string, unknown>;
-  modified_params: Record<string, unknown> | null;
-  cross_review_model: string | null; cross_review_result: string | null;
-  cross_review_consensus: boolean; reviewer: string | null;
-  reviewer_notes: string; created_at: string; resolved_at: string | null;
-  timeout_at: string;
+  id: string;
+  strategy_id?: string;
+  session_id?: string;
+  decision_id?: string;
+  ticker?: string;
+  status: ApprovalStatus;
+  triggered_rules?: string[];
+  triggered_rules_json?: string;
+  original_action?: string;
+  original_target_position_pct?: number;
+  original_confidence?: number;
+  original_decision?: Record<string, unknown>;
+  modified_params?: Record<string, unknown> | null;
+  modified_action?: string;
+  modified_target_position_pct?: number | null;
+  cross_review_model?: string | null;
+  cross_review_result?: string | null;
+  cross_review_consensus?: boolean;
+  reviewer: string | null;
+  reviewer_notes: string;
+  pm_report?: string;
+  created_at: string;
+  resolved_at?: string | null;
+  decided_at?: string | null;
+  timeout_at?: string;
 }
 
 export interface Conversation {
@@ -302,7 +320,7 @@ export interface ApiError {
   error: { code: string; message: string; details: Record<string, unknown> };
 }
 
-export interface ApprovalActionRequest { reviewer: string; notes?: string; modified_params?: Record<string, unknown>; }
+export interface ApprovalActionRequest { reviewer: string; notes?: string; modified_action?: string; modified_target_position_pct?: number; }
 export interface WatchlistCreateRequest { name: string; tickers: string[]; }
 export interface AddTickerRequest { ticker: string; }
 export interface CreateAlertRequest { ticker: string; type: AlertType; threshold_value: number | string; }
