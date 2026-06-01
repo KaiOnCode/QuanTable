@@ -35,6 +35,7 @@ import {
 import { useState } from "react";
 
 import type { Approval } from "@/lib/types/models";
+import ReactMarkdown from "react-markdown";
 
 type ApprovalRow = Approval;
 
@@ -143,7 +144,9 @@ function ApprovalCard({
         {approval.pm_report && (
           <div className="p-3 rounded-lg bg-muted/50">
             <p className="text-xs text-muted-foreground mb-1">PM Reasoning:</p>
-            <p className="text-sm">{approval.pm_report}</p>
+            <div className="text-sm prose prose-sm dark:prose-invert max-w-none">
+              <ReactMarkdown>{approval.pm_report}</ReactMarkdown>
+            </div>
           </div>
         )}
 
