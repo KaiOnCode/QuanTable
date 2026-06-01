@@ -226,6 +226,7 @@ export type AlertType = "price_above" | "price_below" | "rsi_above" | "rsi_below
 export interface Alert {
   id: string; watchlist_id: string | null; ticker: string; type: AlertType;
   threshold_value: number | string | null; message: string;
+  notification_channels?: string[] | null;
   is_triggered: boolean; triggered_at: string | null; created_at: string;
 }
 
@@ -309,7 +310,7 @@ export interface ApiError {
 export interface ApprovalActionRequest { reviewer: string; notes?: string; modified_params?: Record<string, unknown>; }
 export interface WatchlistCreateRequest { name: string; tickers: string[]; }
 export interface AddTickerRequest { ticker: string; }
-export interface CreateAlertRequest { ticker: string; type: AlertType; threshold_value: number | string; }
+export interface CreateAlertRequest { ticker: string; type: AlertType; threshold_value: number | string; notification_channels?: string[] | null; }
 export interface ScannerRuleRequest { conditions: ScanCondition[]; universe?: string; }
 export interface ScannerAgentRequest { query: string; universe?: string; }
 export interface ScannerBeliefRequest { belief_id: string; universe?: string; }

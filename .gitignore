@@ -224,6 +224,7 @@ properties.env
 
 # Runtime data
 data/settings.json
+data/watchlists.json
 data/*.db
 data/*.db-journal
 data/*.db-shm

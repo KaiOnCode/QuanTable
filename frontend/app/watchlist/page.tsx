@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { toast } from "sonner";
 import { Shell } from "@/components/layout/shell";
 import {
   Card,
@@ -10,8 +11,16 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -27,6 +36,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { EmptyState } from "@/components/shared/empty-state";
+import { watchlistApi } from "@/lib/api/watchlist";
+import type { AlertType } from "@/lib/types/models";
 import { formatCurrency, formatPercent } from "@/lib/utils";
 import { Star, Plus, MoreHorizontal, Trash2, Bell, TrendingUp, TrendingDown } from "lucide-react";
 
@@ -69,8 +80,68 @@ const MOCK_WATCHLISTS: Record<string, {
 
 export default function WatchlistPage() {
   const [activeTab, setActiveTab] = useState("my-positions");
+  const [alertTicker, setAlertTicker] = useState("");
+  const [alertType, setAlertType] = useState<AlertType>("price_above");
+  const [alertThreshold, setAlertThreshold] = useState("");
+  const [alertChannels, setAlertChannels] = useState("whatsapp, telegram");
+  const [savingAlert, setSavingAlert] = useState(false);
+  const [checkingAlerts, setCheckingAlerts] = useState(false);
   const lists = MOCK_WATCHLISTS;
   const active = lists[activeTab];
+
+  const openAlertForm = (ticker: string, defaultPrice: number) => {
+    setAlertTicker(ticker);
+    setAlertType("price_above");
+    setAlertThreshold(defaultPrice.toFixed(2));
+  };
+
+  const createAlert = async () => {
+    if (!alertTicker || !alertThreshold) return;
+    setSavingAlert(true);
+    try {
+      await watchlistApi.createAlert(activeTab, {
+        ticker: alertTicker,
+        type: alertType,
+        threshold_value: Number(alertThreshold),
+        notification_channels: alertChannels
+          .split(",")
+          .map((channel) => channel.trim())
+          .filter(Boolean),
+      });
+      toast.success("Watchlist alert created", {
+        description: `${alertTicker} ${alertType.replace("_", " ")} ${alertThreshold}`,
+      });
+      setAlertTicker("");
+    } catch (error: unknown) {
+      toast.error("Failed to create alert", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setSavingAlert(false);
+    }
+  };
+
+  const checkAlerts = async () => {
+    setCheckingAlerts(true);
+    try {
+      const snapshots = Object.fromEntries(
+        active.tickers.map((ticker) => [
+          ticker.ticker,
+          { price: ticker.price, rsi14: ticker.rsi14 },
+        ])
+      );
+      const result = await watchlistApi.checkAlerts({ snapshots });
+      toast.success("Alert check completed", {
+        description: `${result.triggered_count} alert(s) triggered.`,
+      });
+    } catch (error: unknown) {
+      toast.error("Failed to check alerts", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setCheckingAlerts(false);
+    }
+  };
 
   return (
     <Shell>
@@ -110,6 +181,23 @@ export default function WatchlistPage() {
 
         {/* Table */}
         <Card>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <div>
+              <CardTitle className="text-base">{active.name}</CardTitle>
+              <CardDescription>
+                Triggered alerts automatically notify configured channels once.
+              </CardDescription>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={checkingAlerts}
+              onClick={checkAlerts}
+            >
+              <Bell className="mr-2 h-4 w-4" />
+              {checkingAlerts ? "Checking..." : "Check Alerts"}
+            </Button>
+          </CardHeader>
           {active.tickers.length === 0 ? (
             <CardContent className="pt-8">
               <EmptyState
@@ -206,7 +294,7 @@ export default function WatchlistPage() {
                           </div>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => openAlertForm(t.ticker, t.price)}>
                             <Bell className="mr-2 h-4 w-4" />
                             Set Alert
                           </DropdownMenuItem>
@@ -223,6 +311,62 @@ export default function WatchlistPage() {
             </Table>
           )}
         </Card>
+
+        {alertTicker ? (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Create Alert for ${alertTicker}</CardTitle>
+              <CardDescription>
+                When the condition is met, the backend sends a high-priority notification.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid grid-cols-1 md:grid-cols-4 gap-3">
+              <div className="space-y-2">
+                <Label>Condition</Label>
+                <Select
+                  value={alertType}
+                  onValueChange={(value) => {
+                    if (value) setAlertType(value as AlertType);
+                  }}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="price_above">Price above</SelectItem>
+                    <SelectItem value="price_below">Price below</SelectItem>
+                    <SelectItem value="rsi_above">RSI above</SelectItem>
+                    <SelectItem value="rsi_below">RSI below</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Threshold</Label>
+                <Input
+                  type="number"
+                  value={alertThreshold}
+                  onChange={(event) => setAlertThreshold(event.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Channels</Label>
+                <Input
+                  value={alertChannels}
+                  onChange={(event) => setAlertChannels(event.target.value)}
+                  placeholder="whatsapp, telegram"
+                />
+              </div>
+              <div className="flex items-end gap-2">
+                <Button disabled={savingAlert} onClick={createAlert}>
+                  {savingAlert ? "Saving..." : "Save Alert"}
+                </Button>
+                <Button variant="outline" onClick={() => setAlertTicker("")}>
+                  Cancel
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        ) : null}
 
         {/* Quick add */}
         <Card>
