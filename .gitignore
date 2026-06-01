@@ -223,6 +223,7 @@ frontend/.next/
 properties.env
 
 # Runtime data
+data/settings.json
 data/*.db
 data/*.db-journal
 data/*.db-shm

@@ -1,6 +1,12 @@
 import { api } from "./client";
 import type { SystemConfig } from "@/lib/types/models";
 
+export type NotificationTestResult = {
+  channel: string;
+  ok: boolean;
+  message: string;
+};
+
 export const settingsApi = {
   get(): Promise<SystemConfig> {
     return api.get("/settings");
@@ -10,19 +16,31 @@ export const settingsApi = {
     return api.put("/settings", data);
   },
 
-  testEmail(): Promise<void> {
+  testEmail(): Promise<NotificationTestResult> {
     return api.post("/settings/test-email");
   },
 
-  testTelegram(): Promise<void> {
+  testTelegram(): Promise<NotificationTestResult> {
     return api.post("/settings/test-telegram");
   },
 
-  testWechat(): Promise<void> {
+  testWechat(): Promise<NotificationTestResult> {
     return api.post("/settings/test-wechat");
   },
 
-  testFeishu(): Promise<void> {
+  testFeishu(): Promise<NotificationTestResult> {
     return api.post("/settings/test-feishu");
+  },
+
+  testDiscord(): Promise<NotificationTestResult> {
+    return api.post("/settings/test-discord");
+  },
+
+  testSlack(): Promise<NotificationTestResult> {
+    return api.post("/settings/test-slack");
+  },
+
+  testWhatsApp(): Promise<NotificationTestResult> {
+    return api.post("/settings/test-whatsapp");
   },
 };

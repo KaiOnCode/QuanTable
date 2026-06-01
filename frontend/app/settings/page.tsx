@@ -1,5 +1,8 @@
 "use client";
 
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
+
 import { Shell } from "@/components/layout/shell";
 import {
   Card,
@@ -22,6 +25,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { settingsApi, type NotificationTestResult } from "@/lib/api/settings";
+import type { SystemConfig } from "@/lib/types/models";
 import {
   Settings,
   Brain,
@@ -34,7 +39,108 @@ import {
   Cpu,
 } from "lucide-react";
 
+const DEFAULT_SETTINGS: SystemConfig = {
+  llm_api_key: "",
+  llm_base_url: "https://api.deepseek.com/v1",
+  llm_model: "deepseek-chat",
+  deep_think_model: "deepseek-chat",
+  email_smtp_host: "",
+  email_smtp_port: 587,
+  email_username: "",
+  email_password: "",
+  email_sender: "",
+  email_use_tls: true,
+  email_recipients: [],
+  telegram_bot_token: "",
+  telegram_chat_ids: [],
+  wechat_webhook_url: "",
+  feishu_webhook_url: "",
+  discord_webhook_url: "",
+  slack_bot_token: "",
+  slack_channel_id: "",
+  whatsapp_access_token: "",
+  whatsapp_phone_number_id: "",
+  whatsapp_recipients: [],
+  social_webhook_url: "",
+  data_cache_ttl_minutes: 15,
+  news_fetch_interval_minutes: 30,
+  max_concurrent_analyses: 3,
+  memory_enabled: true,
+  memory_retention_days: 365,
+  weekly_reflection_day: "sunday",
+  weekly_reflection_time: "18:00",
+  mcp_external_servers: {},
+};
+
+const toCsv = (items: string[]) => items.join(", ");
+const fromCsv = (value: string) =>
+  value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
 export default function SettingsPage() {
+  const [config, setConfig] = useState<SystemConfig>(DEFAULT_SETTINGS);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [testingChannel, setTestingChannel] = useState<string | null>(null);
+
+  useEffect(() => {
+    settingsApi
+      .get()
+      .then((data) => setConfig({ ...DEFAULT_SETTINGS, ...data }))
+      .catch((error: unknown) => {
+        toast.error("Failed to load settings", {
+          description: error instanceof Error ? error.message : String(error),
+        });
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  const updateField = <K extends keyof SystemConfig>(
+    key: K,
+    value: SystemConfig[K]
+  ) => {
+    setConfig((current) => ({ ...current, [key]: value }));
+  };
+
+  const saveSettings = async () => {
+    setSaving(true);
+    try {
+      const updated = await settingsApi.update(config);
+      setConfig({ ...DEFAULT_SETTINGS, ...updated });
+      toast.success("Settings saved");
+    } catch (error: unknown) {
+      toast.error("Failed to save settings", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleTest = async (
+    channel: string,
+    run: () => Promise<NotificationTestResult>
+  ) => {
+    setTestingChannel(channel);
+    try {
+      await settingsApi.update(config);
+      const result = await run();
+      if (result.ok) {
+        toast.success(`${channel} test sent`, { description: result.message });
+      } else {
+        toast.error(`${channel} test failed`, { description: result.message });
+      }
+    } catch (error: unknown) {
+      toast.error(`${channel} test failed`, {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setTestingChannel(null);
+    }
+  };
+
   return (
     <Shell>
       <div className="p-6 max-w-4xl mx-auto space-y-6">
@@ -48,7 +154,14 @@ export default function SettingsPage() {
           </p>
         </div>
 
-        {/* LLM Configuration */}
+        {loading ? (
+          <Card>
+            <CardContent className="p-8 text-sm text-muted-foreground">
+              Loading settings...
+            </CardContent>
+          </Card>
+        ) : null}
+
         <Card>
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
@@ -67,8 +180,8 @@ export default function SettingsPage() {
                   id="api-key"
                   type="password"
                   placeholder="sk-..."
-                  value="sk-****hidden****"
-                  readOnly
+                  value={config.llm_api_key}
+                  onChange={(event) => updateField("llm_api_key", event.target.value)}
                 />
               </div>
               <div className="space-y-2">
@@ -76,14 +189,20 @@ export default function SettingsPage() {
                 <Input
                   id="base-url"
                   placeholder="https://api.openai.com/v1"
-                  defaultValue="https://api.deepseek.com/v1"
+                  value={config.llm_base_url}
+                  onChange={(event) => updateField("llm_base_url", event.target.value)}
                 />
               </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Quick-Think Model</Label>
-                <Select defaultValue="deepseek-chat">
+                <Select
+                  value={config.llm_model}
+                  onValueChange={(value) => {
+                    if (value) updateField("llm_model", value);
+                  }}
+                >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
@@ -95,7 +214,12 @@ export default function SettingsPage() {
               </div>
               <div className="space-y-2">
                 <Label>Deep-Think Model</Label>
-                <Select defaultValue="deepseek-chat">
+                <Select
+                  value={config.deep_think_model}
+                  onValueChange={(value) => {
+                    if (value) updateField("deep_think_model", value);
+                  }}
+                >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
@@ -106,13 +230,9 @@ export default function SettingsPage() {
                 </Select>
               </div>
             </div>
-            <Button variant="outline" size="sm">
-              Test Connection
-            </Button>
           </CardContent>
         </Card>
 
-        {/* Agent Defaults */}
         <Card>
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
@@ -123,7 +243,7 @@ export default function SettingsPage() {
               Default agent configuration for new strategies.
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               {[
                 { id: "market", label: "Market Analyst" },
@@ -152,36 +272,9 @@ export default function SettingsPage() {
                 </div>
               ))}
             </div>
-            <div className="grid grid-cols-2 gap-4 pt-2">
-              <div className="space-y-2">
-                <Label>Default Debate Rounds</Label>
-                <Select defaultValue="2">
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="1">1 Round</SelectItem>
-                    <SelectItem value="2">2 Rounds</SelectItem>
-                    <SelectItem value="3">3 Rounds</SelectItem>
-                    <SelectItem value="4">4 Rounds</SelectItem>
-                    <SelectItem value="5">5 Rounds</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
-                <div>
-                  <Label className="text-sm">Cross-Review (Dual-LLM)</Label>
-                  <p className="text-xs text-muted-foreground">
-                    Second LLM reviews high-risk decisions
-                  </p>
-                </div>
-                <Switch id="cross-review" defaultChecked={false} />
-              </div>
-            </div>
           </CardContent>
         </Card>
 
-        {/* Data Sources */}
         <Card>
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
@@ -210,8 +303,8 @@ export default function SettingsPage() {
                         ds.status === "connected"
                           ? "bg-green-500"
                           : ds.status === "degraded"
-                          ? "bg-yellow-500"
-                          : "bg-red-500"
+                            ? "bg-yellow-500"
+                            : "bg-red-500"
                       }`}
                     />
                     <span className="text-sm font-medium">{ds.name}</span>
@@ -234,12 +327,18 @@ export default function SettingsPage() {
             </div>
             <div className="mt-4 space-y-2">
               <Label>Data Cache TTL (minutes)</Label>
-              <Input type="number" defaultValue={15} className="max-w-[200px]" />
+              <Input
+                type="number"
+                value={config.data_cache_ttl_minutes}
+                onChange={(event) =>
+                  updateField("data_cache_ttl_minutes", Number(event.target.value))
+                }
+                className="max-w-[200px]"
+              />
             </div>
           </CardContent>
         </Card>
 
-        {/* Notifications */}
         <Card>
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
@@ -247,83 +346,87 @@ export default function SettingsPage() {
               Notifications
             </CardTitle>
             <CardDescription>
-              Multi-channel notification configuration.
+              Configure social media and messaging reminders for trading alerts.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {/* Email */}
             <div className="space-y-3">
               <h4 className="text-sm font-medium flex items-center gap-2">
                 <Mail className="h-4 w-4" />
                 Email (SMTP)
               </h4>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <Input placeholder="SMTP Host" defaultValue="smtp.gmail.com" />
-                <Input placeholder="Port" defaultValue="587" />
-                <Input placeholder="Recipients (comma-separated)" />
+                <Input placeholder="SMTP Host" value={config.email_smtp_host} onChange={(event) => updateField("email_smtp_host", event.target.value)} />
+                <Input placeholder="Port" type="number" value={config.email_smtp_port} onChange={(event) => updateField("email_smtp_port", Number(event.target.value))} />
+                <Input placeholder="Sender" value={config.email_sender} onChange={(event) => updateField("email_sender", event.target.value)} />
+                <Input placeholder="Username" value={config.email_username} onChange={(event) => updateField("email_username", event.target.value)} />
+                <Input placeholder="Password" type="password" value={config.email_password} onChange={(event) => updateField("email_password", event.target.value)} />
+                <Input placeholder="Recipients (comma-separated)" value={toCsv(config.email_recipients)} onChange={(event) => updateField("email_recipients", fromCsv(event.target.value))} />
               </div>
-              <Button variant="outline" size="sm">
+              <div className="flex items-center gap-3">
+                <Switch checked={config.email_use_tls} onCheckedChange={(checked) => updateField("email_use_tls", Boolean(checked))} />
+                <Label className="text-sm">Use TLS</Label>
+              </div>
+              <Button variant="outline" size="sm" disabled={testingChannel === "Email"} onClick={() => handleTest("Email", settingsApi.testEmail)}>
                 Test Email
               </Button>
             </div>
             <Separator />
-            {/* Telegram */}
             <div className="space-y-3">
               <h4 className="text-sm font-medium flex items-center gap-2">
                 <MessageCircle className="h-4 w-4" />
                 Telegram
               </h4>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <Input placeholder="Bot Token" />
-                <Input placeholder="Chat IDs (comma-separated)" />
+                <Input placeholder="Bot Token" type="password" value={config.telegram_bot_token} onChange={(event) => updateField("telegram_bot_token", event.target.value)} />
+                <Input placeholder="Chat IDs (comma-separated)" value={toCsv(config.telegram_chat_ids)} onChange={(event) => updateField("telegram_chat_ids", fromCsv(event.target.value))} />
               </div>
-              <Button variant="outline" size="sm">
+              <Button variant="outline" size="sm" disabled={testingChannel === "Telegram"} onClick={() => handleTest("Telegram", settingsApi.testTelegram)}>
                 Test Telegram
               </Button>
             </div>
             <Separator />
-            {/* WeChat */}
             <div className="space-y-3">
               <h4 className="text-sm font-medium flex items-center gap-2">
                 <MessageCircle className="h-4 w-4" />
-                Enterprise WeChat
+                WhatsApp Cloud API
               </h4>
-              <Input placeholder="Webhook URL" className="max-w-lg" />
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <Input placeholder="Access Token" type="password" value={config.whatsapp_access_token} onChange={(event) => updateField("whatsapp_access_token", event.target.value)} />
+                <Input placeholder="Phone Number ID" value={config.whatsapp_phone_number_id} onChange={(event) => updateField("whatsapp_phone_number_id", event.target.value)} />
+                <Input placeholder="Recipients, e.g. 852..." value={toCsv(config.whatsapp_recipients)} onChange={(event) => updateField("whatsapp_recipients", fromCsv(event.target.value))} />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Uses Meta WhatsApp Cloud API text messages for social media reminders.
+              </p>
+              <Button variant="outline" size="sm" disabled={testingChannel === "WhatsApp"} onClick={() => handleTest("WhatsApp", settingsApi.testWhatsApp)}>
+                Test WhatsApp
+              </Button>
             </div>
             <Separator />
-            {/* Feishu */}
-            <div className="space-y-3">
-              <h4 className="text-sm font-medium flex items-center gap-2">
-                <MessageCircle className="h-4 w-4" />
-                Feishu (Lark)
-              </h4>
-              <Input placeholder="Webhook URL" className="max-w-lg" />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <WebhookInput label="Enterprise WeChat" value={config.wechat_webhook_url} onChange={(value) => updateField("wechat_webhook_url", value)} onTest={() => handleTest("WeChat", settingsApi.testWechat)} disabled={testingChannel === "WeChat"} />
+              <WebhookInput label="Feishu (Lark)" value={config.feishu_webhook_url} onChange={(value) => updateField("feishu_webhook_url", value)} onTest={() => handleTest("Feishu", settingsApi.testFeishu)} disabled={testingChannel === "Feishu"} />
+              <WebhookInput label="Discord" value={config.discord_webhook_url} onChange={(value) => updateField("discord_webhook_url", value)} onTest={() => handleTest("Discord", settingsApi.testDiscord)} disabled={testingChannel === "Discord"} />
+              <WebhookInput label="Generic Webhook" value={config.social_webhook_url} onChange={(value) => updateField("social_webhook_url", value)} />
             </div>
             <Separator />
-            {/* Discord */}
-            <div className="space-y-3">
-              <h4 className="text-sm font-medium flex items-center gap-2">
-                <MessageCircle className="h-4 w-4" />
-                Discord
-              </h4>
-              <Input placeholder="Webhook URL" className="max-w-lg" />
-            </div>
-            <Separator />
-            {/* Slack */}
             <div className="space-y-3">
               <h4 className="text-sm font-medium flex items-center gap-2">
                 <MessageCircle className="h-4 w-4" />
                 Slack
               </h4>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <Input placeholder="Bot Token" />
-                <Input placeholder="Channel ID" />
+                <Input placeholder="Bot Token" type="password" value={config.slack_bot_token} onChange={(event) => updateField("slack_bot_token", event.target.value)} />
+                <Input placeholder="Channel ID" value={config.slack_channel_id} onChange={(event) => updateField("slack_channel_id", event.target.value)} />
               </div>
+              <Button variant="outline" size="sm" disabled={testingChannel === "Slack"} onClick={() => handleTest("Slack", settingsApi.testSlack)}>
+                Test Slack
+              </Button>
             </div>
           </CardContent>
         </Card>
 
-        {/* Memory & Learning */}
         <Card>
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
@@ -342,39 +445,49 @@ export default function SettingsPage() {
                   Record and recall trading decisions
                 </p>
               </div>
-              <Switch id="memory-enabled" defaultChecked />
+              <Switch checked={config.memory_enabled} onCheckedChange={(checked) => updateField("memory_enabled", Boolean(checked))} />
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="space-y-2">
                 <Label>Memory Retention (days)</Label>
-                <Input type="number" defaultValue={365} />
+                <Input type="number" value={config.memory_retention_days} onChange={(event) => updateField("memory_retention_days", Number(event.target.value))} />
               </div>
               <div className="space-y-2">
                 <Label>Weekly Reflection Day</Label>
-                <Select defaultValue="sunday">
+                <Select
+                  value={config.weekly_reflection_day}
+                  onValueChange={(value) => {
+                    if (value) updateField("weekly_reflection_day", value);
+                  }}
+                >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"].map(
-                      (d) => (
-                        <SelectItem key={d} value={d}>
-                          {d.charAt(0).toUpperCase() + d.slice(1)}
-                        </SelectItem>
-                      )
-                    )}
+                    {[
+                      "monday",
+                      "tuesday",
+                      "wednesday",
+                      "thursday",
+                      "friday",
+                      "saturday",
+                      "sunday",
+                    ].map((day) => (
+                      <SelectItem key={day} value={day}>
+                        {day.charAt(0).toUpperCase() + day.slice(1)}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
                 <Label>Reflection Time</Label>
-                <Input type="time" defaultValue="18:00" />
+                <Input type="time" value={config.weekly_reflection_time} onChange={(event) => updateField("weekly_reflection_time", event.target.value)} />
               </div>
             </div>
           </CardContent>
         </Card>
 
-        {/* MCP Integration */}
         <Card>
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
@@ -395,9 +508,7 @@ export default function SettingsPage() {
               </div>
               <div className="flex items-center gap-2">
                 <Badge variant="outline">Stopped</Badge>
-                <Button variant="outline" size="sm">
-                  Start
-                </Button>
+                <Button variant="outline" size="sm">Start</Button>
               </div>
             </div>
             <Separator />
@@ -413,11 +524,41 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
 
-        {/* Save */}
         <div className="flex justify-end">
-          <Button>Save Settings</Button>
+          <Button disabled={saving} onClick={saveSettings}>
+            {saving ? "Saving..." : "Save Settings"}
+          </Button>
         </div>
       </div>
     </Shell>
+  );
+}
+
+function WebhookInput({
+  label,
+  value,
+  onChange,
+  onTest,
+  disabled,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  onTest?: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="space-y-3">
+      <h4 className="text-sm font-medium flex items-center gap-2">
+        <MessageCircle className="h-4 w-4" />
+        {label}
+      </h4>
+      <Input placeholder="Webhook URL" value={value} onChange={(event) => onChange(event.target.value)} />
+      {onTest ? (
+        <Button variant="outline" size="sm" disabled={disabled} onClick={onTest}>
+          Test {label}
+        </Button>
+      ) : null}
+    </div>
   );
 }

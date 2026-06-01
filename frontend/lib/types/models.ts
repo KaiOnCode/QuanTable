@@ -249,9 +249,13 @@ export interface SystemEvent {
 export interface SystemConfig {
   llm_api_key: string; llm_base_url: string; llm_model: string;
   deep_think_model: string; email_smtp_host: string; email_smtp_port: number;
-  email_recipients: string[]; telegram_bot_token: string; telegram_chat_ids: string[];
+  email_username: string; email_password: string; email_sender: string;
+  email_use_tls: boolean; email_recipients: string[];
+  telegram_bot_token: string; telegram_chat_ids: string[];
   wechat_webhook_url: string; feishu_webhook_url: string;
   discord_webhook_url: string; slack_bot_token: string; slack_channel_id: string;
+  whatsapp_access_token: string; whatsapp_phone_number_id: string;
+  whatsapp_recipients: string[]; social_webhook_url: string;
   data_cache_ttl_minutes: number; news_fetch_interval_minutes: number;
   max_concurrent_analyses: number; memory_enabled: boolean;
   memory_retention_days: number; weekly_reflection_day: string;
