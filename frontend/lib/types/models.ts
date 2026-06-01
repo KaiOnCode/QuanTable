@@ -253,10 +253,9 @@ export interface SystemConfig {
   email_username: string; email_password: string; email_sender: string;
   email_use_tls: boolean; email_recipients: string[];
   telegram_bot_token: string; telegram_chat_ids: string[];
-  wechat_webhook_url: string; feishu_webhook_url: string;
-  discord_webhook_url: string; slack_bot_token: string; slack_channel_id: string;
+  wechat_webhook_url: string;
   whatsapp_access_token: string; whatsapp_phone_number_id: string;
-  whatsapp_recipients: string[]; social_webhook_url: string;
+  whatsapp_recipients: string[];
   data_cache_ttl_minutes: number; news_fetch_interval_minutes: number;
   max_concurrent_analyses: number; memory_enabled: boolean;
   memory_retention_days: number; weekly_reflection_day: string;

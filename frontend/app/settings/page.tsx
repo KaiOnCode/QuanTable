@@ -54,14 +54,9 @@ const DEFAULT_SETTINGS: SystemConfig = {
   telegram_bot_token: "",
   telegram_chat_ids: [],
   wechat_webhook_url: "",
-  feishu_webhook_url: "",
-  discord_webhook_url: "",
-  slack_bot_token: "",
-  slack_channel_id: "",
   whatsapp_access_token: "",
   whatsapp_phone_number_id: "",
   whatsapp_recipients: [],
-  social_webhook_url: "",
   data_cache_ttl_minutes: 15,
   news_fetch_interval_minutes: 30,
   max_concurrent_analyses: 3,
@@ -346,7 +341,7 @@ export default function SettingsPage() {
               Notifications
             </CardTitle>
             <CardDescription>
-              Configure social media and messaging reminders for trading alerts.
+              Configure email and messaging reminders for trading alerts.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -410,23 +405,6 @@ export default function SettingsPage() {
             <Separator />
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <WebhookInput label="Enterprise WeChat" value={config.wechat_webhook_url} onChange={(value) => updateField("wechat_webhook_url", value)} onTest={() => handleTest("WeChat", settingsApi.testWechat)} disabled={testingChannel === "WeChat"} />
-              <WebhookInput label="Feishu (Lark)" value={config.feishu_webhook_url} onChange={(value) => updateField("feishu_webhook_url", value)} onTest={() => handleTest("Feishu", settingsApi.testFeishu)} disabled={testingChannel === "Feishu"} />
-              <WebhookInput label="Discord" value={config.discord_webhook_url} onChange={(value) => updateField("discord_webhook_url", value)} onTest={() => handleTest("Discord", settingsApi.testDiscord)} disabled={testingChannel === "Discord"} />
-              <WebhookInput label="Generic Webhook" value={config.social_webhook_url} onChange={(value) => updateField("social_webhook_url", value)} />
-            </div>
-            <Separator />
-            <div className="space-y-3">
-              <h4 className="text-sm font-medium flex items-center gap-2">
-                <MessageCircle className="h-4 w-4" />
-                Slack
-              </h4>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <Input placeholder="Bot Token" type="password" value={config.slack_bot_token} onChange={(event) => updateField("slack_bot_token", event.target.value)} />
-                <Input placeholder="Channel ID" value={config.slack_channel_id} onChange={(event) => updateField("slack_channel_id", event.target.value)} />
-              </div>
-              <Button variant="outline" size="sm" disabled={testingChannel === "Slack"} onClick={() => handleTest("Slack", settingsApi.testSlack)}>
-                Test Slack
-              </Button>
             </div>
           </CardContent>
         </Card>

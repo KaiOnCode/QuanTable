@@ -35,6 +35,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Checkbox } from "@/components/ui/checkbox";
 import { EmptyState } from "@/components/shared/empty-state";
 import { watchlistApi } from "@/lib/api/watchlist";
 import type { AlertType } from "@/lib/types/models";
@@ -78,35 +79,78 @@ const MOCK_WATCHLISTS: Record<string, {
   },
 };
 
+const CHANNEL_OPTIONS = [
+  { value: "telegram", label: "Telegram" },
+  { value: "email", label: "Email" },
+  { value: "wechat", label: "WeChat" },
+  { value: "whatsapp", label: "WhatsApp" },
+] as const;
+
+function getDefaultThreshold(
+  type: AlertType,
+  snapshot?: { price: number; rsi14: number },
+): string {
+  if (type === "price_above" || type === "price_below") {
+    return snapshot ? snapshot.price.toFixed(2) : "";
+  }
+  if (type === "rsi_above" || type === "rsi_below") {
+    return snapshot ? snapshot.rsi14.toFixed(1) : "";
+  }
+  return "";
+}
+
 export default function WatchlistPage() {
   const [activeTab, setActiveTab] = useState("my-positions");
   const [alertTicker, setAlertTicker] = useState("");
   const [alertType, setAlertType] = useState<AlertType>("price_above");
   const [alertThreshold, setAlertThreshold] = useState("");
-  const [alertChannels, setAlertChannels] = useState("telegram");
+  const [alertChannels, setAlertChannels] = useState<string[]>(["telegram"]);
   const [savingAlert, setSavingAlert] = useState(false);
   const [checkingAlerts, setCheckingAlerts] = useState(false);
   const lists = MOCK_WATCHLISTS;
   const active = lists[activeTab];
+  const alertTickerSnapshot = active.tickers.find((ticker) => ticker.ticker === alertTicker);
+  const thresholdMeta =
+    alertType === "price_above" || alertType === "price_below"
+      ? {
+          label: "Price Threshold",
+          placeholder: alertTickerSnapshot
+            ? `Current price ${alertTickerSnapshot.price.toFixed(2)}`
+            : "Enter target price",
+          hint: "Use the target price that should trigger the alert.",
+        }
+      : {
+          label: "RSI Threshold",
+          placeholder:
+            alertType === "rsi_above"
+              ? `Current RSI ${alertTickerSnapshot?.rsi14 ?? "--"}`
+              : `Current RSI ${alertTickerSnapshot?.rsi14 ?? "--"}`,
+          hint:
+            alertType === "rsi_above"
+              ? "Defaults to the ticker's current RSI raw value."
+              : "Defaults to the ticker's current RSI raw value.",
+        };
 
   const openAlertForm = (ticker: string, defaultPrice: number) => {
+    const snapshot = active.tickers.find((item) => item.ticker === ticker) ?? {
+      price: defaultPrice,
+      rsi14: 50,
+    };
     setAlertTicker(ticker);
     setAlertType("price_above");
-    setAlertThreshold(defaultPrice.toFixed(2));
+    setAlertThreshold(getDefaultThreshold("price_above", snapshot));
+    setAlertChannels(["telegram"]);
   };
 
   const createAlert = async () => {
-    if (!alertTicker || !alertThreshold) return;
+    if (!alertTicker || !alertThreshold || alertChannels.length === 0) return;
     setSavingAlert(true);
     try {
       await watchlistApi.createAlert(activeTab, {
         ticker: alertTicker,
         type: alertType,
         threshold_value: Number(alertThreshold),
-        notification_channels: alertChannels
-          .split(",")
-          .map((channel) => channel.trim())
-          .filter(Boolean),
+        notification_channels: alertChannels,
       });
       toast.success("Watchlist alert created", {
         description: `${alertTicker} ${alertType.replace("_", " ")} ${alertThreshold}`,
@@ -119,6 +163,21 @@ export default function WatchlistPage() {
     } finally {
       setSavingAlert(false);
     }
+  };
+
+  const handleAlertTypeChange = (value: AlertType | null) => {
+    if (!value) return;
+    setAlertType(value);
+    setAlertThreshold(getDefaultThreshold(value, alertTickerSnapshot));
+  };
+
+  const toggleAlertChannel = (channel: string, checked: boolean) => {
+    setAlertChannels((current) => {
+      if (checked) {
+        return current.includes(channel) ? current : [...current, channel];
+      }
+      return current.filter((item) => item !== channel);
+    });
   };
 
   const checkAlerts = async () => {
@@ -325,9 +384,7 @@ export default function WatchlistPage() {
                 <Label>Condition</Label>
                 <Select
                   value={alertType}
-                  onValueChange={(value) => {
-                    if (value) setAlertType(value as AlertType);
-                  }}
+                  onValueChange={handleAlertTypeChange}
                 >
                   <SelectTrigger className="w-full">
                     <SelectValue />
@@ -341,22 +398,38 @@ export default function WatchlistPage() {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>Threshold</Label>
+                <Label>{thresholdMeta.label}</Label>
                 <Input
                   type="number"
                   value={alertThreshold}
                   onChange={(event) => setAlertThreshold(event.target.value)}
+                  placeholder={thresholdMeta.placeholder}
                 />
+                <p className="text-xs text-muted-foreground">{thresholdMeta.hint}</p>
               </div>
-              <div className="space-y-2">
+              <div className="space-y-2 md:col-span-2">
                 <Label>Channels</Label>
-                <Input
-                  value={alertChannels}
-                  onChange={(event) => setAlertChannels(event.target.value)}
-                  placeholder="telegram"
-                />
+                <div className="grid grid-cols-2 gap-3 rounded-md border p-3">
+                  {CHANNEL_OPTIONS.map((channel) => (
+                    <label
+                      key={channel.value}
+                      className="flex items-center gap-2 text-sm"
+                    >
+                      <Checkbox
+                        checked={alertChannels.includes(channel.value)}
+                        onCheckedChange={(checked) =>
+                          toggleAlertChannel(channel.value, Boolean(checked))
+                        }
+                      />
+                      <span>{channel.label}</span>
+                    </label>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Choose one or more channels for this alert.
+                </p>
               </div>
-              <div className="flex items-end gap-2">
+              <div className="flex items-end gap-2 md:col-span-4">
                 <Button disabled={savingAlert} onClick={createAlert}>
                   {savingAlert ? "Saving..." : "Save Alert"}
                 </Button>

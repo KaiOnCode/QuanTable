@@ -17,7 +17,7 @@ class NotificationChannelTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("bot token", result.message)
 
     async def test_webhook_sends_expected_payload(self):
-        channel = WebhookChannel("discord", "https://example.com/webhook", "discord")
+        channel = WebhookChannel("wechat", "https://example.com/webhook", "wechat")
 
         with patch("notification.channels._post_json") as post_json:
             result = await channel.send("AAPL crossed 200", title="Price Alert", priority="high")
@@ -25,13 +25,15 @@ class NotificationChannelTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.ok)
         post_json.assert_called_once()
         _, payload = post_json.call_args.args[:2]
-        self.assertEqual(payload["content"], "[HIGH] Price Alert\n\nAAPL crossed 200")
+        self.assertEqual(payload["msgtype"], "markdown")
+        self.assertEqual(payload["markdown"]["content"], "[HIGH] Price Alert\n\nAAPL crossed 200")
 
     async def test_manager_reports_unregistered_channel(self):
         manager = build_manager({})
 
-        results = await manager.send("hello", channels=["webhook"])
+        results = await manager.send("hello", channels=["email", "telegram", "wechat", "whatsapp", "webhook"])
 
+        self.assertIn("webhook", results)
         self.assertFalse(results["webhook"].ok)
         self.assertIn("not registered", results["webhook"].message)
 

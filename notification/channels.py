@@ -225,12 +225,6 @@ class WebhookChannel(NotificationChannel):
         text = _format_text(title, message, priority)
         if self.payload_style == "wechat":
             return {"msgtype": "markdown", "markdown": {"content": text}}
-        if self.payload_style == "feishu":
-            return {"msg_type": "text", "content": {"text": text}}
-        if self.payload_style == "discord":
-            return {"content": text}
-        if self.payload_style == "slack_webhook":
-            return {"text": text}
         return {"title": title, "message": message, "priority": priority}
 
     async def send(
@@ -251,34 +245,6 @@ class WebhookChannel(NotificationChannel):
             return ChannelResult(self.name, True, f"{self.name} webhook sent.")
         except Exception as exc:  # pragma: no cover - depends on external webhook
             return ChannelResult(self.name, False, f"{self.name} send failed: {exc}")
-
-
-class SlackChannel(NotificationChannel):
-    name = "slack"
-
-    def __init__(self, bot_token: str, channel_id: str):
-        self.bot_token = bot_token
-        self.channel_id = channel_id
-
-    def is_configured(self) -> bool:
-        return bool(self.bot_token and self.channel_id)
-
-    async def send(
-        self,
-        message: str,
-        title: str = "Agentic-Quant Alert",
-        priority: str = "normal",
-    ) -> ChannelResult:
-        if not self.is_configured():
-            return ChannelResult(self.name, False, "Slack bot token and channel ID are required.")
-
-        headers = {"Authorization": f"Bearer {self.bot_token}"}
-        payload = {"channel": self.channel_id, "text": _format_text(title, message, priority)}
-        try:
-            await asyncio.to_thread(_post_json, "https://slack.com/api/chat.postMessage", payload, headers)
-            return ChannelResult(self.name, True, "Slack message sent.")
-        except Exception as exc:  # pragma: no cover - depends on external API
-            return ChannelResult(self.name, False, f"Slack send failed: {exc}")
 
 
 class WhatsAppChannel(NotificationChannel):
@@ -380,9 +346,6 @@ def build_manager(config: dict[str, Any]) -> NotificationManager:
     )
     manager.register(TelegramChannel(str(config.get("telegram_bot_token") or ""), _csv(config.get("telegram_chat_ids"))))
     manager.register(WebhookChannel("wechat", str(config.get("wechat_webhook_url") or ""), "wechat"))
-    manager.register(WebhookChannel("feishu", str(config.get("feishu_webhook_url") or ""), "feishu"))
-    manager.register(WebhookChannel("discord", str(config.get("discord_webhook_url") or ""), "discord"))
-    manager.register(SlackChannel(str(config.get("slack_bot_token") or ""), str(config.get("slack_channel_id") or "")))
     manager.register(
         WhatsAppChannel(
             access_token=str(config.get("whatsapp_access_token") or ""),
@@ -390,7 +353,4 @@ def build_manager(config: dict[str, Any]) -> NotificationManager:
             recipients=_csv(config.get("whatsapp_recipients")),
         )
     )
-    webhook_url = str(config.get("social_webhook_url") or "")
-    if webhook_url:
-        manager.register(WebhookChannel("webhook", webhook_url, "generic"))
     return manager

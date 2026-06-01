@@ -28,18 +28,6 @@ export const settingsApi = {
     return api.post("/settings/test-wechat");
   },
 
-  testFeishu(): Promise<NotificationTestResult> {
-    return api.post("/settings/test-feishu");
-  },
-
-  testDiscord(): Promise<NotificationTestResult> {
-    return api.post("/settings/test-discord");
-  },
-
-  testSlack(): Promise<NotificationTestResult> {
-    return api.post("/settings/test-slack");
-  },
-
   testWhatsApp(): Promise<NotificationTestResult> {
     return api.post("/settings/test-whatsapp");
   },

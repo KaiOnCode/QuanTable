@@ -37,14 +37,9 @@ DEFAULT_CONFIG = {
     "telegram_bot_token": "",
     "telegram_chat_ids": [],
     "wechat_webhook_url": "",
-    "feishu_webhook_url": "",
-    "discord_webhook_url": "",
-    "slack_bot_token": "",
-    "slack_channel_id": "",
     "whatsapp_access_token": "",
     "whatsapp_phone_number_id": "",
     "whatsapp_recipients": [],
-    "social_webhook_url": "",
     "data_cache_ttl_minutes": 15,
     "news_fetch_interval_minutes": 30,
     "max_concurrent_analyses": 3,
@@ -86,7 +81,6 @@ def _safe_settings(config: dict[str, Any]) -> dict[str, Any]:
         "llm_api_key",
         "email_password",
         "telegram_bot_token",
-        "slack_bot_token",
         "whatsapp_access_token",
     ):
         if masked.get(key):
@@ -111,7 +105,7 @@ async def update_settings(config: dict):
     updated = {**current, **config}
 
     # Keep existing secrets when the frontend sends the masked placeholder back.
-    for key in ("email_password", "telegram_bot_token", "slack_bot_token", "whatsapp_access_token"):
+    for key in ("email_password", "telegram_bot_token", "whatsapp_access_token"):
         if config.get(key) == "********":
             updated[key] = current.get(key, "")
 
@@ -137,27 +131,6 @@ async def test_telegram():
 async def test_wechat():
     """Send a test Enterprise WeChat notification."""
     result = await build_manager(_load_settings()).test("wechat")
-    return _result_payload(result)
-
-
-@router.post("/settings/test-feishu")
-async def test_feishu():
-    """Send a test Feishu notification."""
-    result = await build_manager(_load_settings()).test("feishu")
-    return _result_payload(result)
-
-
-@router.post("/settings/test-discord")
-async def test_discord():
-    """Send a test Discord notification."""
-    result = await build_manager(_load_settings()).test("discord")
-    return _result_payload(result)
-
-
-@router.post("/settings/test-slack")
-async def test_slack():
-    """Send a test Slack notification."""
-    result = await build_manager(_load_settings()).test("slack")
     return _result_payload(result)
 
 
