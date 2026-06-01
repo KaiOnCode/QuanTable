@@ -83,7 +83,7 @@ export default function WatchlistPage() {
   const [alertTicker, setAlertTicker] = useState("");
   const [alertType, setAlertType] = useState<AlertType>("price_above");
   const [alertThreshold, setAlertThreshold] = useState("");
-  const [alertChannels, setAlertChannels] = useState("whatsapp, telegram");
+  const [alertChannels, setAlertChannels] = useState("telegram");
   const [savingAlert, setSavingAlert] = useState(false);
   const [checkingAlerts, setCheckingAlerts] = useState(false);
   const lists = MOCK_WATCHLISTS;
@@ -353,7 +353,7 @@ export default function WatchlistPage() {
                 <Input
                   value={alertChannels}
                   onChange={(event) => setAlertChannels(event.target.value)}
-                  placeholder="whatsapp, telegram"
+                  placeholder="telegram"
                 />
               </div>
               <div className="flex items-end gap-2">

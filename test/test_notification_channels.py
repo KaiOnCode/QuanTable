@@ -3,18 +3,18 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from notification.channels import WebhookChannel, WhatsAppChannel, build_manager
+from notification.channels import TelegramChannel, WebhookChannel, build_manager
 
 
 class NotificationChannelTest(unittest.IsolatedAsyncioTestCase):
-    async def test_whatsapp_requires_complete_config(self):
-        channel = WhatsAppChannel(access_token="", phone_number_id="123", recipients=["85210000000"])
+    async def test_telegram_requires_complete_config(self):
+        channel = TelegramChannel(bot_token="", chat_ids=["123456"])
 
         result = await channel.test()
 
         self.assertFalse(result.ok)
-        self.assertEqual(result.channel, "whatsapp")
-        self.assertIn("access token", result.message)
+        self.assertEqual(result.channel, "telegram")
+        self.assertIn("bot token", result.message)
 
     async def test_webhook_sends_expected_payload(self):
         channel = WebhookChannel("discord", "https://example.com/webhook", "discord")

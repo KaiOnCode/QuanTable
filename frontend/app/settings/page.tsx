@@ -381,6 +381,10 @@ export default function SettingsPage() {
                 <Input placeholder="Bot Token" type="password" value={config.telegram_bot_token} onChange={(event) => updateField("telegram_bot_token", event.target.value)} />
                 <Input placeholder="Chat IDs (comma-separated)" value={toCsv(config.telegram_chat_ids)} onChange={(event) => updateField("telegram_chat_ids", fromCsv(event.target.value))} />
               </div>
+              <p className="text-xs text-muted-foreground">
+                Recommended demo channel: create a bot with BotFather, send it a message,
+                then use getUpdates to find your chat ID.
+              </p>
               <Button variant="outline" size="sm" disabled={testingChannel === "Telegram"} onClick={() => handleTest("Telegram", settingsApi.testTelegram)}>
                 Test Telegram
               </Button>

@@ -15,7 +15,7 @@ else:
 
 
 class FakeResult:
-    channel = "whatsapp"
+    channel = "telegram"
     ok = True
     message = "sent"
 
@@ -33,7 +33,7 @@ class FakeManager:
                 "channels": channels,
             }
         )
-        return {"whatsapp": FakeResult()}
+        return {"telegram": FakeResult()}
 
 
 class WatchlistAlertTest(unittest.IsolatedAsyncioTestCase):
@@ -53,7 +53,7 @@ class WatchlistAlertTest(unittest.IsolatedAsyncioTestCase):
                         ticker="AAPL",
                         type="price_above",
                         threshold_value=200,
-                        notification_channels=["whatsapp"],
+                        notification_channels=["telegram"],
                     ),
                 )
 
@@ -68,7 +68,7 @@ class WatchlistAlertTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first["triggered_count"], 1)
         self.assertEqual(second["triggered_count"], 0)
         self.assertEqual(len(manager.calls), 1)
-        self.assertEqual(manager.calls[0]["channels"], ["whatsapp"])
+        self.assertEqual(manager.calls[0]["channels"], ["telegram"])
         self.assertIn("AAPL price is 205.00", manager.calls[0]["message"])
 
 
