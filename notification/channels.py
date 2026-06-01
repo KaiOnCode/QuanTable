@@ -7,11 +7,14 @@ project dependency set. Each channel validates required config before sending.
 from __future__ import annotations
 
 import asyncio
+import logging
 import smtplib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from email.message import EmailMessage
 from typing import Any
+
+logger = logging.getLogger("notification.channels")
 
 
 @dataclass
@@ -49,11 +52,20 @@ class NotificationChannel(ABC):
         )
 
 
-def _post_json(url: str, payload: dict[str, Any], headers: dict[str, str] | None = None) -> None:
+def _post_json(url: str, payload: dict[str, Any], headers: dict[str, str] | None = None) -> dict[str, Any]:
     import requests
 
     response = requests.post(url, json=payload, headers=headers or {}, timeout=15)
     response.raise_for_status()
+    try:
+        body = response.json()
+    except ValueError:
+        body = {"text": response.text[:500]}
+    return {
+        "status_code": response.status_code,
+        "body": body,
+        "content_length": len(response.content or b""),
+    }
 
 
 def _format_text(title: str, message: str, priority: str) -> str:
@@ -125,22 +137,76 @@ class TelegramChannel(NotificationChannel):
     def is_configured(self) -> bool:
         return bool(self.bot_token and self.chat_ids)
 
+    def _token_hint(self) -> str:
+        if not self.bot_token:
+            return "missing"
+        prefix = self.bot_token.split(":", 1)[0]
+        return f"{prefix}:***"
+
     async def send(
         self,
         message: str,
         title: str = "Agentic-Quant Alert",
         priority: str = "normal",
     ) -> ChannelResult:
+        logger.info(
+            "telegram_send_start configured=%s token_hint=%s chat_count=%s title=%s priority=%s message_chars=%s",
+            self.is_configured(),
+            self._token_hint(),
+            len(self.chat_ids),
+            title,
+            priority,
+            len(message),
+        )
         if not self.is_configured():
+            logger.warning(
+                "telegram_send_rejected reason=missing_config has_token=%s chat_count=%s",
+                bool(self.bot_token),
+                len(self.chat_ids),
+            )
             return ChannelResult(self.name, False, "Telegram bot token and chat IDs are required.")
 
         url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
         text = _format_text(title, message, priority)
         try:
-            for chat_id in self.chat_ids:
-                await asyncio.to_thread(_post_json, url, {"chat_id": chat_id, "text": text})
+            for index, chat_id in enumerate(self.chat_ids, start=1):
+                payload = {"chat_id": chat_id, "text": text}
+                logger.info(
+                    "telegram_send_chat_start index=%s chat_id=%s text_chars=%s",
+                    index,
+                    chat_id,
+                    len(text),
+                )
+                response_info = await asyncio.to_thread(_post_json, url, payload)
+                body = response_info.get("body", {})
+                logger.info(
+                    "telegram_send_chat_done index=%s chat_id=%s status_code=%s telegram_ok=%s response_keys=%s content_length=%s",
+                    index,
+                    chat_id,
+                    response_info.get("status_code"),
+                    body.get("ok") if isinstance(body, dict) else None,
+                    sorted(body.keys()) if isinstance(body, dict) else [],
+                    response_info.get("content_length"),
+                )
+            logger.info(
+                "telegram_send_done chat_count=%s title=%s priority=%s",
+                len(self.chat_ids),
+                title,
+                priority,
+            )
             return ChannelResult(self.name, True, f"Telegram sent to {len(self.chat_ids)} chat(s).")
         except Exception as exc:  # pragma: no cover - depends on external API
+            status_code = getattr(getattr(exc, "response", None), "status_code", None)
+            response_text = getattr(getattr(exc, "response", None), "text", "")
+            logger.exception(
+                "telegram_send_failed status_code=%s response_text=%s token_hint=%s chat_count=%s title=%s priority=%s",
+                status_code,
+                response_text[:500] if response_text else "",
+                self._token_hint(),
+                len(self.chat_ids),
+                title,
+                priority,
+            )
             return ChannelResult(self.name, False, f"Telegram send failed: {exc}")
 
 
