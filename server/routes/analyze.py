@@ -120,7 +120,7 @@ async def analyze(request: AnalyzeRequest):
             # Emit final result
 
             elapsed = round(time.time() - started_at, 2)
-            yield _sse_event("result", {
+            final_result = {
                 "session_id": session_id,
                 "action": result.get("Action", "HOLD"),
                 "direction": direction,
@@ -130,7 +130,9 @@ async def analyze(request: AnalyzeRequest):
                 "target_position_pct": float(result.get("Target_position_pct", 0)),
                 "debate_records": debate_history,
                 "elapsed_s": elapsed,
-            })
+            }
+            yield _sse_event("result", final_result)
+            await _notify_analysis_completed(request.ticker, final_result)
 
         except Exception as exc:
             err_msg = str(exc)
@@ -139,7 +141,7 @@ async def analyze(request: AnalyzeRequest):
             if "Invalid json output:" in err_msg and "方向:" in err_msg:
                 report_text = err_msg.split("Invalid json output:", 1)[1].strip()
                 direction, confidence, timeframe = _parse_pm_report(report_text, "HOLD")
-                yield _sse_event("result", {
+                fallback_result = {
                     "session_id": session_id,
                     "action": "HOLD",
                     "direction": direction,
@@ -149,7 +151,9 @@ async def analyze(request: AnalyzeRequest):
                     "target_position_pct": 0,
                     "debate_records": [],
                     "elapsed_s": round(time.time() - started_at, 2),
-                })
+                }
+                yield _sse_event("result", fallback_result)
+                await _notify_analysis_completed(request.ticker, fallback_result)
             else:
                 logger.exception("Analysis failed for %s", request.ticker)
                 yield _sse_event("error", {
@@ -157,6 +161,7 @@ async def analyze(request: AnalyzeRequest):
                     "error": err_msg[:500],
                     "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 })
+                await _notify_analysis_failed(request.ticker, session_id, err_msg)
 
     return StreamingResponse(
         event_stream(),
@@ -198,6 +203,105 @@ def _parse_pm_report(report: str, action: str) -> tuple[str, float, str]:
         timeframe = tf_match.group(1)
 
     return direction, confidence, timeframe
+
+
+def _analysis_priority(action: str, confidence: float) -> str:
+    if action.upper() in {"BUY", "SELL"} or confidence >= 0.7:
+        return "high"
+    return "normal"
+
+
+async def _notify_analysis_completed(ticker: str, result: dict[str, Any]) -> None:
+    """Notify configured Telegram recipients after an analysis result is emitted."""
+    action = str(result.get("action", "HOLD")).upper()
+    confidence = float(result.get("confidence") or 0.0)
+    priority = _analysis_priority(action, confidence)
+    title = f"Analysis Complete: {ticker.upper()} {action}"
+    message = (
+        f"Ticker: {ticker.upper()}\n"
+        f"Action: {action}\n"
+        f"Direction: {result.get('direction', 'Neutral')}\n"
+        f"Confidence: {confidence:.2f}\n"
+        f"Target Position: {float(result.get('target_position_pct') or 0):.2f}%\n"
+        f"Elapsed: {result.get('elapsed_s', 'N/A')}s\n"
+        f"Session: {result.get('session_id', '')}"
+    )
+
+    logger.info(
+        "analysis_notification_start ticker=%s session_id=%s action=%s confidence=%s priority=%s",
+        ticker,
+        result.get("session_id"),
+        action,
+        confidence,
+        priority,
+    )
+    try:
+        from notification import build_manager
+        from server.routes.settings import _load_settings
+
+        results = await build_manager(_load_settings()).send(
+            message=message,
+            title=title,
+            priority=priority,
+            channels=["telegram"],
+        )
+        logger.info(
+            "analysis_notification_done ticker=%s session_id=%s results=%s",
+            ticker,
+            result.get("session_id"),
+            {
+                name: {"ok": channel_result.ok, "message": channel_result.message}
+                for name, channel_result in results.items()
+            },
+        )
+    except Exception:
+        logger.exception(
+            "analysis_notification_failed ticker=%s session_id=%s action=%s",
+            ticker,
+            result.get("session_id"),
+            action,
+        )
+
+
+async def _notify_analysis_failed(ticker: str, session_id: str, error: str) -> None:
+    """Notify configured Telegram recipients when analysis fails."""
+    title = f"Analysis Failed: {ticker.upper()}"
+    message = (
+        f"Ticker: {ticker.upper()}\n"
+        f"Session: {session_id}\n"
+        f"Error: {error[:500]}"
+    )
+    logger.info(
+        "analysis_failure_notification_start ticker=%s session_id=%s error_chars=%s",
+        ticker,
+        session_id,
+        len(error),
+    )
+    try:
+        from notification import build_manager
+        from server.routes.settings import _load_settings
+
+        results = await build_manager(_load_settings()).send(
+            message=message,
+            title=title,
+            priority="high",
+            channels=["telegram"],
+        )
+        logger.info(
+            "analysis_failure_notification_done ticker=%s session_id=%s results=%s",
+            ticker,
+            session_id,
+            {
+                name: {"ok": channel_result.ok, "message": channel_result.message}
+                for name, channel_result in results.items()
+            },
+        )
+    except Exception:
+        logger.exception(
+            "analysis_failure_notification_failed ticker=%s session_id=%s",
+            ticker,
+            session_id,
+        )
 
 
 def _run_analysis(
