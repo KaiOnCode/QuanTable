@@ -147,10 +147,13 @@ class _BuyThenHoldExecutionAgent:
         date: str | None = None,
         current_position_pct: float = 0.0,
         *,
+        as_of: str | None = None,
         execution_enabled: bool = False,
+        strategy_id: str = "",
+        account_id: str = "default",
         session_id: str = "",
     ) -> dict[str, object]:
-        del date, current_position_pct
+        del date, as_of, current_position_pct
         self._calls += 1
         if self._calls == 1:
             return self._execution_node(
@@ -160,6 +163,8 @@ class _BuyThenHoldExecutionAgent:
                     "Target_position_pct": 50.0,
                     "PM_report": "Open a half-sized position.",
                     "execution_enabled": execution_enabled,
+                    "strategy_id": strategy_id,
+                    "account_id": account_id,
                     "session_id": session_id,
                 }
             )
