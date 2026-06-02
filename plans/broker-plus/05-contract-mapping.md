@@ -81,6 +81,47 @@ does not own approval workflow policy.
 - In-memory event and ledger backends are first-stage validation boundaries.
   SQLite and ContextStore adapters are out of scope.
 
+## Backtest No-Lookahead Boundary
+
+- `BacktestRunner` passes a single explicit `as_of` timestamp to each
+  agent/harness call.
+- `date` remains a compatibility alias for `as_of` during backtest calls.
+- Broker-plus exposes a scoped agent factory seam for tests and future
+  integration adapters.
+- Broker-plus does not import DataService, MarketDataStore, SQLite,
+  ContextStore, server, or frontend modules.
+
+## Adapter Readiness
+
+- `Order.client_order_id` is caller-generated and broker-propagated.
+- `client_order_id` is used for idempotency within `(strategy_id, account_id)`.
+- Full async adapter lifecycle, SDK/network calls, real broker adapters, and
+  partial lifecycle states remain out of scope.
+
+## Execution Timing
+
+- `close_bar` fills market orders from the current close reference.
+- `next_open` keeps market orders pending until the next bar and fills from
+  that next bar's open after revalidating risk at the open price.
+- Partial fills, volume/liquidity constraints, and exchange-grade matching
+  remain out of scope.
+
+## Execution Outcome View
+
+- `ExecutionOutcomeView` is the broker-owned single-execution outcome shape for
+  future memory/reflection consumers.
+- It is derived from `ExecutionReportView` plus optional ledger fill records.
+- MemoryStore, OWM scoring, reflection loops, persistence, and recall remain
+  outside broker-plus.
+
+## Event Vocabulary
+
+- Broker events are restricted to the broker-owned execution vocabulary.
+- Order event payloads include at least `order_id`, `client_order_id`,
+  `order_status`, `side`, `order_type`, and `qty`.
+- Execution event payloads include at least `status`, `reason`, and
+  `pm_action`.
+
 ## Backtest JSON Shape
 
 `BacktestResultView` is synchronous and completed:
