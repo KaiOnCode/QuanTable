@@ -54,6 +54,7 @@ export type SSEResultEvent = {
   report?: string;
   target_position_pct?: number;
   debate_records?: SSEDebateEvent[];
+  news_articles?: { title: string; source: string; url: string; published_at: string }[];
   elapsed_s?: number;
 };
 

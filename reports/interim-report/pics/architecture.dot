@@ -1,0 +1,108 @@
+digraph G {
+    rankdir=TB
+    fontname="Helvetica"
+    fontsize=14
+    bgcolor="#1a1a2e"
+    nodesep=0.4
+    ranksep=0.6
+
+    // ── Layer 1: Data Collection ──
+    subgraph cluster_collect {
+        label="Data Collection Layer"
+        fontsize=14 fontcolor="#6699cc"
+        style="rounded,filled" color="#16213e" fillcolor="#16213e" pencolor="#333366"
+        penwidth=2
+
+        { rank=same
+            yf [label="YFinance\n(OHLCV, Fundamentals)" shape=box style="rounded,filled" fillcolor="#e94560" fontcolor=white fontsize=10 width=2.0]
+            gn [label="Google News\n→ AkShare fallback" shape=box style="rounded,filled" fillcolor="#e94560" fontcolor=white fontsize=10 width=2.0]
+            ak [label="AkShare\n(China A-shares)" shape=box style="rounded,filled" fillcolor="#e94560" fontcolor=white fontsize=10 width=2.0]
+            sched [label="APScheduler\n(5 background jobs)" shape=box style="rounded,filled" fillcolor="#533483" fontcolor=white fontsize=10 width=2.0]
+        }
+        collector [label="DataCollector — 32 tickers" shape=box style="rounded,filled" fillcolor="#533483" fontcolor=white fontsize=11 width=3.0]
+
+        yf -> collector [color="#666688" style=dashed]
+        gn -> collector [color="#666688" style=dashed]
+        ak -> collector [color="#666688" style=dashed]
+        sched -> collector [color="#666688" style=dashed]
+    }
+
+    // ── Layer 2: DataService ──
+    subgraph cluster_service {
+        label="Data Access Layer (DataService)"
+        fontsize=14 fontcolor="#6699cc"
+        style="rounded,filled" color="#0f3460" fillcolor="#0f3460" pencolor="#333366"
+        penwidth=2
+
+        { rank=same
+            ds1 [label="get_prices()" shape=box style="rounded,filled" fillcolor="#1b98f5" fontcolor=white fontsize=10 width=1.8]
+            ds2 [label="get_news()" shape=box style="rounded,filled" fillcolor="#1b98f5" fontcolor=white fontsize=10 width=1.8]
+            ds3 [label="get_meta()" shape=box style="rounded,filled" fillcolor="#1b98f5" fontcolor=white fontsize=10 width=1.8]
+            ds4 [label="get_indicators()" shape=box style="rounded,filled" fillcolor="#1b98f5" fontcolor=white fontsize=10 width=1.8]
+            ds5 [label="search_news()" shape=box style="rounded,filled" fillcolor="#1b98f5" fontcolor=white fontsize=10 width=1.8]
+            ds6 [label="get_fundamentals()" shape=box style="rounded,filled" fillcolor="#1b98f5" fontcolor=white fontsize=10 width=1.8]
+        }
+
+        { rank=same
+            market_db [label="market.db" shape=cylinder style="filled" fillcolor="#2d3436" fontcolor="#00b894" fontsize=9]
+            system_db [label="system.db" shape=cylinder style="filled" fillcolor="#2d3436" fontcolor="#00b894" fontsize=9]
+            memory_db [label="memory.db" shape=cylinder style="filled" fillcolor="#2d3436" fontcolor="#00b894" fontsize=9]
+            insights_db [label="insights.db" shape=cylinder style="filled" fillcolor="#2d3436" fontcolor="#00b894" fontsize=9]
+            strategy_db [label="{strategy_id}.db" shape=cylinder style="filled" fillcolor="#2d3436" fontcolor="#00b894" fontsize=9]
+        }
+
+        ds1 -> market_db [color="#444466" style=dashed arrowhead=none]
+        ds2 -> market_db [color="#444466" style=dashed arrowhead=none]
+        ds3 -> market_db [color="#444466" style=dashed arrowhead=none]
+        ds4 -> market_db [color="#444466" style=dashed arrowhead=none]
+        ds6 -> market_db [color="#444466" style=dashed arrowhead=none]
+    }
+
+    // ── Layer 3: Application ──
+    subgraph cluster_app {
+        label="Application Layer"
+        fontsize=14 fontcolor="#6699cc"
+        style="rounded,filled" color="#1a1a4e" fillcolor="#1a1a4e" pencolor="#333366"
+        penwidth=2
+
+        { rank=same
+            fastapi [label="FastAPI Server\n(38 endpoints)" shape=box style="rounded,filled" fillcolor="#6c5ce7" fontcolor=white fontsize=10 width=2.2]
+            sse [label="SSE Streaming\n/api/analyze" shape=box style="rounded,filled" fillcolor="#6c5ce7" fontcolor=white fontsize=10 width=2.0]
+            pipeline [label="5-Agent Pipeline\n(LangGraph)" shape=box style="rounded,filled" fillcolor="#e17055" fontcolor=white fontsize=10 width=2.2]
+            monitor [label="MonitorRunner\n(APScheduler)" shape=box style="rounded,filled" fillcolor="#e17055" fontcolor=white fontsize=10 width=2.0]
+            memory [label="Memory Layer\n(OWM Scoring)" shape=box style="rounded,filled" fillcolor="#00b894" fontcolor=white fontsize=10 width=2.0]
+        }
+    }
+
+    // ── Layer 4: Presentation ──
+    subgraph cluster_frontend {
+        label="Presentation Layer (React Frontend)"
+        fontsize=14 fontcolor="#6699cc"
+        style="rounded,filled" color="#1a1a2e" fillcolor="#1a1a2e" pencolor="#333366"
+        penwidth=2
+
+        react [label="Next.js 16\n+ React + shadcn/ui\n8 of 15 pages connected" shape=box style="rounded,filled" fillcolor="#fd79a8" fontcolor=white fontsize=11 width=3.0]
+    }
+
+    // ── Layer connections ──
+    collector -> ds1 [color="#666688" penwidth=2]
+    collector -> ds2 [color="#666688" penwidth=2]
+    collector -> ds3 [color="#666688" penwidth=2]
+    collector -> ds6 [color="#666688" penwidth=2]
+
+    ds1 -> fastapi [color="#6688aa" penwidth=2]
+    ds2 -> fastapi [color="#6688aa" penwidth=2]
+    ds3 -> fastapi [color="#6688aa" penwidth=2]
+    ds4 -> fastapi [color="#6688aa" penwidth=2]
+    ds5 -> fastapi [color="#6688aa" penwidth=2]
+    ds6 -> fastapi [color="#6688aa" penwidth=2]
+
+    ds1 -> pipeline [color="#6688aa" penwidth=2 style=dashed]
+    ds2 -> pipeline [color="#6688aa" penwidth=2 style=dashed]
+    ds6 -> pipeline [color="#6688aa" penwidth=2 style=dashed]
+    memory -> pipeline [color="#00b894" penwidth=2]
+    pipeline -> memory [color="#00b894" penwidth=2]
+
+    fastapi -> react [color="#7788aa" penwidth=2]
+    sse -> react [color="#7788aa" penwidth=2 style=bold]
+}

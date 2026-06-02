@@ -117,8 +117,16 @@ async def analyze(request: AnalyzeRequest):
                     "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 })
 
-            # Emit final result
+            # Fetch news articles used in analysis
+            news_articles = []
+            try:
+                from dataflow.service import DataService
+                svc = DataService()
+                news_articles = svc.get_news(request.ticker, window_days=7)
+            except Exception:
+                pass
 
+            # Emit final result
             elapsed = round(time.time() - started_at, 2)
             yield _sse_event("result", {
                 "session_id": session_id,
@@ -129,6 +137,7 @@ async def analyze(request: AnalyzeRequest):
                 "report": pm_report,
                 "target_position_pct": float(result.get("Target_position_pct", 0)),
                 "debate_records": debate_history,
+                "news_articles": [{"title": a["title"], "source": a.get("source_name", ""), "url": a.get("url", ""), "published_at": a.get("published_at", "")} for a in news_articles[:8]],
                 "elapsed_s": elapsed,
             })
 

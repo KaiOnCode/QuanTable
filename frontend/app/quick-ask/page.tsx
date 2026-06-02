@@ -11,7 +11,6 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
   Select,
@@ -20,9 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { EmptyState } from "@/components/shared/empty-state";
 import { ActionBadge, DirectionBadge } from "@/components/shared/badges";
 import {
   Zap,
@@ -31,10 +28,10 @@ import {
   CheckCircle2,
   Clock,
   AlertCircle,
-  MessageSquare,
   TrendingUp,
   Shield,
 } from "lucide-react";
+import ReactMarkdown from "react-markdown";
 import { createSSEStream } from "@/lib/api/client";
 import type {
   SSEProgressEvent,
@@ -75,6 +72,115 @@ const STAGE_LABELS: Record<number, string> = {
   4: "Risk Synthesis",
   5: "Final Decision",
 };
+
+function parseReport(report: string): { direction?: string; timeframe?: string; confidence?: string; oneliner?: string; body: string } {
+  const lines = report.split("\n");
+  const result: any = {};
+  let bodyStart = 0;
+  for (let i = 0; i < Math.min(lines.length, 8); i++) {
+    const line = lines[i].trim();
+    const m = line.match(/^(方向|时间范围|置信度|一句话结论)[：:]\s*(.+)/);
+    if (m) {
+      const keyMap: Record<string, string> = { "方向": "direction", "时间范围": "timeframe", "置信度": "confidence", "一句话结论": "oneliner" };
+      result[keyMap[m[1]] || m[1]] = m[2];
+      bodyStart = i + 1;
+    } else if (line === "" && bodyStart > 0) {
+      bodyStart = i + 1;
+      break;
+    }
+  }
+  result.body = lines.slice(bodyStart).join("\n").trim();
+  return result;
+}
+
+function ReportCard({ result }: { result: SSEResultEvent }) {
+  const [showFull, setShowFull] = useState(false);
+  const parsed = result.report ? parseReport(result.report) : null;
+  const oneliner = parsed?.oneliner || "";
+  const bodyText = parsed?.body || result.report || "";
+  const confidence = result.confidence;
+  const confidencePct = Math.round(confidence * 100);
+  const barColor = confidencePct >= 70 ? "bg-green-500" : confidencePct >= 40 ? "bg-yellow-500" : "bg-red-500";
+  const news = result.news_articles || [];
+
+  return (
+    <div className="space-y-4">
+      {/* Decision Summary Card */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Analysis Result</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Badge Row */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <ActionBadge action={result.action} />
+            <DirectionBadge direction={result.direction} />
+            {result.timeframe && <Badge variant="outline">{result.timeframe}</Badge>}
+          </div>
+
+          {/* Confidence Bar */}
+          <div className="space-y-1">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-muted-foreground">Confidence</span>
+              <span className="font-mono font-bold">{confidencePct}%</span>
+            </div>
+            <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+              <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${confidencePct}%` }} />
+            </div>
+          </div>
+
+          {/* One-liner */}
+          {oneliner && (
+            <div className="p-3 rounded-lg bg-primary/5 border border-primary/10">
+              <p className="text-sm font-medium">{oneliner}</p>
+            </div>
+          )}
+
+          {/* Expandable full report */}
+          {bodyText && bodyText !== oneliner && (
+            <div>
+              <Button variant="ghost" size="sm" onClick={() => setShowFull(!showFull)}>
+                {showFull ? "Hide Full Report" : "Show Full Report"}
+              </Button>
+              {showFull && (
+                <div className="mt-2 p-4 rounded-lg bg-muted/30 text-sm leading-relaxed max-h-96 overflow-y-auto prose prose-sm dark:prose-invert max-w-none">
+                  <ReactMarkdown>{bodyText}</ReactMarkdown>
+                </div>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* News Sources */}
+      {news.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">News Sources ({news.length})</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {news.map((a, i) => (
+                <div key={i} className="flex items-start gap-2 text-sm">
+                  <span className="text-muted-foreground shrink-0 mt-0.5">{i + 1}.</span>
+                  <div className="min-w-0">
+                    <a href={a.url} target="_blank" rel="noopener noreferrer"
+                       className="text-primary hover:underline truncate block">
+                      {a.title}
+                    </a>
+                    <div className="text-xs text-muted-foreground">
+                      {a.source}{a.published_at ? ` · ${a.published_at.slice(0, 10)}` : ""}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
 
 export default function QuickAskPage() {
   const [ticker, setTicker] = useState("");
@@ -321,34 +427,7 @@ export default function QuickAskPage() {
         {/* Result */}
         {result && (
           <div className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Decision</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-center gap-4 mb-4">
-                  <ActionBadge action={result.action} />
-                  <DirectionBadge direction={result.direction} />
-                  <Badge variant="outline" className="text-sm font-mono">
-                    Confidence: {(result.confidence * 100).toFixed(0)}%
-                  </Badge>
-                  {result.timeframe && (
-                    <Badge variant="outline" className="text-sm">
-                      {result.timeframe}
-                    </Badge>
-                  )}
-                </div>
-                {result.report && (
-                  <div className="prose prose-sm dark:prose-invert max-w-none mt-4 p-4 rounded-lg bg-muted/30">
-                    <div
-                      dangerouslySetInnerHTML={{
-                        __html: result.report.replace(/\n/g, "<br/>"),
-                      }}
-                    />
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+            <ReportCard result={result} />
 
             {/* Debate Records */}
             {debates.length > 0 && (
