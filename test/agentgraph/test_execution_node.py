@@ -564,6 +564,31 @@ def test_execution_node_propagates_identity_to_report_order_fills_and_events() -
     assert all(event.decision_id == "decision-1" for event in events)
 
 
+def test_execution_node_passes_client_order_id_to_broker_order() -> None:
+    broker = MockBrokerEngine(BrokerConfig())
+    broker.on_bar(
+        {
+            "AAPL": {"open": 99.0, "high": 101.0, "low": 98.0, "close": 100.0},
+        }
+    )
+    execution_node = create_execution_node(broker)
+
+    result = execution_node(
+        {
+            "ticker": "AAPL",
+            "Action": "BUY",
+            "Target_position_pct": 50.0,
+            "execution_enabled": True,
+            "client_order_id": "client-order-1",
+        }
+    )
+
+    report = _report_view(result)
+    assert report.order is not None
+    assert report.order.client_order_id == "client-order-1"
+    assert broker.get_orders()[0].client_order_id == "client-order-1"
+
+
 def test_execution_node_writes_execution_rejected_for_broker_risk_rejection() -> None:
     broker = MockBrokerEngine(
         BrokerConfig(

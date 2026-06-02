@@ -60,6 +60,20 @@ def test_order_view_maps_internal_enums_to_frontend_values() -> None:
     assert rejected_view.status == "rejected"
 
 
+def test_order_view_exposes_client_order_id() -> None:
+    order = Order(
+        ticker="AAPL",
+        side=OrderSide.BUY,
+        type=OrderType.MARKET,
+        qty=10,
+        client_order_id="client-1",
+    )
+
+    view = to_order_view(order, fills=[])
+
+    assert view.client_order_id == "client-1"
+
+
 def test_order_view_rejects_partially_filled_status_until_contract_defines_it() -> None:
     order = Order(
         ticker="AAPL",

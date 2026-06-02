@@ -45,6 +45,7 @@ class Order(BaseModel):
     account_id: str = "default"
     session_id: str = ""
     decision_id: str = ""
+    client_order_id: str = ""
 
     @model_validator(mode="after")
     def validate_limit_price(self) -> Order:

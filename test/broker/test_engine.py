@@ -632,6 +632,49 @@ def test_engine_publishes_events_with_per_strategy_account_sequences() -> None:
     ] == ["order_placed", "order_filled"]
 
 
+def test_client_order_id_is_idempotent_within_strategy_account_scope() -> None:
+    broker = MockBrokerEngine(
+        BrokerConfig(
+            initial_cash=100_000.0,
+            commission_rate=0.0,
+            slippage_rate=0.0,
+        )
+    )
+    broker.on_bar(
+        {
+            "AAPL": {"open": 99.0, "high": 101.0, "low": 98.0, "close": 100.0},
+        }
+    )
+    first_order = Order(
+        ticker="AAPL",
+        side=OrderSide.BUY,
+        type=OrderType.MARKET,
+        qty=10,
+        strategy_id="strategy-1",
+        account_id="account-1",
+        client_order_id="client-order-1",
+    )
+    duplicate_order = first_order.model_copy(update={"id": "different-order-id"})
+
+    first_result = broker.place_order(first_order)
+    duplicate_result = broker.place_order(duplicate_order)
+
+    assert duplicate_result.id == first_result.id
+    assert duplicate_result.status is OrderStatus.FILLED
+    assert len(broker.get_orders(account_id="account-1")) == 1
+    assert len(broker.get_fills(account_id="account-1")) == 1
+    assert [
+        event.event_type for event in broker.get_event_log(account_id="account-1")
+    ] == [
+        "order_placed",
+        "order_filled",
+    ]
+    assert (
+        broker.get_event_log(account_id="account-1")[0].payload["client_order_id"]
+        == "client-order-1"
+    )
+
+
 def test_engine_preserves_injected_falsy_event_sink() -> None:
     class FalsyEventSink(InMemoryBrokerEventSink):
         def __bool__(self) -> bool:

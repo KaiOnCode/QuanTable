@@ -138,6 +138,14 @@ class MockBrokerEngine(BrokerGateway):
 
     def place_order(self, order: Order) -> Order:
         account_state = self._get_account_state(order.account_id)
+        if order.client_order_id:
+            existing_order = self._find_order_by_client_order_id(
+                strategy_id=order.strategy_id,
+                account_id=order.account_id,
+                client_order_id=order.client_order_id,
+            )
+            if existing_order is not None:
+                return existing_order
         stored_order = order.model_copy(deep=True)
         stored_order.updated_at = _utc_now()
         account_state.orders[stored_order.id] = stored_order
@@ -470,6 +478,7 @@ class MockBrokerEngine(BrokerGateway):
     ) -> None:
         payload = {
             "order_id": order.id,
+            "client_order_id": order.client_order_id,
             "order_status": order.status.value,
             "side": order.side.value,
             "order_type": order.type.value,
@@ -521,6 +530,24 @@ class MockBrokerEngine(BrokerGateway):
             if order is not None:
                 return account_state, order
         raise KeyError(order_id)
+
+    def _find_order_by_client_order_id(
+        self,
+        *,
+        strategy_id: str,
+        account_id: str,
+        client_order_id: str,
+    ) -> Order | None:
+        account_state = self._accounts.get(account_id)
+        if account_state is None:
+            return None
+        for stored_order in account_state.orders.values():
+            if (
+                stored_order.client_order_id == client_order_id
+                and stored_order.strategy_id == strategy_id
+            ):
+                return stored_order.model_copy(deep=True)
+        return None
 
     def _latest_identity_value(
         self,

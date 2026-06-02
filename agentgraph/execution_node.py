@@ -210,6 +210,7 @@ def create_execution_node(
             account_id=identity["account_id"],
             session_id=identity["session_id"],
             decision_id=identity["decision_id"],
+            client_order_id=str(state.get("client_order_id", "") or ""),
         )
         placed_order = broker.place_order(order)
         fills = broker.get_fills(placed_order.id, account_id=identity["account_id"])

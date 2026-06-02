@@ -36,6 +36,18 @@ def test_market_order_defaults_to_new_status_with_generated_metadata() -> None:
     assert order.updated_at.tzinfo == timezone.utc
 
 
+def test_order_exposes_client_order_id_for_adapter_idempotency() -> None:
+    order = Order(
+        ticker="AAPL",
+        side=OrderSide.BUY,
+        type=OrderType.MARKET,
+        qty=10,
+        client_order_id="client-1",
+    )
+
+    assert order.client_order_id == "client-1"
+
+
 def test_limit_order_requires_limit_price() -> None:
     with pytest.raises(ValidationError):
         Order(

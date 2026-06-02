@@ -62,6 +62,7 @@ class OrderView(BaseModel):
     account_id: str = "default"
     session_id: str = ""
     decision_id: str = ""
+    client_order_id: str = ""
 
 
 class PositionView(BaseModel):
@@ -278,6 +279,7 @@ def to_order_view(order: Order, *, fills: Sequence[Fill]) -> OrderView:
         account_id=order.account_id,
         session_id=order.session_id,
         decision_id=order.decision_id,
+        client_order_id=order.client_order_id,
     )
 
 
