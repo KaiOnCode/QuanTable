@@ -211,6 +211,33 @@ def test_in_memory_broker_event_sink_assigns_sequence_per_strategy_account() -> 
     assert sink.load_events(session_id="missing") == []
 
 
+def test_event_sink_filters_by_decision_id() -> None:
+    sink = InMemoryBrokerEventSink()
+    sink.publish(
+        BrokerEvent(
+            event_type="order_placed",
+            strategy_id="strategy-1",
+            account_id="account-1",
+            session_id="session-1",
+            decision_id="decision-a",
+        )
+    )
+    sink.publish(
+        BrokerEvent(
+            event_type="order_filled",
+            strategy_id="strategy-1",
+            account_id="account-1",
+            session_id="session-1",
+            decision_id="decision-b",
+        )
+    )
+
+    events = sink.load_events(decision_id="decision-b")
+
+    assert [event.event_type for event in events] == ["order_filled"]
+    assert events[0].decision_id == "decision-b"
+
+
 def test_broker_config_exposes_phase_one_defaults_and_overrides() -> None:
     default_config = BrokerConfig()
     overridden_config = BrokerConfig(execution_timing="next_open", allow_short=False)

@@ -36,6 +36,24 @@ class LedgerSnapshotRecord(BaseModel):
     decision_id: str = ""
 
 
+def _matches_identity(
+    *,
+    record_strategy_id: str,
+    record_account_id: str,
+    record_decision_id: str,
+    strategy_id: str | None,
+    account_id: str | None,
+    decision_id: str | None,
+) -> bool:
+    if strategy_id is not None and record_strategy_id != strategy_id:
+        return False
+    if account_id is not None and record_account_id != account_id:
+        return False
+    if decision_id is not None and record_decision_id != decision_id:
+        return False
+    return True
+
+
 class TradeLedgerBackend(Protocol):
     """Storage abstraction so later phases can swap persistence backends."""
 
@@ -46,11 +64,19 @@ class TradeLedgerBackend(Protocol):
     def load_fill_records(
         self,
         session_id: str | None = None,
+        *,
+        strategy_id: str | None = None,
+        account_id: str | None = None,
+        decision_id: str | None = None,
     ) -> list[LedgerFillRecord]: ...
 
     def load_snapshot_records(
         self,
         session_id: str | None = None,
+        *,
+        strategy_id: str | None = None,
+        account_id: str | None = None,
+        decision_id: str | None = None,
     ) -> list[LedgerSnapshotRecord]: ...
 
 
@@ -68,20 +94,54 @@ class InMemoryLedgerBackend:
     def load_fill_records(
         self,
         session_id: str | None = None,
+        *,
+        strategy_id: str | None = None,
+        account_id: str | None = None,
+        decision_id: str | None = None,
     ) -> list[LedgerFillRecord]:
         records = [record.model_copy(deep=True) for record in self._fill_records]
-        if session_id is None:
-            return records
-        return [record for record in records if record.fill.session_id == session_id]
+        if session_id is not None:
+            records = [
+                record for record in records if record.fill.session_id == session_id
+            ]
+        return [
+            record
+            for record in records
+            if _matches_identity(
+                record_strategy_id=record.strategy_id,
+                record_account_id=record.account_id,
+                record_decision_id=record.decision_id,
+                strategy_id=strategy_id,
+                account_id=account_id,
+                decision_id=decision_id,
+            )
+        ]
 
     def load_snapshot_records(
         self,
         session_id: str | None = None,
+        *,
+        strategy_id: str | None = None,
+        account_id: str | None = None,
+        decision_id: str | None = None,
     ) -> list[LedgerSnapshotRecord]:
         records = [record.model_copy(deep=True) for record in self._snapshot_records]
-        if session_id is None:
-            return records
-        return [record for record in records if record.account.session_id == session_id]
+        if session_id is not None:
+            records = [
+                record for record in records if record.account.session_id == session_id
+            ]
+        return [
+            record
+            for record in records
+            if _matches_identity(
+                record_strategy_id=record.strategy_id,
+                record_account_id=record.account_id,
+                record_decision_id=record.decision_id,
+                strategy_id=strategy_id,
+                account_id=account_id,
+                decision_id=decision_id,
+            )
+        ]
 
 
 class TradeLedger:
@@ -172,8 +232,20 @@ class TradeLedger:
             )
         )
 
-    def compute_metrics(self, session_id: str | None = None) -> dict[str, float | int]:
-        portfolio = self.to_portfolio_dataframe(session_id=session_id)
+    def compute_metrics(
+        self,
+        session_id: str | None = None,
+        *,
+        strategy_id: str | None = None,
+        account_id: str | None = None,
+        decision_id: str | None = None,
+    ) -> dict[str, float | int]:
+        portfolio = self.to_portfolio_dataframe(
+            session_id=session_id,
+            strategy_id=strategy_id,
+            account_id=account_id,
+            decision_id=decision_id,
+        )
         if portfolio.empty:
             return {
                 "total_return": 0.0,
@@ -217,7 +289,12 @@ class TradeLedger:
             if std > 0:
                 sharpe_ratio = float(returns.mean() / std * math.sqrt(252))
 
-        trades = self.to_trades_dataframe(session_id=session_id)
+        trades = self.to_trades_dataframe(
+            session_id=session_id,
+            strategy_id=strategy_id,
+            account_id=account_id,
+            decision_id=decision_id,
+        )
         realized_pnl_values = (
             [float(value) for value in trades["realized_pnl"].tolist()]
             if not trades.empty
@@ -262,11 +339,26 @@ class TradeLedger:
             "number_of_trades": number_of_trades,
             "avg_holding_period_days": self._calculate_avg_holding_period_days(
                 session_id=session_id,
+                strategy_id=strategy_id,
+                account_id=account_id,
+                decision_id=decision_id,
             ),
         }
 
-    def to_trades_dataframe(self, session_id: str | None = None) -> pd.DataFrame:
-        records = self._backend.load_fill_records(session_id=session_id)
+    def to_trades_dataframe(
+        self,
+        session_id: str | None = None,
+        *,
+        strategy_id: str | None = None,
+        account_id: str | None = None,
+        decision_id: str | None = None,
+    ) -> pd.DataFrame:
+        records = self._backend.load_fill_records(
+            session_id=session_id,
+            strategy_id=strategy_id,
+            account_id=account_id,
+            decision_id=decision_id,
+        )
         if not records:
             return pd.DataFrame(columns=pd.Index(self._TRADE_COLUMNS))
 
@@ -279,8 +371,20 @@ class TradeLedger:
             .reset_index(drop=True)
         )
 
-    def to_portfolio_dataframe(self, session_id: str | None = None) -> pd.DataFrame:
-        records = self._backend.load_snapshot_records(session_id=session_id)
+    def to_portfolio_dataframe(
+        self,
+        session_id: str | None = None,
+        *,
+        strategy_id: str | None = None,
+        account_id: str | None = None,
+        decision_id: str | None = None,
+    ) -> pd.DataFrame:
+        records = self._backend.load_snapshot_records(
+            session_id=session_id,
+            strategy_id=strategy_id,
+            account_id=account_id,
+            decision_id=decision_id,
+        )
         if not records:
             return pd.DataFrame(columns=pd.Index(self._PORTFOLIO_COLUMNS))
 
@@ -300,8 +404,32 @@ class TradeLedger:
     def load_fill_records(
         self,
         session_id: str | None = None,
+        *,
+        strategy_id: str | None = None,
+        account_id: str | None = None,
+        decision_id: str | None = None,
     ) -> list[LedgerFillRecord]:
-        return self._backend.load_fill_records(session_id=session_id)
+        return self._backend.load_fill_records(
+            session_id=session_id,
+            strategy_id=strategy_id,
+            account_id=account_id,
+            decision_id=decision_id,
+        )
+
+    def load_snapshot_records(
+        self,
+        session_id: str | None = None,
+        *,
+        strategy_id: str | None = None,
+        account_id: str | None = None,
+        decision_id: str | None = None,
+    ) -> list[LedgerSnapshotRecord]:
+        return self._backend.load_snapshot_records(
+            session_id=session_id,
+            strategy_id=strategy_id,
+            account_id=account_id,
+            decision_id=decision_id,
+        )
 
     def _trade_record_to_row(self, record: LedgerFillRecord) -> dict[str, object]:
         return {
@@ -396,9 +524,18 @@ class TradeLedger:
     def _calculate_avg_holding_period_days(
         self,
         session_id: str | None = None,
+        *,
+        strategy_id: str | None = None,
+        account_id: str | None = None,
+        decision_id: str | None = None,
     ) -> float:
         fill_records = sorted(
-            self._backend.load_fill_records(session_id=session_id),
+            self._backend.load_fill_records(
+                session_id=session_id,
+                strategy_id=strategy_id,
+                account_id=account_id,
+                decision_id=decision_id,
+            ),
             key=lambda record: record.fill.timestamp,
         )
         holding_start_times: dict[tuple[str, str, str], datetime] = {}

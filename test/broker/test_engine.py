@@ -623,6 +623,13 @@ def test_engine_publishes_events_with_per_strategy_account_sequences() -> None:
     assert account_a_events[0].decision_id == "decision-a"
     assert account_a_events[0].payload["order_status"] == "NEW"
     assert broker.get_event_log(account_id="account-a") == account_a_events
+    assert [
+        event.event_type
+        for event in broker.get_event_log(
+            account_id="account-b",
+            decision_id="decision-b",
+        )
+    ] == ["order_placed", "order_filled"]
 
 
 def test_engine_preserves_injected_falsy_event_sink() -> None:

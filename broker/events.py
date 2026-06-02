@@ -47,6 +47,7 @@ class BrokerEventSink(Protocol):
         strategy_id: str | None = None,
         account_id: str | None = None,
         session_id: str | None = None,
+        decision_id: str | None = None,
         event_type: str | None = None,
     ) -> list[BrokerEvent]: ...
 
@@ -73,6 +74,7 @@ class InMemoryBrokerEventSink:
         strategy_id: str | None = None,
         account_id: str | None = None,
         session_id: str | None = None,
+        decision_id: str | None = None,
         event_type: str | None = None,
     ) -> list[BrokerEvent]:
         events = [event.model_copy(deep=True) for event in self._events]
@@ -82,6 +84,8 @@ class InMemoryBrokerEventSink:
             events = [event for event in events if event.account_id == account_id]
         if session_id is not None:
             events = [event for event in events if event.session_id == session_id]
+        if decision_id is not None:
+            events = [event for event in events if event.decision_id == decision_id]
         if event_type is not None:
             events = [event for event in events if event.event_type == event_type]
         return events

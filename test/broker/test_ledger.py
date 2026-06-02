@@ -241,6 +241,85 @@ def test_in_memory_ledger_backend_round_trips_identity_fields() -> None:
     assert snapshot_records[0].decision_id == "decision-1"
 
 
+def test_in_memory_ledger_backend_filters_by_identity_fields() -> None:
+    backend = InMemoryLedgerBackend()
+    ledger = TradeLedger(backend=backend)
+    first_position = Position(
+        ticker="AAPL",
+        shares=10,
+        avg_cost=100.0,
+        strategy_id="strategy-1",
+        account_id="account-1",
+        session_id="session-1",
+        decision_id="decision-1",
+    )
+    first_account = AccountSnapshot(
+        cash=99_000.0,
+        equity=100_000.0,
+        positions=[first_position],
+        strategy_id="strategy-1",
+        account_id="account-1",
+        session_id="session-1",
+        decision_id="decision-1",
+    )
+    second_position = Position(
+        ticker="MSFT",
+        shares=5,
+        avg_cost=200.0,
+        strategy_id="strategy-2",
+        account_id="account-2",
+        session_id="session-2",
+        decision_id="decision-2",
+    )
+    second_account = AccountSnapshot(
+        cash=99_000.0,
+        equity=100_000.0,
+        positions=[second_position],
+        strategy_id="strategy-2",
+        account_id="account-2",
+        session_id="session-2",
+        decision_id="decision-2",
+    )
+    ledger.record_fill(
+        Fill(
+            order_id="order-1",
+            fill_price=100.0,
+            fill_qty=10,
+            fee=1.0,
+            slippage=0.5,
+            strategy_id="strategy-1",
+            account_id="account-1",
+            session_id="session-1",
+            decision_id="decision-1",
+        ),
+        first_position,
+        first_account,
+    )
+    ledger.record_fill(
+        Fill(
+            order_id="order-2",
+            fill_price=200.0,
+            fill_qty=5,
+            fee=1.0,
+            slippage=0.5,
+            strategy_id="strategy-2",
+            account_id="account-2",
+            session_id="session-2",
+            decision_id="decision-2",
+        ),
+        second_position,
+        second_account,
+    )
+
+    records = ledger.load_fill_records(
+        strategy_id="strategy-2",
+        account_id="account-2",
+        decision_id="decision-2",
+    )
+
+    assert [record.fill.order_id for record in records] == ["order-2"]
+
+
 def test_trade_ledger_keeps_previous_positions_isolated_by_account_id() -> None:
     ledger = TradeLedger()
     account_a_position = Position(

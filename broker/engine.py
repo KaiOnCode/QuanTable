@@ -119,12 +119,14 @@ class MockBrokerEngine(BrokerGateway):
         strategy_id: str | None = None,
         account_id: str | None = "default",
         session_id: str | None = None,
+        decision_id: str | None = None,
         event_type: str | None = None,
     ) -> list[BrokerEvent]:
         return self._event_sink.load_events(
             strategy_id=strategy_id,
             account_id=account_id,
             session_id=session_id,
+            decision_id=decision_id,
             event_type=event_type,
         )
 
