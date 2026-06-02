@@ -210,3 +210,38 @@ def test_orchestrator_passes_execution_complete_hook_to_execution_node() -> None
     assert callback_report.status == "executed"
     assert callback_state["ticker"] == "AAPL"
     assert callback_state["session_id"] == "session-hook"
+
+
+def test_orchestrator_run_accepts_as_of_and_identity_fields() -> None:
+    captured_state: dict[str, object] = {}
+
+    def execution_node(state):
+        captured_state.update(state)
+        return {"execution_report": "{}"}
+
+    assistant = IntelliFin_Assistant(
+        llm=object(),
+        tool_nodes=_stub_tool_nodes(),
+        agent_nodes=_stub_agent_nodes(),
+        execution_node=execution_node,
+        broker=MockBrokerEngine(BrokerConfig()),
+    )
+
+    assistant.run(
+        "AAPL",
+        date="2026-01-02T00:00:00Z",
+        as_of="2026-01-02T00:00:00Z",
+        current_position_pct=10.0,
+        execution_enabled=True,
+        strategy_id="strategy-1",
+        account_id="account-1",
+        session_id="session-1",
+        decision_id="decision-1",
+    )
+
+    assert captured_state["date"] == "2026-01-02T00:00:00Z"
+    assert captured_state["as_of"] == "2026-01-02T00:00:00Z"
+    assert captured_state["strategy_id"] == "strategy-1"
+    assert captured_state["account_id"] == "account-1"
+    assert captured_state["session_id"] == "session-1"
+    assert captured_state["decision_id"] == "decision-1"

@@ -181,16 +181,25 @@ class IntelliFin_Assistant:
         date: str | None = None,
         current_position_pct: float = 0.0,
         *,
+        as_of: str | None = None,
         execution_enabled: bool = False,
+        strategy_id: str = "",
+        account_id: str = "default",
         session_id: str = "",
+        decision_id: str = "",
     ):
+        effective_date = date or as_of
         # 初始化状态
         initial_state = {
             "ticker": ticker,
-            "date": date,
+            "date": effective_date,
+            "as_of": as_of or effective_date,
             "current_position_pct": current_position_pct,
             "execution_enabled": execution_enabled,
+            "strategy_id": strategy_id,
+            "account_id": account_id,
             "session_id": session_id,
+            "decision_id": decision_id,
         }
         thread_id = session_id or "42"
         return self.wf.invoke(

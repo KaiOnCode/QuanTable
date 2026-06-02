@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, cast
@@ -13,6 +14,9 @@ from broker.engine import BarData, MockBrokerEngine
 from broker.ledger import TradeLedger
 from broker.models import AccountSnapshot
 from broker.views import BacktestConfigView, BacktestResultView, to_backtest_result_view
+
+
+BacktestScopedAgentFactory = Callable[[str, MockBrokerEngine], Any]
 
 
 @dataclass
@@ -42,11 +46,21 @@ class BacktestRunner:
         broker: MockBrokerEngine | None = None,
         ledger: TradeLedger | None = None,
         agent: Any | None = None,
+        scoped_agent_factory: BacktestScopedAgentFactory | None = None,
     ) -> None:
+        if agent is not None and scoped_agent_factory is not None:
+            msg = "agent and scoped_agent_factory cannot both be provided"
+            raise ValueError(msg)
         self._config = config
         self.broker = broker or MockBrokerEngine(config)
         self.ledger = ledger or TradeLedger()
-        self.agent = agent or IntelliFin_Assistant(broker=self.broker)
+        if agent is not None:
+            self.agent = agent
+        elif scoped_agent_factory is not None:
+            self.agent = None
+        else:
+            self.agent = IntelliFin_Assistant(broker=self.broker)
+        self._scoped_agent_factory = scoped_agent_factory
         self.broker.register_on_fill(self.ledger.record_fill)
 
     def run(
@@ -55,24 +69,46 @@ class BacktestRunner:
         price_df: pd.DataFrame,
         start_date: str,
         end_date: str,
+        *,
+        strategy_id: str = "",
+        account_id: str = "default",
     ) -> BacktestResult:
         date_filtered = price_df.loc[start_date:end_date].copy()
         session_id = f"backtest-{ticker.lower()}-{uuid4().hex[:8]}"
 
         for trading_date, row in date_filtered.iterrows():
             self.broker.on_bar({ticker: self._row_to_bar(row)})
-            current_position_pct = self._calculate_current_position_pct(ticker)
-            self.agent.run(
+            as_of = self._to_iso_date(trading_date)
+            if self._scoped_agent_factory is not None:
+                agent = self._scoped_agent_factory(as_of, self.broker)
+            else:
+                agent = self.agent
+                if agent is None:
+                    msg = "backtest agent is not configured"
+                    raise RuntimeError(msg)
+            current_position_pct = self._calculate_current_position_pct(
                 ticker,
-                date=self._to_iso_date(trading_date),
+                account_id=account_id,
+            )
+            agent.run(
+                ticker,
+                date=as_of,
+                as_of=as_of,
                 current_position_pct=current_position_pct,
                 execution_enabled=True,
                 session_id=session_id,
+                strategy_id=strategy_id,
+                account_id=account_id,
             )
             trading_timestamp = self._require_timestamp(trading_date)
             self.ledger.record_daily_snapshot(
                 date=trading_timestamp.strftime("%Y-%m-%d"),
-                account=self._account_snapshot_for_date(trading_timestamp, session_id),
+                account=self._account_snapshot_for_date(
+                    trading_timestamp,
+                    session_id,
+                    strategy_id=strategy_id,
+                    account_id=account_id,
+                ),
             )
 
         portfolio = self._build_portfolio_performance_view(
@@ -90,7 +126,8 @@ class BacktestRunner:
                     start_date=start_date,
                     end_date=end_date,
                     benchmark_symbol="SPY",
-                    account_id="default",
+                    strategy_id=strategy_id,
+                    account_id=account_id,
                 ),
                 metrics=metrics,
                 portfolio=portfolio,
@@ -114,9 +151,13 @@ class BacktestRunner:
         msg = f"missing required price column; expected one of {column_names!r}"
         raise KeyError(msg)
 
-    def _calculate_current_position_pct(self, ticker: str) -> float:
-        account = self.broker.get_account()
-        position = self.broker.get_position(ticker)
+    def _calculate_current_position_pct(
+        self,
+        ticker: str,
+        account_id: str = "default",
+    ) -> float:
+        account = self.broker.get_account(account_id=account_id)
+        position = self.broker.get_position(ticker, account_id=account_id)
         if position is None or account.equity == 0:
             return 0.0
 
@@ -139,12 +180,17 @@ class BacktestRunner:
         self,
         trading_date: Any,
         session_id: str,
+        *,
+        strategy_id: str = "",
+        account_id: str = "default",
     ) -> AccountSnapshot:
-        snapshot = self.broker.get_account()
+        snapshot = self.broker.get_account(account_id=account_id)
         snapshot.timestamp = cast(
             datetime,
             self._require_timestamp(self._to_iso_date(trading_date)).to_pydatetime(),
         )
+        snapshot.strategy_id = strategy_id
+        snapshot.account_id = account_id
         snapshot.session_id = session_id
         return snapshot
 

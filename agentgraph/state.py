@@ -17,6 +17,7 @@ class AgentState(MessagesState):
     # ========== 输入参数 ==========
     ticker: Annotated[str, "股票代码，例如 AAPL, TSM"]
     date: Annotated[str, "日期，例如 2024-01-15T00:00:00Z"]
+    as_of: NotRequired[Annotated[Optional[str], "无前视执行边界时间戳"]]
     current_position_pct: Annotated[
         float, "当前持仓百分比，例如 20意为20%，范围为 0~100"
     ]

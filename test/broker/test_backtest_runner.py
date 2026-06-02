@@ -14,6 +14,15 @@ class StubAgent:
         raise AssertionError("empty backtests should not invoke the agent")
 
 
+class RecordingBacktestAgent:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def run(self, ticker: str, **kwargs: object) -> dict[str, object]:
+        self.calls.append({"ticker": ticker, **kwargs})
+        return {"execution_report": "HOLD"}
+
+
 class ScriptedExecutionAgent:
     def __init__(self, broker: MockBrokerEngine) -> None:
         self._execution_node = create_execution_node(broker)
@@ -24,10 +33,13 @@ class ScriptedExecutionAgent:
         date: str | None = None,
         current_position_pct: float = 0.0,
         *,
+        as_of: str | None = None,
         execution_enabled: bool = False,
+        strategy_id: str = "",
+        account_id: str = "default",
         session_id: str = "",
     ) -> dict[str, object]:
-        del current_position_pct
+        del as_of, current_position_pct
         return self._execution_node(
             {
                 "ticker": ticker,
@@ -36,6 +48,8 @@ class ScriptedExecutionAgent:
                 "Target_position_pct": 50.0,
                 "PM_report": "Open a half-sized position.",
                 "execution_enabled": execution_enabled,
+                "strategy_id": strategy_id,
+                "account_id": account_id,
                 "session_id": session_id,
             }
         )
@@ -52,10 +66,13 @@ class BuyThenHoldAgent:
         date: str | None = None,
         current_position_pct: float = 0.0,
         *,
+        as_of: str | None = None,
         execution_enabled: bool = False,
+        strategy_id: str = "",
+        account_id: str = "default",
         session_id: str = "",
     ) -> dict[str, object]:
-        del date, current_position_pct
+        del date, as_of, current_position_pct
         self._calls += 1
         if self._calls == 1:
             return self._execution_node(
@@ -65,6 +82,8 @@ class BuyThenHoldAgent:
                     "Target_position_pct": 50.0,
                     "PM_report": "Open a half-sized position.",
                     "execution_enabled": execution_enabled,
+                    "strategy_id": strategy_id,
+                    "account_id": account_id,
                     "session_id": session_id,
                 }
             )
@@ -86,6 +105,104 @@ def test_backtest_runner_returns_empty_exports_for_an_empty_price_window() -> No
     assert result.trades.empty
     assert result.portfolio.empty
     assert result.metrics["number_of_trades"] == 0
+
+
+def test_backtest_runner_passes_as_of_to_each_agent_call() -> None:
+    agent = RecordingBacktestAgent()
+    runner = BacktestRunner(BrokerConfig(), agent=agent)
+    price_df = pd.DataFrame(
+        [
+            {"Open": 99.0, "High": 101.0, "Low": 98.0, "Close": 100.0},
+            {"Open": 109.0, "High": 111.0, "Low": 108.0, "Close": 110.0},
+        ],
+        index=pd.to_datetime(["2026-01-02", "2026-01-03"]),
+    )
+
+    runner.run(
+        ticker="AAPL",
+        price_df=price_df,
+        start_date="2026-01-02",
+        end_date="2026-01-03",
+    )
+
+    assert [call["as_of"] for call in agent.calls] == [
+        "2026-01-02T00:00:00Z",
+        "2026-01-03T00:00:00Z",
+    ]
+    assert [call["date"] for call in agent.calls] == [
+        "2026-01-02T00:00:00Z",
+        "2026-01-03T00:00:00Z",
+    ]
+
+
+def test_backtest_runner_builds_scoped_agent_for_each_as_of_boundary() -> None:
+    created_as_of: list[str] = []
+    agent_calls: list[str] = []
+
+    class ScopedAgent:
+        def __init__(self, as_of: str) -> None:
+            self._as_of = as_of
+
+        def run(self, ticker: str, **kwargs: object) -> dict[str, object]:
+            del ticker
+            agent_calls.append(self._as_of)
+            assert kwargs["as_of"] == self._as_of
+            return {"execution_report": "HOLD"}
+
+    def scoped_agent_factory(as_of: str, broker: MockBrokerEngine) -> ScopedAgent:
+        assert isinstance(broker, MockBrokerEngine)
+        created_as_of.append(as_of)
+        return ScopedAgent(as_of)
+
+    runner = BacktestRunner(
+        BrokerConfig(),
+        scoped_agent_factory=scoped_agent_factory,
+    )
+    price_df = pd.DataFrame(
+        [
+            {"Open": 99.0, "High": 101.0, "Low": 98.0, "Close": 100.0},
+            {"Open": 109.0, "High": 111.0, "Low": 108.0, "Close": 110.0},
+        ],
+        index=pd.to_datetime(["2026-01-02", "2026-01-03"]),
+    )
+
+    runner.run(
+        ticker="AAPL",
+        price_df=price_df,
+        start_date="2026-01-02",
+        end_date="2026-01-03",
+    )
+
+    assert created_as_of == [
+        "2026-01-02T00:00:00Z",
+        "2026-01-03T00:00:00Z",
+    ]
+    assert agent_calls == created_as_of
+
+
+def test_backtest_runner_propagates_strategy_and_account_identity() -> None:
+    agent = RecordingBacktestAgent()
+    runner = BacktestRunner(BrokerConfig(), agent=agent)
+    price_df = pd.DataFrame(
+        [{"Open": 99.0, "High": 101.0, "Low": 98.0, "Close": 100.0}],
+        index=pd.to_datetime(["2026-01-02"]),
+    )
+
+    result = runner.run(
+        ticker="AAPL",
+        price_df=price_df,
+        start_date="2026-01-02",
+        end_date="2026-01-02",
+        strategy_id="strategy-backtest",
+        account_id="account-backtest",
+    )
+
+    assert agent.calls[0]["strategy_id"] == "strategy-backtest"
+    assert agent.calls[0]["account_id"] == "account-backtest"
+    assert result.view.config.strategy_id == "strategy-backtest"
+    assert result.view.config.account_id == "account-backtest"
+    assert list(result.portfolio["strategy_id"]) == ["strategy-backtest"]
+    assert list(result.portfolio["account_id"]) == ["account-backtest"]
 
 
 def test_backtest_runner_returns_structured_trade_and_portfolio_exports() -> None:
