@@ -10,7 +10,8 @@ class BrokerConfig(BaseSettings):
     # Rates use decimal fractions: 0.001 = 0.1% = 10 bps.
     commission_rate: float = 0.001
     slippage_rate: float = 0.0005
-    # Phase 1 only defines the switch. Fill-timing behavior lands in Phase 2.
+    # close_bar fills market orders from the current close reference; next_open
+    # queues market orders until the next bar's open. Both modes are deterministic.
     execution_timing: Literal["close_bar", "next_open"] = "close_bar"
     max_position_pct: float = 1.0
     # Reserved for portfolio-level caps once multi-ticker execution is added.

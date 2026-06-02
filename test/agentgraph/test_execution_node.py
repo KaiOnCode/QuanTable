@@ -726,3 +726,33 @@ def test_execution_node_does_not_mark_pending_broker_order_as_executed() -> None
         "order_placed",
         "execution_pending",
     ]
+
+
+def test_execution_node_reports_pending_for_next_open_market_order() -> None:
+    broker = MockBrokerEngine(BrokerConfig(execution_timing="next_open"))
+    broker.on_bar(
+        {
+            "AAPL": {"open": 99.0, "high": 101.0, "low": 98.0, "close": 100.0},
+        }
+    )
+    execution_node = create_execution_node(broker)
+
+    result = execution_node(
+        {
+            "ticker": "AAPL",
+            "Action": "BUY",
+            "Target_position_pct": 50.0,
+            "execution_enabled": True,
+        }
+    )
+
+    report = _report_view(result)
+
+    assert report.status == "pending"
+    assert report.order is not None
+    assert report.order.status == "pending"
+    assert report.fills == []
+    assert [event.event_type for event in broker.get_event_log()] == [
+        "order_placed",
+        "execution_pending",
+    ]

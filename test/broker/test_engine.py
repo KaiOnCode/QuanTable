@@ -63,6 +63,86 @@ def test_market_buy_order_fills_immediately_and_updates_account_state() -> None:
     assert account.positions[0].ticker == "AAPL"
 
 
+def test_market_order_with_next_open_timing_fills_on_next_bar_open() -> None:
+    broker = MockBrokerEngine(
+        BrokerConfig(
+            initial_cash=100_000.0,
+            commission_rate=0.0,
+            slippage_rate=0.0,
+            execution_timing="next_open",
+        )
+    )
+    broker.on_bar(
+        {
+            "AAPL": {"open": 99.0, "high": 101.0, "low": 98.0, "close": 100.0},
+        }
+    )
+
+    placed_order = broker.place_order(
+        Order(ticker="AAPL", side=OrderSide.BUY, type=OrderType.MARKET, qty=10)
+    )
+
+    assert placed_order.status is OrderStatus.NEW
+    assert broker.get_fills(placed_order.id) == []
+    assert [event.event_type for event in broker.get_event_log()] == ["order_placed"]
+
+    broker.on_bar(
+        {
+            "AAPL": {"open": 105.0, "high": 106.0, "low": 104.0, "close": 105.5},
+        }
+    )
+
+    stored_order = broker.get_order(placed_order.id)
+    assert stored_order is not None
+    assert stored_order.status is OrderStatus.FILLED
+    fills = broker.get_fills(placed_order.id)
+    assert len(fills) == 1
+    assert fills[0].fill_price == pytest.approx(105.0)
+    position = broker.get_position("AAPL")
+    assert position is not None
+    assert position.avg_cost == pytest.approx(105.0)
+    assert [event.event_type for event in broker.get_event_log()] == [
+        "order_placed",
+        "order_filled",
+    ]
+
+
+def test_next_open_market_order_revalidates_risk_at_open_price() -> None:
+    broker = MockBrokerEngine(
+        BrokerConfig(
+            initial_cash=1_000.0,
+            commission_rate=0.0,
+            slippage_rate=0.0,
+            execution_timing="next_open",
+        )
+    )
+    broker.on_bar(
+        {
+            "AAPL": {"open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0},
+        }
+    )
+    placed_order = broker.place_order(
+        Order(ticker="AAPL", side=OrderSide.BUY, type=OrderType.MARKET, qty=100)
+    )
+
+    broker.on_bar(
+        {
+            "AAPL": {"open": 20.0, "high": 20.0, "low": 20.0, "close": 20.0},
+        }
+    )
+
+    stored_order = broker.get_order(placed_order.id)
+    assert stored_order is not None
+    assert stored_order.status is OrderStatus.REJECTED
+    assert broker.get_fills(placed_order.id) == []
+    assert broker.get_account().cash == pytest.approx(1_000.0)
+    assert [event.event_type for event in broker.get_event_log()] == [
+        "order_placed",
+        "risk_check_failed",
+        "order_rejected",
+    ]
+
+
 def test_limit_buy_order_stays_pending_until_a_future_bar_touches_the_limit() -> None:
     broker = MockBrokerEngine(
         BrokerConfig(

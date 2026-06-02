@@ -68,11 +68,36 @@ class MockBrokerEngine(BrokerGateway):
         self._latest_bars.update(bars)
         for account_state in self._accounts.values():
             for order in list(account_state.orders.values()):
+                if order.status is not OrderStatus.NEW or order.ticker not in bars:
+                    continue
                 if (
-                    order.status is OrderStatus.NEW
-                    and order.type is OrderType.LIMIT
-                    and order.ticker in bars
+                    order.type is OrderType.MARKET
+                    and self._config.execution_timing == "next_open"
                 ):
+                    open_price = float(bars[order.ticker]["open"])
+                    account_before = self.get_account(account_id=order.account_id)
+                    passed, reason = self._risk_checker.check(
+                        order,
+                        account_before,
+                        reference_price=open_price,
+                    )
+                    if not passed:
+                        order.status = OrderStatus.REJECTED
+                        order.updated_at = _utc_now()
+                        self._record_event(
+                            "risk_check_failed",
+                            order=order,
+                            details={"reason": reason},
+                        )
+                        self._record_order_event(
+                            "order_rejected",
+                            order,
+                            details={"reason": reason},
+                        )
+                        self._notify_order_callbacks(order)
+                        continue
+                    self._try_fill_market(order, open_price)
+                elif order.type is OrderType.LIMIT:
                     self._try_fill_limit(order, bars[order.ticker])
 
     def get_account(self, account_id: str = "default") -> AccountSnapshot:
@@ -199,7 +224,10 @@ class MockBrokerEngine(BrokerGateway):
             self._notify_order_callbacks(stored_order)
             return stored_order.model_copy(deep=True)
 
-        if stored_order.type is OrderType.MARKET:
+        if (
+            stored_order.type is OrderType.MARKET
+            and self._config.execution_timing == "close_bar"
+        ):
             self._try_fill_market(stored_order, reference_price)
 
         return stored_order.model_copy(deep=True)
