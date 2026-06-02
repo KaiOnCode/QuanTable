@@ -302,6 +302,36 @@ def test_execution_node_returns_failed_report_when_market_price_is_missing() -> 
     ]
 
 
+def test_execution_event_payload_contains_minimal_contract_fields() -> None:
+    broker = MockBrokerEngine(BrokerConfig())
+    execution_node = create_execution_node(broker)
+
+    execution_node(
+        {
+            "ticker": "AAPL",
+            "Action": "BUY",
+            "Target_position_pct": 50.0,
+            "execution_enabled": True,
+            "strategy_id": "strategy-1",
+            "account_id": "account-1",
+            "session_id": "session-1",
+            "decision_id": "decision-1",
+        }
+    )
+
+    event = broker.get_event_log(
+        account_id="account-1",
+        event_type="execution_failed",
+    )[0]
+    assert event.entity_type == "execution"
+    assert event.entity_id == "decision-1"
+    assert event.payload == {
+        "status": "failed",
+        "reason": "missing market price",
+        "pm_action": "BUY",
+    }
+
+
 def test_execution_node_places_market_order_and_serializes_execution_report() -> None:
     broker = MockBrokerEngine(
         BrokerConfig(

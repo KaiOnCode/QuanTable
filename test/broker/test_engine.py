@@ -4,7 +4,7 @@ import pytest
 
 from broker.config import BrokerConfig
 from broker.engine import MockBrokerEngine
-from broker.events import InMemoryBrokerEventSink
+from broker.events import InMemoryBrokerEventSink, ORDER_EVENT_PAYLOAD_KEYS
 from broker.models import Order, OrderSide, OrderStatus, OrderType
 
 
@@ -673,6 +673,31 @@ def test_client_order_id_is_idempotent_within_strategy_account_scope() -> None:
         broker.get_event_log(account_id="account-1")[0].payload["client_order_id"]
         == "client-order-1"
     )
+
+
+def test_order_event_payload_contains_minimal_contract_fields() -> None:
+    broker = MockBrokerEngine(BrokerConfig())
+    broker.on_bar(
+        {
+            "AAPL": {"open": 99.0, "high": 101.0, "low": 98.0, "close": 100.0},
+        }
+    )
+    broker.place_order(
+        Order(
+            ticker="AAPL",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            qty=10,
+            client_order_id="client-order-1",
+        )
+    )
+
+    placed_event = broker.get_event_log()[0]
+
+    assert set(ORDER_EVENT_PAYLOAD_KEYS).issubset(placed_event.payload)
+    assert placed_event.payload["order_id"]
+    assert placed_event.payload["client_order_id"] == "client-order-1"
+    assert placed_event.payload["order_status"] == "NEW"
 
 
 def test_engine_preserves_injected_falsy_event_sink() -> None:

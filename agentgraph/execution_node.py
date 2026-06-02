@@ -4,7 +4,7 @@ from collections.abc import Callable, Mapping
 from math import floor
 from typing import TYPE_CHECKING
 
-from broker.events import BrokerEvent
+from broker.events import BrokerEvent, BrokerEventType
 from broker.gateway import BrokerGateway
 from broker.models import ExecutionReport, Order, OrderSide, OrderStatus, OrderType
 from broker.views import (
@@ -292,7 +292,7 @@ def _approval_snapshot(
 def _publish_execution_event(
     broker: BrokerGateway,
     *,
-    event_type: str,
+    event_type: BrokerEventType,
     report: ExecutionReportView,
     ticker: str,
 ) -> None:
@@ -329,7 +329,9 @@ def _execution_status_from_order_status(status: OrderStatus) -> ExecutionStatusV
     return "failed"
 
 
-def _execution_event_type_for_status(status: ExecutionStatusView) -> str | None:
+def _execution_event_type_for_status(
+    status: ExecutionStatusView,
+) -> BrokerEventType | None:
     if status == "pending":
         return "execution_pending"
     if status == "rejected":

@@ -1,10 +1,41 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, model_validator
+
+
+BrokerEventType = Literal[
+    "order_placed",
+    "order_filled",
+    "order_canceled",
+    "risk_check_failed",
+    "order_rejected",
+    "execution_pending",
+    "execution_rejected",
+    "execution_failed",
+]
+
+BROKER_EVENT_TYPES: frozenset[str] = frozenset(
+    {
+        "order_placed",
+        "order_filled",
+        "order_canceled",
+        "risk_check_failed",
+        "order_rejected",
+        "execution_pending",
+        "execution_rejected",
+        "execution_failed",
+    }
+)
+ORDER_EVENT_PAYLOAD_KEYS: frozenset[str] = frozenset(
+    {"order_id", "client_order_id", "order_status", "side", "order_type", "qty"}
+)
+EXECUTION_EVENT_PAYLOAD_KEYS: frozenset[str] = frozenset(
+    {"status", "reason", "pm_action"}
+)
 
 
 def _utc_now() -> datetime:
@@ -16,7 +47,7 @@ class BrokerEvent(BaseModel):
     sequence: int = 0
     # Keep a small stable string so other modules can branch on event type
     # without importing engine internals.
-    event_type: str
+    event_type: BrokerEventType
     entity_type: str = ""
     entity_id: str = ""
     timestamp: datetime = Field(default_factory=_utc_now)

@@ -7,7 +7,7 @@ from typing import Any, Literal
 import pandas as pd
 from pydantic import BaseModel, Field
 
-from broker.events import BrokerEvent
+from broker.events import BrokerEvent, BrokerEventType
 from broker.ledger import LedgerFillRecord
 from broker.models import (
     AccountSnapshot,
@@ -144,7 +144,7 @@ class ExecutionReportView(BaseModel):
 class BrokerEventView(BaseModel):
     event_id: str
     sequence: int
-    event_type: str
+    event_type: BrokerEventType
     entity_type: str
     entity_id: str
     strategy_id: str = ""

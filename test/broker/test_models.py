@@ -1,4 +1,5 @@
 from datetime import timezone
+from typing import Any, cast
 
 import pytest
 from pydantic import ValidationError
@@ -170,6 +171,11 @@ def test_broker_event_uses_independent_default_details() -> None:
     assert first_event.payload == {}
     assert first_event.details == {"order_id": "order-1"}
     assert second_event.details == {}
+
+
+def test_broker_event_rejects_unknown_event_type() -> None:
+    with pytest.raises(ValidationError):
+        BrokerEvent(event_type=cast(Any, "made_up_event"))
 
 
 def test_in_memory_broker_event_sink_assigns_sequence_per_strategy_account() -> None:

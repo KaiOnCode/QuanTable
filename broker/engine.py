@@ -6,7 +6,12 @@ from datetime import datetime, timezone
 from typing import TypedDict
 
 from broker.config import BrokerConfig
-from broker.events import BrokerEvent, BrokerEventSink, InMemoryBrokerEventSink
+from broker.events import (
+    BrokerEvent,
+    BrokerEventSink,
+    BrokerEventType,
+    InMemoryBrokerEventSink,
+)
 from broker.gateway import BrokerGateway
 from broker.models import (
     AccountSnapshot,
@@ -471,7 +476,7 @@ class MockBrokerEngine(BrokerGateway):
 
     def _record_order_event(
         self,
-        event_type: str,
+        event_type: BrokerEventType,
         order: Order,
         *,
         details: dict[str, str] | None = None,
@@ -490,7 +495,7 @@ class MockBrokerEngine(BrokerGateway):
 
     def _record_event(
         self,
-        event_type: str,
+        event_type: BrokerEventType,
         *,
         order: Order,
         details: dict[str, str],
