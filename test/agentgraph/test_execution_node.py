@@ -436,6 +436,35 @@ def test_execution_node_uses_modified_target_pct_from_hitl_state() -> None:
     assert report.position_after.shares == pytest.approx(200.0)
 
 
+def test_execution_node_treats_approved_approval_as_execution_without_snapshot() -> (
+    None
+):
+    broker = MockBrokerEngine(BrokerConfig())
+    broker.on_bar(
+        {
+            "AAPL": {"open": 99.0, "high": 101.0, "low": 98.0, "close": 100.0},
+        }
+    )
+    execution_node = create_execution_node(broker)
+
+    result = execution_node(
+        {
+            "ticker": "AAPL",
+            "Action": "BUY",
+            "Target_position_pct": 50.0,
+            "approval_status": "approved",
+            "execution_enabled": True,
+        }
+    )
+
+    report = _report_view(result)
+
+    assert report.status == "executed"
+    assert report.approval is None
+    assert report.order is not None
+    assert report.order.status == "executed"
+
+
 def test_execution_node_syncs_portfolio_manager_after_execution() -> None:
     broker = MockBrokerEngine(
         BrokerConfig(

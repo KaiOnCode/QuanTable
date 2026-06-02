@@ -9,6 +9,7 @@ from broker.events import BrokerEvent
 from broker.ledger import LedgerFillRecord
 from broker.models import (
     AccountSnapshot,
+    ExecutionReport,
     Fill,
     Order,
     OrderSide,
@@ -22,6 +23,8 @@ from broker.views import (
     BacktestResultView,
     to_broker_event_view,
     to_backtest_result_view,
+    to_execution_outcome_view,
+    to_execution_report_view,
     to_execution_status_report_view,
     to_order_view,
     to_performance_metrics_view,
@@ -266,6 +269,120 @@ def test_status_report_serializer_supports_no_order_execution_branches() -> None
     assert view.reason == "waiting for approval"
     assert view.account_id == "account-1"
     assert view.decision_id == "decision-1"
+
+
+def test_execution_outcome_view_serializes_executed_report_for_memory_consumers() -> (
+    None
+):
+    position = Position(
+        ticker="AAPL",
+        shares=10,
+        avg_cost=100.0,
+        strategy_id="strategy-1",
+        account_id="account-1",
+        session_id="session-1",
+        decision_id="decision-1",
+    )
+    account = AccountSnapshot(
+        cash=99_000.0,
+        equity=100_000.0,
+        positions=[position],
+        strategy_id="strategy-1",
+        account_id="account-1",
+        session_id="session-1",
+        decision_id="decision-1",
+    )
+    order = Order(
+        ticker="AAPL",
+        side=OrderSide.BUY,
+        type=OrderType.MARKET,
+        qty=10,
+        status=OrderStatus.FILLED,
+        client_order_id="client-order-1",
+        strategy_id="strategy-1",
+        account_id="account-1",
+        session_id="session-1",
+        decision_id="decision-1",
+    )
+    fill = Fill(
+        order_id=order.id,
+        fill_price=100.0,
+        fill_qty=10,
+        fee=1.0,
+        slippage=0.5,
+        strategy_id="strategy-1",
+        account_id="account-1",
+        session_id="session-1",
+        decision_id="decision-1",
+    )
+    report = to_execution_report_view(
+        ExecutionReport(
+            order=order,
+            fills=[fill],
+            position_after=position,
+            account_after=account,
+            pm_action="BUY",
+            pm_report_summary="Open position.",
+            strategy_id="strategy-1",
+            account_id="account-1",
+            session_id="session-1",
+            decision_id="decision-1",
+        )
+    )
+    trade_record = LedgerFillRecord(
+        fill=fill,
+        ticker="AAPL",
+        side="BUY",
+        realized_pnl=-1.5,
+        position_after=position,
+        account_after=account,
+        strategy_id="strategy-1",
+        account_id="account-1",
+        session_id="session-1",
+        decision_id="decision-1",
+    )
+
+    outcome = to_execution_outcome_view(report, trades=[trade_record])
+
+    assert outcome.status == "executed"
+    assert outcome.strategy_id == "strategy-1"
+    assert outcome.account_id == "account-1"
+    assert outcome.session_id == "session-1"
+    assert outcome.decision_id == "decision-1"
+    assert outcome.order is not None
+    assert outcome.order.client_order_id == "client-order-1"
+    assert len(outcome.trades) == 1
+    assert outcome.realized_pnl == pytest.approx(-1.5)
+    assert outcome.account_after is not None
+    assert outcome.account_after.equity == pytest.approx(100_000.0)
+
+
+def test_execution_outcome_view_preserves_no_trade_reason() -> None:
+    report = to_execution_status_report_view(
+        status="rejected",
+        reason="approval rejected",
+        pm_action="BUY",
+        pm_report_summary="Increase exposure.",
+        approval=ApprovalSnapshotView(
+            approval_id="approval-1",
+            approval_status="timed_out",
+            original_target_pct=50.0,
+        ),
+        strategy_id="strategy-1",
+        account_id="account-1",
+        session_id="session-1",
+        decision_id="decision-1",
+    )
+
+    outcome = to_execution_outcome_view(report)
+
+    assert outcome.status == "rejected"
+    assert outcome.order is None
+    assert outcome.trades == []
+    assert outcome.realized_pnl == pytest.approx(0.0)
+    assert outcome.reason == "approval rejected"
+    assert outcome.approval_status == "timed_out"
+    assert outcome.decision_id == "decision-1"
 
 
 def test_broker_event_view_uses_payload_contract() -> None:

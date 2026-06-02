@@ -141,6 +141,21 @@ class ExecutionReportView(BaseModel):
     decision_id: str = ""
 
 
+class ExecutionOutcomeView(BaseModel):
+    status: ExecutionStatusView
+    order: OrderView | None = None
+    trades: list[TradeView] = Field(default_factory=list)
+    account_after: AccountView | None = None
+    realized_pnl: float = 0.0
+    reason: str = ""
+    pm_action: str = ""
+    approval_status: str = ""
+    strategy_id: str = ""
+    account_id: str = "default"
+    session_id: str = ""
+    decision_id: str = ""
+
+
 class BrokerEventView(BaseModel):
     event_id: str
     sequence: int
@@ -389,6 +404,30 @@ def to_execution_status_report_view(
         account_id=account_id,
         session_id=session_id,
         decision_id=decision_id,
+    )
+
+
+def to_execution_outcome_view(
+    report: ExecutionReportView,
+    *,
+    trades: Sequence[LedgerFillRecord] | None = None,
+) -> ExecutionOutcomeView:
+    trade_views = [to_trade_view(record) for record in trades or []]
+    return ExecutionOutcomeView(
+        status=report.status,
+        order=report.order,
+        trades=trade_views,
+        account_after=report.account_after,
+        realized_pnl=sum(trade.realized_pnl for trade in trade_views),
+        reason=report.reason,
+        pm_action=report.pm_action,
+        approval_status=(
+            report.approval.approval_status if report.approval is not None else ""
+        ),
+        strategy_id=report.strategy_id,
+        account_id=report.account_id,
+        session_id=report.session_id,
+        decision_id=report.decision_id,
     )
 
 
