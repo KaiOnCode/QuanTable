@@ -1,0 +1,128 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { ActionBadge, DirectionBadge } from "@/components/shared/badges";
+import { History, Loader2, X } from "lucide-react";
+import { api } from "@/lib/api/client";
+
+type HistoryItem = {
+  session_id: string;
+  ticker: string;
+  mode: string;
+  created_at: string;
+  action: string;
+  direction: string;
+  confidence: number;
+  oneliner: string;
+};
+
+export function HistoryPanel() {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [items, setItems] = useState<HistoryItem[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setLoading(true);
+      api
+        .get<{ items: HistoryItem[] }>("analyze/history?limit=30")
+        .then((data) => setItems(data.items || []))
+        .catch(() => {})
+        .finally(() => setLoading(false));
+    }
+  }, [open]);
+
+  const handleSelect = (item: HistoryItem) => {
+    setOpen(false);
+    router.push(`/quick-ask/${item.session_id}`);
+  };
+
+  const handleDelete = async (e: React.MouseEvent, item: HistoryItem) => {
+    e.stopPropagation();
+    try {
+      await api.delete(`analyze/history/${item.session_id}`);
+      setItems((prev) => prev.filter((i) => i.session_id !== item.session_id));
+    } catch {
+      // ignore
+    }
+  };
+
+  return (
+    <Sheet open={open} onOpenChange={setOpen}>
+      <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setOpen(true)}>
+        <History className="h-4 w-4" />
+        History
+      </Button>
+      <SheetContent side="right">
+        <SheetHeader>
+          <SheetTitle>Ask History</SheetTitle>
+        </SheetHeader>
+        {loading ? (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : items.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-8 text-center">
+            No analysis history yet
+          </p>
+        ) : (
+          <ScrollArea className="flex-1 -mx-4 px-4">
+            <div className="space-y-1">
+              {items.map((item) => (
+                <button
+                  key={item.session_id}
+                  onClick={() => handleSelect(item)}
+                  className="w-full text-left p-3 rounded-lg hover:bg-muted/50 transition-colors group flex items-start"
+                >
+                  <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="font-mono font-bold text-sm">
+                      {item.ticker}
+                    </span>
+                    <ActionBadge action={item.action} />
+                    <DirectionBadge direction={item.direction} />
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <span>{item.created_at?.slice(0, 10)}</span>
+                    <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                      {item.mode}
+                    </Badge>
+                    {item.confidence != null && (
+                      <span className="font-mono">
+                        {(item.confidence * 100).toFixed(0)}%
+                      </span>
+                    )}
+                  </div>
+                  {item.oneliner && (
+                    <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                      {item.oneliner}
+                    </p>
+                  )}
+                  </div>
+                  <button
+                    onClick={(e) => handleDelete(e, item)}
+                    className="shrink-0 p-1 rounded hover:bg-destructive/10 transition-colors"
+                    title="Delete"
+                  >
+                    <X className="h-3.5 w-3.5 text-muted-foreground hover:text-destructive" />
+                  </button>
+                </button>
+              ))}
+            </div>
+          </ScrollArea>
+        )}
+      </SheetContent>
+    </Sheet>
+  );
+}

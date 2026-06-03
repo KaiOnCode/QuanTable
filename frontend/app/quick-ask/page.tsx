@@ -20,6 +20,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Accordion,
+  AccordionItem,
+  AccordionTrigger,
+  AccordionContent,
+} from "@/components/ui/accordion";
 import { ActionBadge, DirectionBadge } from "@/components/shared/badges";
 import {
   Zap,
@@ -33,6 +39,8 @@ import {
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { createSSEStream } from "@/lib/api/client";
+import { HistoryPanel } from "@/components/quick-ask/history-panel";
+import { TickerPreview } from "@/components/quick-ask/ticker-preview";
 import type {
   SSEProgressEvent,
   SSEDebateEvent,
@@ -149,6 +157,26 @@ function ReportCard({ result }: { result: SSEResultEvent }) {
               )}
             </div>
           )}
+
+          {/* Per-agent reports */}
+          {result.agent_reports && Object.keys(result.agent_reports).length > 0 && (
+            <Accordion>
+              {Object.entries(result.agent_reports).map(([agent, report]) => (
+                <AccordionItem key={agent} value={agent}>
+                  <AccordionTrigger>
+                    <span className="text-xs font-mono text-muted-foreground mr-2">
+                      {agent.replace(/_/g, " ")}
+                    </span>
+                  </AccordionTrigger>
+                  <AccordionContent>
+                    <div className="p-3 rounded-lg bg-muted/20 text-xs leading-relaxed max-h-64 overflow-y-auto prose prose-sm dark:prose-invert max-w-none">
+                      <ReactMarkdown>{report}</ReactMarkdown>
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
+              ))}
+            </Accordion>
+          )}
         </CardContent>
       </Card>
 
@@ -192,6 +220,9 @@ export default function QuickAskPage() {
   const [result, setResult] = useState<SSEResultEvent | null>(null);
   const [debates, setDebates] = useState<SSEDebateEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [streamedReports, setStreamedReports] = useState<Map<string, string>>(
+    new Map()
+  );
   const [abortController, setAbortController] =
     useState<AbortController | null>(null);
 
@@ -202,6 +233,7 @@ export default function QuickAskPage() {
     setResult(null);
     setDebates([]);
     setError(null);
+    setStreamedReports(new Map());
 
     // Immediately mark PM as "started" so user sees feedback
     const initialStatuses = new Map<string, AgentStatus>();
@@ -236,6 +268,13 @@ export default function QuickAskPage() {
             });
             return next;
           });
+          if (event.report) {
+            setStreamedReports((prev) => {
+              const next = new Map(prev);
+              next.set(event.agent, event.report!);
+              return next;
+            });
+          }
         },
         onDebate: (event: SSEDebateEvent) => {
           setDebates((prev) => [...prev, event]);
@@ -278,6 +317,9 @@ export default function QuickAskPage() {
             <CardTitle className="flex items-center gap-2">
               <Zap className="h-5 w-5" />
               Quick Ask
+              <div className="ml-auto">
+                <HistoryPanel />
+              </div>
             </CardTitle>
             <CardDescription>
               Enter a ticker symbol to get AI-powered investment analysis
@@ -332,6 +374,11 @@ export default function QuickAskPage() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Ticker Data Preview */}
+        {ticker.trim() && (
+          <TickerPreview ticker={ticker.toUpperCase()} />
+        )}
 
         {/* Analysis Progress */}
         {analyzing && (
@@ -400,6 +447,33 @@ export default function QuickAskPage() {
                   );
                 })}
               </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Live agent reports — appearing one by one during analysis */}
+        {analyzing && streamedReports.size > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm">Agent Reports</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Accordion>
+                {Array.from(streamedReports.entries()).map(([agent, report]) => (
+                  <AccordionItem key={agent} value={agent}>
+                    <AccordionTrigger>
+                      <span className="text-xs font-mono text-muted-foreground">
+                        {agent.replace(/_/g, " ")}
+                      </span>
+                    </AccordionTrigger>
+                    <AccordionContent>
+                      <div className="p-3 rounded-lg bg-muted/20 text-xs leading-relaxed max-h-64 overflow-y-auto prose prose-sm dark:prose-invert max-w-none">
+                        <ReactMarkdown>{report}</ReactMarkdown>
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
+                ))}
+              </Accordion>
             </CardContent>
           </Card>
         )}

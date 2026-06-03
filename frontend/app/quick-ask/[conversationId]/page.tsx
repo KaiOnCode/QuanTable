@@ -1,6 +1,7 @@
 "use client";
 
-import { useParams } from "next/navigation";
+import { useEffect, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
 import { Shell } from "@/components/layout/shell";
 import {
   Card,
@@ -9,246 +10,272 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
-import { EmptyState } from "@/components/shared/empty-state";
-import { ActionBadge, DirectionBadge } from "@/components/shared/badges";
-import { formatDateTime } from "@/lib/utils";
 import {
-  MessageSquare,
-  Send,
-  User,
-  Bot,
+  Accordion,
+  AccordionItem,
+  AccordionTrigger,
+  AccordionContent,
+} from "@/components/ui/accordion";
+import { ActionBadge, DirectionBadge } from "@/components/shared/badges";
+import { api } from "@/lib/api/client";
+import type { SSEResultEvent } from "@/lib/types/models";
+import {
+  ArrowLeft,
+  Loader2,
+  Clock,
+  Zap,
   TrendingUp,
-  Shield,
+  TrendingDown,
 } from "lucide-react";
+import ReactMarkdown from "react-markdown";
 
-const MOCK_CONVERSATION = {
-  id: "conv-1",
-  title: "AAPL Analysis — May 28, 2026",
-  created_at: "2026-05-28T09:30:00Z",
-  tags: ["AAPL", "earnings", "tech"],
-  messages: [
-    {
-      id: "msg-1",
-      role: "user" as const,
-      content: "Analyze AAPL with deep debate mode",
-      timestamp: "2026-05-28T09:30:00Z",
-    },
-    {
-      id: "msg-2",
-      role: "assistant" as const,
-      content: "Starting deep analysis of AAPL with all 15 agents...",
-      timestamp: "2026-05-28T09:30:05Z",
-      analysis_result: {
-        action: "BUY",
-        direction: "Bullish",
-        confidence: 0.78,
-        timeframe: "1-4w",
-        report: "AAPL shows strong bullish signals across multiple dimensions:\n\n" +
-          "**Technical**: RSI(14)=32 oversold region, MACD golden cross confirmed.\n" +
-          "**Fundamentals**: Q2 earnings beat estimates ($1.52 vs $1.50), revenue +5% YoY.\n" +
-          "**News Sentiment**: Positive (+0.65), driven by iPhone 18 cycle upgrade expectations.\n" +
-          "**Debate**: Bull case (AI-powered upgrade cycle) won over Bear case (valuation concerns).\n\n" +
-          "**Decision**: BUY with 78% confidence. Entry at current levels with 5% trailing stop.",
-      },
-      debate_records: [
-        {
-          id: "d1",
-          debate_type: "investment" as const,
-          round_num: 1,
-          speaker: "bull_researcher",
-          role: "bull",
-          claim: "AI-powered iPhone upgrade cycle will drive 10%+ revenue growth in FY2027",
-          evidence: ["iPhone installed base at all-time high", "Apple Intelligence features require newer hardware"],
-          rebuttal_to: null,
-        },
-        {
-          id: "d2",
-          debate_type: "investment" as const,
-          round_num: 1,
-          speaker: "bear_researcher",
-          role: "bear",
-          claim: "Valuation stretched at 30x PE. Competition from Android AI features intensifying.",
-          evidence: ["PE ratio above 5-year average", "Samsung and Google launching competing AI features"],
-          rebuttal_to: "d1",
-        },
-      ],
-    },
-    {
-      id: "msg-3",
-      role: "user" as const,
-      content: "What about the risk of China exposure?",
-      timestamp: "2026-05-28T09:35:00Z",
-    },
-    {
-      id: "msg-4",
-      role: "assistant" as const,
-      content: "China risk analysis shows manageable exposure: Apple's China revenue accounts for 18% of total (down from 20% last year). Diversification into India and Vietnam manufacturing reduces tariff risk. However, a 10% decline in China sales would impact EPS by approximately $0.15.",
-      timestamp: "2026-05-28T09:35:30Z",
-    },
-  ],
+type SessionData = {
+  session_id: string;
+  ticker: string;
+  mode: string;
+  created_at: string;
+  request: { ticker: string; mode: string };
+  result: SSEResultEvent;
 };
 
-export default function ConversationDetailPage() {
+function parseReport(report: string) {
+  const lines = report.split("\n");
+  const result: Record<string, string> = {};
+  let bodyStart = 0;
+  for (let i = 0; i < Math.min(lines.length, 8); i++) {
+    const line = lines[i].trim();
+    const m = line.match(
+      /^(方向|时间范围|置信度|一句话结论)[：:]\s*(.+)/,
+    );
+    if (m) {
+      const keyMap: Record<string, string> = {
+        "方向": "direction",
+        "时间范围": "timeframe",
+        "置信度": "confidence",
+        "一句话结论": "oneliner",
+      };
+      result[keyMap[m[1]] || m[1]] = m[2];
+      bodyStart = i + 1;
+    } else if (line === "" && bodyStart > 0) {
+      bodyStart = i + 1;
+      break;
+    }
+  }
+  result.body = lines.slice(bodyStart).join("\n").trim();
+  return result;
+}
+
+export default function HistoryDetailPage() {
   const { conversationId } = useParams<{ conversationId: string }>();
-  const conversation = MOCK_CONVERSATION;
+  const router = useRouter();
+  const [session, setSession] = useState<SessionData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!conversationId) return;
+    setLoading(true);
+    api
+      .get<SessionData>(`analyze/history/${conversationId}`)
+      .then(setSession)
+      .catch((err) => setError(String(err)))
+      .finally(() => setLoading(false));
+  }, [conversationId]);
+
+  if (loading) {
+    return (
+      <Shell>
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      </Shell>
+    );
+  }
+
+  if (error || !session) {
+    return (
+      <Shell>
+        <div className="p-6 max-w-6xl mx-auto">
+          <Button variant="ghost" onClick={() => router.back()} className="mb-4">
+            <ArrowLeft className="mr-2 h-4 w-4" /> Back
+          </Button>
+          <Card className="border-destructive">
+            <CardHeader>
+              <CardTitle className="text-destructive">
+                Session Not Found
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground">
+                {error || "This analysis session could not be loaded."}
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      </Shell>
+    );
+  }
+
+  const result = session.result;
+  const parsed = result.report ? parseReport(result.report) : null;
+  const oneliner = parsed?.oneliner || "";
+  const bodyText = parsed?.body || result.report || "";
+  const confidence = result.confidence ?? 0.5;
+  const confidencePct = Math.round(confidence * 100);
+  const barColor =
+    confidencePct >= 70
+      ? "bg-green-500"
+      : confidencePct >= 40
+        ? "bg-yellow-500"
+        : "bg-red-500";
 
   return (
     <Shell>
       <div className="p-6 max-w-6xl mx-auto space-y-6">
-        {/* Header */}
-        <div className="flex items-center justify-between">
+        {/* Back + Header */}
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" size="sm" onClick={() => router.back()}>
+            <ArrowLeft className="mr-1 h-4 w-4" /> Back
+          </Button>
           <div>
             <h2 className="text-lg font-semibold flex items-center gap-2">
-              <MessageSquare className="h-5 w-5" />
-              {conversation.title}
+              <Zap className="h-5 w-5" />
+              {session.ticker} Analysis
             </h2>
             <div className="flex items-center gap-2 mt-1">
-              {conversation.tags.map((t) => (
-                <Badge key={t} variant="outline" className="text-xs">
-                  {t}
-                </Badge>
-              ))}
-              <span className="text-xs text-muted-foreground">
-                Created {formatDateTime(conversation.created_at)}
+              <Badge variant="outline" className="text-xs">
+                {session.mode}
+              </Badge>
+              <span className="text-xs text-muted-foreground flex items-center gap-1">
+                <Clock className="h-3 w-3" />
+                {session.created_at?.slice(0, 16).replace("T", " ")}
               </span>
+              {result.elapsed_s != null && (
+                <span className="text-xs text-muted-foreground">
+                  · {result.elapsed_s}s
+                </span>
+              )}
             </div>
           </div>
-          <Button variant="outline">Export PDF</Button>
         </div>
 
-        {/* Messages */}
-        <ScrollArea className="h-[calc(100vh-250px)]">
-          <div className="space-y-4 pr-4">
-            {conversation.messages.map((msg) => (
-              <div key={msg.id}>
-                {msg.role === "user" ? (
-                  <div className="flex items-start gap-3">
-                    <div className="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center shrink-0">
-                      <User className="h-4 w-4" />
-                    </div>
-                    <div className="flex-1">
-                      <div className="bg-muted/50 rounded-lg p-3 max-w-2xl">
-                        <p className="text-sm">{msg.content}</p>
-                      </div>
-                      <span className="text-xs text-muted-foreground mt-1 block">
-                        {formatDateTime(msg.timestamp)}
-                      </span>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    <div className="flex items-start gap-3">
-                      <div className="h-8 w-8 rounded-full bg-primary flex items-center justify-center shrink-0">
-                        <Bot className="h-4 w-4 text-primary-foreground" />
-                      </div>
-                      <div className="flex-1">
-                        <div className="bg-muted/30 rounded-lg p-3 max-w-3xl">
-                          <p className="text-sm whitespace-pre-wrap">
-                            {msg.content}
-                          </p>
-                        </div>
-                        <span className="text-xs text-muted-foreground mt-1 block">
-                          {formatDateTime(msg.timestamp)}
-                        </span>
-                      </div>
-                    </div>
+        {/* Result Card */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Analysis Result</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Badge Row */}
+            <div className="flex items-center gap-3 flex-wrap">
+              <ActionBadge action={result.action} />
+              <DirectionBadge direction={result.direction} />
+              {result.timeframe && (
+                <Badge variant="outline">{result.timeframe}</Badge>
+              )}
+            </div>
 
-                    {/* Analysis Result Card */}
-                    {msg.analysis_result && (
-                      <div className="ml-11">
-                        <Card className="border-primary/20">
-                          <CardHeader className="pb-2">
-                            <CardTitle className="text-sm flex items-center gap-2">
-                              Analysis Result
-                              <ActionBadge action={msg.analysis_result.action} />
-                              <DirectionBadge direction={msg.analysis_result.direction} />
-                              <Badge variant="outline" className="text-xs font-mono">
-                                {(msg.analysis_result.confidence * 100).toFixed(0)}% confidence
-                              </Badge>
-                            </CardTitle>
-                          </CardHeader>
-                          <CardContent>
-                            <div className="text-sm whitespace-pre-wrap text-muted-foreground">
-                              {msg.analysis_result.report}
-                            </div>
-                          </CardContent>
-                        </Card>
-                      </div>
-                    )}
-
-                    {/* Debate Records */}
-                    {msg.debate_records && msg.debate_records.length > 0 && (
-                      <div className="ml-11 space-y-2">
-                        <p className="text-xs font-medium text-muted-foreground flex items-center gap-1">
-                          <TrendingUp className="h-3 w-3" />
-                          Debate Records
-                        </p>
-                        {msg.debate_records.map((d) => (
-                          <div
-                            key={d.id}
-                            className={`p-3 rounded-lg text-xs border ${
-                              d.role === "bull"
-                                ? "bg-green-500/5 border-green-500/20"
-                                : "bg-red-500/5 border-red-500/20"
-                            }`}
-                          >
-                            <div className="flex items-center gap-2 mb-1">
-                              <Badge
-                                variant="outline"
-                                className={
-                                  d.role === "bull"
-                                    ? "text-green-500 border-green-500/20"
-                                    : "text-red-500 border-red-500/20"
-                                }
-                              >
-                                {d.role.toUpperCase()} · Round {d.round_num}
-                              </Badge>
-                              {d.rebuttal_to && (
-                                <span className="text-muted-foreground">
-                                  Rebuttal to previous
-                                </span>
-                              )}
-                            </div>
-                            <p>{d.claim}</p>
-                            {d.evidence.length > 0 && (
-                              <div className="mt-1 text-muted-foreground">
-                                Evidence: {d.evidence.join("; ")}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
+            {/* Confidence Bar */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Confidence</span>
+                <span className="font-mono font-bold">{confidencePct}%</span>
               </div>
-            ))}
-          </div>
-        </ScrollArea>
+              <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all ${barColor}`}
+                  style={{ width: `${confidencePct}%` }}
+                />
+              </div>
+            </div>
 
-        <Separator />
+            {/* One-liner */}
+            {oneliner && (
+              <div className="p-3 rounded-lg bg-primary/5 border border-primary/10">
+                <p className="text-sm font-medium">{oneliner}</p>
+              </div>
+            )}
 
-        {/* Follow-up Input */}
-        <div className="flex gap-3">
-          <Input
-            placeholder="Ask a follow-up question..."
-            className="h-12 flex-1"
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                // Will wire up to API later
-              }
-            }}
-          />
-          <Button className="h-12 px-6">
-            <Send className="mr-2 h-4 w-4" />
-            Send
-          </Button>
-        </div>
+            {/* Full report */}
+            {bodyText && (
+              <ScrollArea className="max-h-96">
+                <div className="p-4 rounded-lg bg-muted/30 text-sm leading-relaxed prose prose-sm dark:prose-invert max-w-none">
+                  <ReactMarkdown>{bodyText}</ReactMarkdown>
+                </div>
+              </ScrollArea>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Agent Reports */}
+        {result.agent_reports &&
+          Object.keys(result.agent_reports).length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm">Agent Reports</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <Accordion>
+                  {Object.entries(result.agent_reports).map(
+                    ([agent, report]) => (
+                      <AccordionItem key={agent} value={agent}>
+                        <AccordionTrigger>
+                          <span className="text-xs font-mono text-muted-foreground mr-2">
+                            {agent.replace(/_/g, " ")}
+                          </span>
+                        </AccordionTrigger>
+                        <AccordionContent>
+                          <div className="p-3 rounded-lg bg-muted/20 text-xs leading-relaxed max-h-80 overflow-y-auto prose prose-sm dark:prose-invert max-w-none">
+                            <ReactMarkdown>{report}</ReactMarkdown>
+                          </div>
+                        </AccordionContent>
+                      </AccordionItem>
+                    ),
+                  )}
+                </Accordion>
+              </CardContent>
+            </Card>
+          )}
+
+        {/* News Sources */}
+        {result.news_articles && result.news_articles.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm">
+                News Sources ({result.news_articles.length})
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {result.news_articles.map((a, i) => (
+                  <div key={i} className="flex items-start gap-2 text-sm">
+                    <span className="text-muted-foreground shrink-0 mt-0.5">
+                      {i + 1}.
+                    </span>
+                    <div className="min-w-0">
+                      <a
+                        href={a.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary hover:underline truncate block"
+                      >
+                        {a.title}
+                      </a>
+                      <div className="text-xs text-muted-foreground">
+                        {a.source}
+                        {a.published_at
+                          ? ` · ${a.published_at.slice(0, 10)}`
+                          : ""}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </Shell>
   );

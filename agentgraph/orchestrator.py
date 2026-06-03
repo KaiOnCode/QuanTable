@@ -217,7 +217,43 @@ class IntelliFin_Assistant:
         return self.wf.invoke(
             initial_state,
             config={"configurable": {"thread_id": sid}}
-        ) 
+        )
+
+    def stream(
+        self, ticker: str, date: str = None, current_position_pct: float = 0.0,
+        strategy_id: str = "default", session_id: str | None = None,
+    ):
+        """Stream analysis — yields {node_name: state_update} as each agent completes."""
+        sid = session_id or str(uuid.uuid4())
+
+        relevant_memories = []
+        try:
+            from memory.store import MemoryStore
+            mem_store = MemoryStore("data/memory.db")
+            relevant_memories = mem_store.recall_by_context(
+                current_context={"ticker": ticker},
+                strategy_id=strategy_id,
+                limit=5,
+            )
+            logger.info("Recalled %d memories for %s", len(relevant_memories), ticker)
+        except Exception as exc:
+            logger.debug("Memory recall skipped: %s", exc)
+
+        initial_state = {
+            "ticker": ticker,
+            "date": date,
+            "current_position_pct": current_position_pct,
+            "relevant_memories": relevant_memories,
+            "session_id": sid,
+            "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+        for event in self.wf.stream(
+            initial_state,
+            config={"configurable": {"thread_id": sid}},
+            stream_mode="updates",
+        ):
+            yield event
+
     def visualize(self):
         with open("graph.png", "wb") as f:
             f.write(self.wf.get_graph().draw_mermaid_png())

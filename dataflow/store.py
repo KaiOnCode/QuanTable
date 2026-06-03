@@ -67,7 +67,8 @@ class MarketDataStore:
                     as_of_date TEXT NOT NULL,
                     pe REAL, pb REAL, ps REAL, eps REAL,
                     market_cap REAL,
-                    gross_margin REAL, op_margin REAL,
+                    gross_margin REAL, op_margin REAL, profit_margin REAL,
+                    roe REAL, dividend_yield REAL,
                     revenue_growth REAL, eps_growth REAL,
                     raw_json TEXT DEFAULT '{}',
                     source TEXT DEFAULT 'yfinance',
@@ -75,7 +76,15 @@ class MarketDataStore:
                     PRIMARY KEY (ticker, as_of_date)
                 );
                 CREATE INDEX IF NOT EXISTS idx_fund_ticker ON fundamentals(ticker);
-
+                """)
+            # Migrations: add columns that may not exist in older DBs
+            # Must run outside executescript — if column already exists, silently skip
+            for col in ("roe", "dividend_yield", "profit_margin"):
+                try:
+                    db.execute(f"ALTER TABLE fundamentals ADD COLUMN {col} REAL")
+                except Exception:
+                    pass  # column already exists
+            db.executescript("""
                 -- News articles
                 CREATE TABLE IF NOT EXISTS news (
                     id TEXT PRIMARY KEY,
@@ -213,9 +222,11 @@ class MarketDataStore:
             db.execute(
                 """INSERT OR REPLACE INTO fundamentals
                    (ticker, as_of_date, pe, pb, ps, eps, market_cap,
-                    gross_margin, op_margin, revenue_growth, eps_growth,
+                    gross_margin, op_margin, profit_margin,
+                    roe, dividend_yield,
+                    revenue_growth, eps_growth,
                     raw_json, source, fetched_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     ticker.upper(),
                     as_of_date[:10],
@@ -226,6 +237,9 @@ class MarketDataStore:
                     ttm.get("market_cap"),
                     ttm.get("gross_margin"),
                     ttm.get("op_margin"),
+                    ttm.get("profit_margin"),
+                    ttm.get("roe"),
+                    ttm.get("dividend_yield"),
                     growth.get("rev_yoy"),
                     growth.get("eps_yoy"),
                     json.dumps(data, ensure_ascii=False),

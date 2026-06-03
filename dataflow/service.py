@@ -219,25 +219,52 @@ class DataService:
     # ── Unified API (single entry point) ─────────────────────
 
     def get_prices(self, ticker: str, start_date: str, end_date: str | None = None) -> list[dict]:
-        """Get OHLCV bars for a date range. Fills gaps from YFinance automatically.
+        """Get OHLCV bars for a date range. Fetches live from YFinance directly.
 
-        Fast path: DB has data → <10ms return
-        Slow path: missing data → fetch only what's needed → store → return
+        Market data is never cached — always fresh.
         """
         end = end_date or _today_str()
-        bars = self.store.get_ohlcv(ticker, start_date, end)
-        if bars:
-            return bars  # Fast: DB hit, no network call
+        days = (datetime.now(timezone.utc) - datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)).days
 
-        # DB miss: fetch. Use minimal lookback if only recent data is needed.
-        latest_in_db = self.store.get_latest_date(ticker)
-        if latest_in_db and latest_in_db < end:
-            # Only fetch from latest known date forward
-            self.df_get_prices(ticker, lookback_days=7)
+        # Map to YFinance period for cleaner handling
+        if days <= 35:
+            period = "1mo"
+        elif days <= 100:
+            period = "3mo"
+        elif days <= 200:
+            period = "6mo"
+        elif days <= 400:
+            period = "1y"
+        elif days <= 800:
+            period = "2y"
         else:
-            # Full first-time fetch
-            self.df_get_prices(ticker, lookback_days=180)
-        return self.store.get_ohlcv(ticker, start_date, end)
+            period = "max"
+
+        import yfinance as yf
+        t = yf.Ticker(ticker)
+        df = t.history(period=period, interval="1d")
+        if df is None or df.empty:
+            return []
+
+        df = df.rename(columns={
+            "Open": "open", "High": "high", "Low": "low",
+            "Close": "close", "Volume": "volume",
+        })
+        df["date"] = df.index.strftime("%Y-%m-%d")
+
+        bars = []
+        for _, row in df.iterrows():
+            d = row.get("date", "")
+            if d >= start_date:
+                bars.append({
+                    "date": d,
+                    "open": float(row["open"]),
+                    "high": float(row["high"]),
+                    "low": float(row["low"]),
+                    "close": float(row["close"]),
+                    "volume": int(row["volume"]),
+                })
+        return bars
 
     def get_news(self, ticker: str, window_days: int = 7) -> list[dict]:
         """Get recent news for a ticker. Fetches live if DB is empty.
@@ -256,9 +283,26 @@ class DataService:
         return self.store.search_news(query, ticker=ticker, limit=limit)
 
     def get_fundamentals(self, ticker: str, as_of_date: str | None = None) -> dict | None:
-        """Get latest fundamentals. Fetches live if missing or stale (>30d)."""
+        """Get latest fundamentals. Fetches live if missing, stale (>30d), or incomplete."""
         data = self.store.get_fundamentals(ticker, as_of_date)
-        if data is None:
+
+        needs_fetch = data is None
+        if not needs_fetch and data:
+            # Refetch if stale
+            fetched_at = data.get("fetched_at", "")
+            if fetched_at:
+                try:
+                    fetched_dt = datetime.strptime(fetched_at[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                    if (datetime.now(timezone.utc) - fetched_dt).days >= 30:
+                        needs_fetch = True
+                except (ValueError, IndexError):
+                    needs_fetch = True
+            # Refetch if key fields are NULL (old schema or failed fetch)
+            key_fields = ["market_cap", "roe", "dividend_yield", "profit_margin", "pe", "pb"]
+            if any(data.get(f) is None for f in key_fields):
+                needs_fetch = True
+
+        if needs_fetch:
             self.df_get_fundamentals(ticker)
             data = self.store.get_fundamentals(ticker, as_of_date)
         return data

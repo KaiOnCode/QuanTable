@@ -1,7 +1,7 @@
 """POST /api/analyze — SSE streaming analysis endpoint.
 
-Calls the LangGraph orchestrator in a background thread and streams
-progress, debate, and result events back to the frontend via SSE.
+Calls the LangGraph orchestrator via stream() and emits per-agent
+progress events in real-time as each agent completes.
 """
 
 from __future__ import annotations
@@ -9,8 +9,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 import uuid
+from pathlib import Path
+from queue import Empty, Queue
+from threading import Thread
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -20,6 +24,25 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["analysis"])
+
+HISTORY_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "history"
+
+# Map node name → report key in state
+_AGENT_REPORT_KEYS: dict[str, str] = {
+    "market_analyst": "market_report",
+    "news_analyst": "news_report",
+    "fundamentals_analyst": "fundamental_report",
+    "risk_analyst": "risk_report",
+    "PM_agent": "PM_report",
+}
+
+_AGENT_LABELS: dict[str, str] = {
+    "market_analyst": "Market Analyst",
+    "news_analyst": "News Analyst",
+    "fundamentals_analyst": "Fundamentals Analyst",
+    "risk_analyst": "Risk Analyst",
+    "PM_agent": "PM Decision",
+}
 
 
 class AnalyzeRequest(BaseModel):
@@ -42,9 +65,28 @@ def _sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {payload}\n\n"
 
 
+def _save_session_json(session_id: str, ticker: str, mode: str, result: dict) -> None:
+    """Persist session to data/history/{session_id}.json."""
+    try:
+        HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+        record = {
+            "session_id": session_id,
+            "ticker": ticker,
+            "mode": mode,
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "request": {"ticker": ticker, "mode": mode},
+            "result": result,
+        }
+        path = HISTORY_DIR / f"{session_id}.json"
+        path.write_text(json.dumps(record, ensure_ascii=False, default=str, indent=2))
+        logger.debug("Session saved: %s", path)
+    except Exception:
+        logger.warning("Failed to save session %s", session_id, exc_info=True)
+
+
 @router.post("/analyze")
 async def analyze(request: AnalyzeRequest):
-    """Start a new analysis. Returns SSE stream with progress events."""
+    """Start a new analysis. Returns SSE stream with real-time progress events."""
 
     async def event_stream():
         session_id = str(uuid.uuid4())
@@ -59,113 +101,124 @@ async def analyze(request: AnalyzeRequest):
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
         })
 
-        try:
-            # Import orchestrator (lazy to avoid blocking startup)
-            from agentgraph.orchestrator import IntelliFin_Assistant
+        # ── Run stream in thread, consume via queue ──
+        queue: Queue = Queue()
 
-            # Run in thread pool (orchestrator is synchronous)
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None,
-                _run_analysis,
-                request.ticker,
-                request.date,
-                request.current_position_pct,
-                session_id,
-            )
-
-            # Parse PM report for structured result
-            pm_report = result.get("PM_report", "")
-            action = result.get("Action", "HOLD")
-            direction, confidence, timeframe = _parse_pm_report(pm_report, action)
-
-            # Emit per-agent progress (post-hoc: mark agents with reports as completed)
-            agent_reports = {
-                "market_analyst": result.get("market_report", ""),
-                "news_analyst": result.get("news_report", ""),
-                "fundamentals_analyst": result.get("fundamental_report", ""),
-                "PM_agent": pm_report,
-            }
-            for agent_name, report in agent_reports.items():
-                status = "completed" if report else "error"
-                yield _sse_event("progress", {
-                    "agent": agent_name,
-                    "status": status,
-                    "duration_ms": 0,
-                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                })
-
-            # Emit debate records if present
-            debate_history = result.get("debate_history", [])
-            for d in debate_history:
-                yield _sse_event("debate", {
-                    "type": "investment",
-                    "round": d.get("round", 1),
-                    "bull_claim": d.get("bull_claim", ""),
-                    "bear_claim": d.get("bear_claim", ""),
-                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                })
-
-            risk_debate = result.get("risk_debate_history", [])
-            for d in risk_debate:
-                yield _sse_event("debate", {
-                    "type": "risk",
-                    "round": d.get("round", 1),
-                    "aggressive": d.get("aggressive", ""),
-                    "safe": d.get("safe", ""),
-                    "neutral": d.get("neutral", ""),
-                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                })
-
-            # Fetch news articles used in analysis
-            news_articles = []
+        def _stream_worker():
             try:
-                from dataflow.service import DataService
-                svc = DataService()
-                news_articles = svc.get_news(request.ticker, window_days=7)
-            except Exception:
-                pass
+                from agentgraph.orchestrator import IntelliFin_Assistant
 
-            # Emit final result
-            elapsed = round(time.time() - started_at, 2)
-            yield _sse_event("result", {
-                "session_id": session_id,
-                "action": result.get("Action", "HOLD"),
-                "direction": direction,
-                "confidence": confidence,
-                "timeframe": timeframe,
-                "report": pm_report,
-                "target_position_pct": float(result.get("Target_position_pct", 0)),
-                "debate_records": debate_history,
-                "news_articles": [{"title": a["title"], "source": a.get("source_name", ""), "url": a.get("url", ""), "published_at": a.get("published_at", "")} for a in news_articles[:8]],
-                "elapsed_s": elapsed,
-            })
+                analysis_date = request.date or time.strftime("%Y-%m-%dT00:00:00Z")
 
-        except Exception as exc:
-            err_msg = str(exc)
-            # PM often returns valid text but JSON parsing fails.
-            # Extract the report from the error message.
-            if "Invalid json output:" in err_msg and "方向:" in err_msg:
-                report_text = err_msg.split("Invalid json output:", 1)[1].strip()
-                direction, confidence, timeframe = _parse_pm_report(report_text, "HOLD")
-                yield _sse_event("result", {
-                    "session_id": session_id,
-                    "action": "HOLD",
-                    "direction": direction,
-                    "confidence": confidence,
-                    "timeframe": timeframe,
-                    "report": report_text[:2000],
-                    "target_position_pct": 0,
-                    "debate_records": [],
-                    "elapsed_s": round(time.time() - started_at, 2),
-                })
-            else:
-                logger.exception("Analysis failed for %s", request.ticker)
+                assistant = IntelliFin_Assistant()
+                for event in assistant.stream(
+                    request.ticker,
+                    date=analysis_date,
+                    current_position_pct=request.current_position_pct,
+                    session_id=session_id,
+                ):
+                    queue.put(("event", event))
+                queue.put(("done", None))
+            except Exception as exc:
+                queue.put(("error", str(exc)))
+
+        thread = Thread(target=_stream_worker, daemon=True)
+        thread.start()
+
+        loop = asyncio.get_event_loop()
+        final_result: dict[str, Any] = {}
+        seen_reports: set[str] = set()
+
+        while True:
+            try:
+                msg_type, payload = await loop.run_in_executor(None, lambda: queue.get(timeout=120))
+            except Empty:
+                logger.warning("Stream timeout for %s", session_id)
+                break
+
+            if msg_type == "done":
+                break
+
+            if msg_type == "error":
+                logger.exception("Analysis failed for %s: %s", request.ticker, payload)
                 yield _sse_event("error", {
                     "agent": "orchestrator",
-                    "error": err_msg[:500],
+                    "error": str(payload)[:500],
                     "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 })
+                return
+
+            # msg_type == "event": {node_name: {key: value, ...}}
+            if msg_type != "event":
+                continue
+
+            if isinstance(payload, dict):
+                for node_name, update in payload.items():
+                    if not isinstance(update, dict):
+                        continue
+                    # Merge all recognized keys into final result
+                    for k, v in update.items():
+                        if k in _AGENT_REPORT_KEYS.values() or k in ("Action", "Target_position_pct"):
+                            final_result[k] = v
+                    # Emit progress when an agent produces its report
+                    report_key = _AGENT_REPORT_KEYS.get(node_name)
+                    if report_key and update.get(report_key) and node_name not in seen_reports:
+                        seen_reports.add(node_name)
+                        report_text = update[report_key]
+                        yield _sse_event("progress", {
+                            "agent": node_name,
+                            "status": "completed",
+                            "report": report_text,
+                            "duration_ms": 0,
+                            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        })
+                        logger.debug("Agent %s completed (%d chars)", node_name, len(report_text))
+
+        # ── After stream completes: build and emit result ──
+        pm_report = final_result.get("PM_report", "")
+        action = final_result.get("Action", "HOLD")
+        direction, confidence, timeframe = _parse_pm_report(pm_report, action)
+
+        # Build agent reports map
+        agent_reports = {}
+        for agent_name, report_key in _AGENT_REPORT_KEYS.items():
+            report = final_result.get(report_key, "")
+            if report:
+                agent_reports[agent_name] = report
+
+        # Fetch news articles
+        news_articles = []
+        try:
+            from dataflow.service import DataService
+            svc = DataService()
+            news_articles = svc.get_news(request.ticker, window_days=7)
+        except Exception:
+            pass
+
+        elapsed = round(time.time() - started_at, 2)
+
+        result_payload = {
+            "session_id": session_id,
+            "action": action,
+            "direction": direction,
+            "confidence": confidence,
+            "timeframe": timeframe,
+            "report": pm_report,
+            "agent_reports": agent_reports,
+            "target_position_pct": float(final_result.get("Target_position_pct", 0)),
+            "debate_records": final_result.get("debate_history", []),
+            "news_articles": [
+                {"title": a["title"], "source": a.get("source_name", ""),
+                 "url": a.get("url", ""), "published_at": a.get("published_at", "")}
+                for a in news_articles[:8]
+            ],
+            "elapsed_s": elapsed,
+        }
+
+        yield _sse_event("result", result_payload)
+
+        # ── Persist to history ──
+        _save_session_json(session_id, request.ticker, request.mode, result_payload)
 
     return StreamingResponse(
         event_stream(),
@@ -209,93 +262,66 @@ def _parse_pm_report(report: str, action: str) -> tuple[str, float, str]:
     return direction, confidence, timeframe
 
 
-def _run_analysis(
-    ticker: str,
-    date: str | None,
-    position_pct: float,
-    session_id: str,
-) -> dict[str, Any]:
-    """Run the LangGraph pipeline and record to ContextStore."""
+# ── History endpoints ──────────────────────────────────────
 
-    import logging
-    from datetime import datetime, timezone
-    _log = logging.getLogger("analyze")
 
-    from agentgraph.orchestrator import IntelliFin_Assistant
-
-    # Default date to today if not provided
-    if not date:
-        date = datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00Z")
-
-    _log.info("Creating orchestrator for %s (date=%s)...", ticker, date)
-    assistant = IntelliFin_Assistant()
-
-    # Record session start
+@router.get("/analyze/history")
+async def list_history(limit: int = 20):
+    """List past analysis sessions."""
+    items = []
     try:
-        from storage import get_store
-        store = get_store()
-        store.record_session("default", session_id, ticker)
+        HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+        files = sorted(HISTORY_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        for f in files[:limit]:
+            try:
+                data = json.loads(f.read_text())
+                items.append({
+                    "session_id": data.get("session_id"),
+                    "ticker": data.get("ticker"),
+                    "mode": data.get("mode"),
+                    "created_at": data.get("created_at"),
+                    "action": data.get("result", {}).get("action"),
+                    "direction": data.get("result", {}).get("direction"),
+                    "confidence": data.get("result", {}).get("confidence"),
+                    "oneliner": _extract_oneliner(data.get("result", {}).get("report", "")),
+                })
+            except Exception:
+                continue
     except Exception:
         pass
+    return {"items": items, "total": len(items)}
 
-    # Run the pipeline
-    result = assistant.run(ticker, date=date, current_position_pct=position_pct)
-    _log.info("Pipeline complete. PM_report: %d chars, Action: %s",
-              len(result.get("PM_report", "")), result.get("Action", "N/A"))
 
-    # Record decision
-    try:
-        from storage import get_store
-        store = get_store()
+@router.get("/analyze/history/{session_id}")
+async def get_history(session_id: str):
+    """Get full session data."""
+    from fastapi import HTTPException
+    path = HISTORY_DIR / f"{session_id}.json"
+    if not path.exists():
+        raise HTTPException(404, "Session not found")
+    return json.loads(path.read_text())
 
-        # Record agent reports
-        for agent in ["market", "news", "fundamentals", "risk"]:
-            report_key = f"{agent}_report"
-            if result.get(report_key):
-                store.record_report(
-                    "default", session_id, agent,
-                    report_key, str(result[report_key]),
-                )
 
-        # Record final decision
-        store.record_decision("default", {
-            "session_id": session_id,
-            "ticker": ticker,
-            "action": result.get("Action", "HOLD"),
-            "direction": result.get("direction", "Neutral"),
-            "confidence": result.get("confidence", 0.0),
-            "target_position_pct": result.get("Target_position_pct", 0.0),
-            "report": result.get("PM_report", ""),
-        })
+@router.delete("/analyze/history/{session_id}")
+async def delete_history(session_id: str):
+    """Delete a past analysis session."""
+    from fastapi import HTTPException
+    path = HISTORY_DIR / f"{session_id}.json"
+    if not path.exists():
+        raise HTTPException(404, "Session not found")
+    path.unlink()
+    return {"ok": True}
 
-        # Record memory
-        try:
-            from memory.store import MemoryStore
-            from memory.models import MemoryRecord
-            import uuid as _uuid
 
-            mem_store = MemoryStore("data/memory.db")
-            record = MemoryRecord(
-                id=str(_uuid.uuid4()),
-                strategy_id="default",
-                session_id=session_id,
-                ticker=ticker,
-                outcome_quality=0.0,
-                confidence=result.get("confidence", 0.5),
-                episodic=f"Analysis: {result.get('Action', 'HOLD')} {ticker}",
-                semantic="",
-                procedural="",
-                trade_record={"action": result.get("Action", "HOLD")},
-                tags=[ticker, result.get("Action", "HOLD").lower()],
-                created_at=time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            )
-            mem_store.remember(record)
-        except Exception:
-            pass
-
-        store.complete_session("default", session_id)
-
-    except Exception:
-        pass
-
-    return result
+def _extract_oneliner(report: str) -> str:
+    """Extract one-line summary from PM report."""
+    import re
+    match = re.search(r"(?:一句话结论)[：:]\s*(.+)", report)
+    if match:
+        return match.group(1).strip()
+    # Fallback: first non-empty line
+    for line in report.split("\n"):
+        line = line.strip()
+        if line and not line.startswith("#") and len(line) > 10:
+            return line[:120]
+    return ""

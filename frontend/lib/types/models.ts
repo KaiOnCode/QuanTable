@@ -26,6 +26,7 @@ export type AnalyzeRequest = {
 export type SSEProgressEvent = {
   agent: string;
   status: AgentRunStatus;
+  report?: string;
   duration_ms?: number;
   tool?: string;
   error?: string;
@@ -52,6 +53,7 @@ export type SSEResultEvent = {
   confidence: number;
   timeframe?: string;
   report?: string;
+  agent_reports?: Record<string, string>;
   target_position_pct?: number;
   debate_records?: SSEDebateEvent[];
   news_articles?: { title: string; source: string; url: string; published_at: string }[];
