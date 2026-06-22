@@ -12,6 +12,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { ActionBadge, DirectionBadge } from "@/components/shared/badges";
+import { formatDateTime } from "@/lib/utils";
 import { History, Loader2, X } from "lucide-react";
 import { api } from "@/lib/api/client";
 
@@ -94,7 +95,7 @@ export function HistoryPanel() {
                     <DirectionBadge direction={item.direction} />
                   </div>
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <span>{item.created_at?.slice(0, 10)}</span>
+                    <span>{formatDateTime(item.created_at)}</span>
                     <Badge variant="outline" className="text-[10px] px-1.5 py-0">
                       {item.mode}
                     </Badge>
@@ -110,13 +111,16 @@ export function HistoryPanel() {
                     </p>
                   )}
                   </div>
-                  <button
+                  <span
                     onClick={(e) => handleDelete(e, item)}
-                    className="shrink-0 p-1 rounded hover:bg-destructive/10 transition-colors"
+                    className="shrink-0 p-1 rounded hover:bg-destructive/10 transition-colors cursor-pointer"
                     title="Delete"
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleDelete(e as any, item); }}
                   >
                     <X className="h-3.5 w-3.5 text-muted-foreground hover:text-destructive" />
-                  </button>
+                  </span>
                 </button>
               ))}
             </div>

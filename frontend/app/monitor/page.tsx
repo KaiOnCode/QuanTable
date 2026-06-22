@@ -13,14 +13,23 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/components/ui/separator";
 import { EmptyState } from "@/components/shared/empty-state";
 import { monitorApi } from "@/lib/api/monitor";
+import { formatDateTime } from "@/lib/utils";
 import type { MonitorTask, MonitoringReport, MonitorMode } from "@/lib/types/models";
-import { Eye, Plus, Loader2, Play, Trash2, Clock, ChevronRight } from "lucide-react";
+import { Eye, Plus, Loader2, Play, Trash2, Clock, ChevronRight, Pencil, Check, X, ExternalLink, Pause, Power } from "lucide-react";
+import ReactMarkdown from "react-markdown";
 
-const FREQUENCY_OPTIONS = [
-  { value: "hourly", label: "Every Hour" },
-  { value: "daily", label: "Daily" },
-  { value: "weekly", label: "Weekly" },
-];
+// Human-readable cron descriptions
+function cronLabel(expr?: string): string {
+  if (!expr) return "Manual only";
+  const map: Record<string, string> = {
+    "0 * * * *": "Every hour",
+    "0 9 * * *": "Daily 9 AM",
+    "0 9 * * 1-5": "Weekdays 9 AM",
+    "0 9 * * 1": "Weekly Mon 9 AM",
+    "0 18 * * *": "Daily 6 PM",
+  };
+  return map[expr] || expr;
+}
 
 export default function MonitorPage() {
   const queryClient = useQueryClient();
@@ -99,8 +108,8 @@ export default function MonitorPage() {
                     </div>
                     <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
                       <Clock className="h-3 w-3" />
-                      {m.schedule?.frequency ?? "daily"}
-                      {m.last_run_at && <> · last: {m.last_run_at.slice(5, 16)}</>}
+                      {cronLabel(m.cron_expression)}
+                      {m.last_run_at && <> · last: {formatDateTime(m.last_run_at)}</>}
                     </div>
                   </button>
                 ))}
@@ -127,6 +136,8 @@ export default function MonitorPage() {
 function MonitorDetail({ monitor }: { monitor: MonitorTask }) {
   const queryClient = useQueryClient();
   const [viewReport, setViewReport] = useState<MonitoringReport | null>(null);
+  const [renaming, setRenaming] = useState(false);
+  const [renameVal, setRenameVal] = useState("");
 
   const { data: reportsData, isLoading: reportsLoading } = useQuery({
     queryKey: ["monitors", monitor.id, "reports"],
@@ -156,6 +167,19 @@ function MonitorDetail({ monitor }: { monitor: MonitorTask }) {
     },
   });
 
+  const renameMutation = useMutation({
+    mutationFn: (name: string) => monitorApi.update(monitor.id, { name } as any),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["monitors"] });
+      setRenaming(false);
+    },
+  });
+
+  const toggleStatus = useMutation({
+    mutationFn: () => monitorApi.update(monitor.id, { status: monitor.status === "active" ? "paused" : "active" } as any),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["monitors"] }),
+  });
+
   const targets = monitor.targets ?? {};
   const keywords = targets.keywords ?? [];
   const tickers = targets.tickers ?? [];
@@ -169,7 +193,7 @@ function MonitorDetail({ monitor }: { monitor: MonitorTask }) {
         <div>
           <h3 className="font-semibold text-lg">Report</h3>
           <p className="text-xs text-muted-foreground">
-            {viewReport.generated_at}
+            {formatDateTime(viewReport.generated_at)}
             {(viewReport.raw_data as any)?.elapsed_ms != null && (
               <> · took {((viewReport.raw_data as any).elapsed_ms / 1000).toFixed(1)}s</>
             )}
@@ -184,17 +208,39 @@ function MonitorDetail({ monitor }: { monitor: MonitorTask }) {
             </ul>
           </div>
         )}
-        {/* Search trace: show user what was actually searched */}
-        {((viewReport.raw_data as any)?.search_details as any[])?.length > 0 && (
-          <div className="space-y-1">
-            <h4 className="text-sm font-medium">Search Trace</h4>
-            <div className="text-xs text-muted-foreground space-y-0.5 bg-muted/30 p-2 rounded">
-              {((viewReport.raw_data as any).search_details as string[]).map((d, i) => (
-                <div key={i}>{d}</div>
-              ))}
-            </div>
+        {/* Full report content */}
+        {viewReport.content_text && (
+          <div className="text-sm leading-relaxed bg-muted/20 p-3 rounded max-h-96 overflow-y-auto prose prose-sm dark:prose-invert max-w-none">
+            <ReactMarkdown>{viewReport.content_text}</ReactMarkdown>
           </div>
         )}
+
+        {/* Collected news (traceability) — from fresh run OR historical raw_data */}
+        {(() => {
+          const news = ((viewReport as any).collected_news as any[]) ||
+                       ((viewReport.raw_data as any)?.collected_news as any[]);
+          if (!news || news.length === 0) return null;
+          return (
+            <div className="space-y-1">
+              <h4 className="text-sm font-medium">News Sources ({news.length})</h4>
+              <div className="text-xs space-y-1 max-h-40 overflow-y-auto">
+                {news.map((a: any, i: number) => (
+                  <div key={i} className="flex items-start gap-1">
+                    <span className="text-muted-foreground shrink-0">{i+1}.</span>
+                    {a.url ? (
+                      <a href={a.url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline truncate">
+                        {a.title || a.url}
+                      </a>
+                    ) : (
+                      <span className="truncate">{a.title || "(no link)"}</span>
+                    )}
+                    {a.source && <span className="text-muted-foreground shrink-0">({a.source})</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
         <div className="flex items-center gap-2">
           <Badge variant="outline">Sentiment: {viewReport.sentiment}</Badge>
           {viewReport.related_tickers?.map((t: string) => (
@@ -209,14 +255,32 @@ function MonitorDetail({ monitor }: { monitor: MonitorTask }) {
     <>
       <CardHeader>
         <div className="flex items-center justify-between">
-          <div>
-            <CardTitle className="text-base">{monitor.name}</CardTitle>
+          <div className="flex-1 min-w-0">
+            {renaming ? (
+              <div className="flex items-center gap-1">
+                <Input value={renameVal} onChange={(e) => setRenameVal(e.target.value)}
+                  className="h-7 w-48 text-sm" autoFocus
+                  onKeyDown={(e) => { if (e.key==="Enter") renameMutation.mutate(renameVal); if (e.key==="Escape") setRenaming(false); }} />
+                <Button size="icon-sm" variant="ghost" onClick={() => renameMutation.mutate(renameVal)} disabled={renameMutation.isPending}><Check className="h-3.5 w-3.5" /></Button>
+                <Button size="icon-sm" variant="ghost" onClick={() => setRenaming(false)}><X className="h-3.5 w-3.5" /></Button>
+              </div>
+            ) : (
+              <CardTitle className="text-base flex items-center gap-1">
+                <span className="truncate">{monitor.name}</span>
+                <Button size="icon-sm" variant="ghost" onClick={() => { setRenaming(true); setRenameVal(monitor.name); }}>
+                  <Pencil className="h-3 w-3 text-muted-foreground" />
+                </Button>
+              </CardTitle>
+            )}
             <CardDescription>
-              {monitor.mode} · {monitor.schedule?.frequency ?? "daily"}
-              {monitor.schedule?.time ? ` @ ${monitor.schedule.time}` : ""}
+              {monitor.mode} · {cronLabel(monitor.cron_expression)}
             </CardDescription>
           </div>
           <div className="flex items-center gap-2">
+            <Button size="sm" variant="outline" onClick={() => toggleStatus.mutate()} disabled={toggleStatus.isPending}
+              title={monitor.status === "active" ? "Pause scheduling" : "Resume scheduling"}>
+              {monitor.status === "active" ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+            </Button>
             <Button size="sm" onClick={() => runMutation.mutate()} disabled={isRunning}>
               {isRunning ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Play className="mr-1 h-4 w-4" />}
               {isRunning ? "Running..." : "Run Now"}
@@ -231,7 +295,13 @@ function MonitorDetail({ monitor }: { monitor: MonitorTask }) {
         {/* Config summary */}
         <div className="grid grid-cols-2 gap-2 text-sm">
           <div><span className="text-muted-foreground">Mode:</span> <Badge variant="outline" className="text-xs">{monitor.mode}</Badge></div>
-          <div><span className="text-muted-foreground">Status:</span> <Badge variant="outline">{monitor.status}</Badge></div>
+          <div><span className="text-muted-foreground">Schedule:</span> <span className="text-xs">{cronLabel(monitor.cron_expression)}</span></div>
+          {monitor.description && (
+            <div className="col-span-2">
+              <span className="text-muted-foreground">Description:</span>{" "}
+              <span className="text-xs">{monitor.description}</span>
+            </div>
+          )}
           {keywords.length > 0 && (
             <div className="col-span-2">
               <span className="text-muted-foreground">Keywords:</span>{" "}
@@ -242,6 +312,18 @@ function MonitorDetail({ monitor }: { monitor: MonitorTask }) {
             <div className="col-span-2">
               <span className="text-muted-foreground">Tickers:</span>{" "}
               {tickers.map((t: string) => <Badge key={t} variant="secondary" className="font-mono text-xs mr-1">${t}</Badge>)}
+            </div>
+          )}
+          {(monitor.expanded_keywords?.length ?? 0) > 0 && (
+            <div className="col-span-2">
+              <span className="text-muted-foreground">LLM Keywords:</span>{" "}
+              {monitor.expanded_keywords!.map((k: string) => <Badge key={k} variant="outline" className="text-xs mr-1">{k}</Badge>)}
+            </div>
+          )}
+          {(monitor.expanded_tickers?.length ?? 0) > 0 && (
+            <div className="col-span-2">
+              <span className="text-muted-foreground">LLM Tickers:</span>{" "}
+              {monitor.expanded_tickers!.map((t: string) => <Badge key={t} variant="outline" className="font-mono text-xs mr-1">${t}</Badge>)}
             </div>
           )}
         </div>
@@ -265,7 +347,7 @@ function MonitorDetail({ monitor }: { monitor: MonitorTask }) {
                 >
                   <p className="text-sm truncate">{r.summary}</p>
                   <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
-                    <span>{r.generated_at?.slice(0, 16)}</span>
+                    <span>{formatDateTime(r.generated_at)}</span>
                     <Badge variant="outline" className="text-xs">{r.sentiment}</Badge>
                   </div>
                 </button>
@@ -286,9 +368,9 @@ function CreateMonitorForm({ onCreated, onCancel }: { onCreated: (m: MonitorTask
   const [keywords, setKeywords] = useState<string[]>([]);
   const [tickerInput, setTickerInput] = useState("");
   const [tickers, setTickers] = useState<string[]>([]);
-  const [frequency, setFrequency] = useState("daily");
-  const [timeInput, setTimeInput] = useState("09:00");
-  const [agentEnabled, setAgentEnabled] = useState(false);
+  const [cronExpression, setCronExpression] = useState("0 9 * * 1-5");
+  const [cronPreset, setCronPreset] = useState("weekdays");
+  const [expandKeywords, setExpandKeywords] = useState(false);
 
   // Auto-add current input value on submit (so user doesn't lose typed text)
   const finalKeywords = mode === "keyword" && keywordInput.trim()
@@ -299,23 +381,33 @@ function CreateMonitorForm({ onCreated, onCancel }: { onCreated: (m: MonitorTask
     : tickers;
   const hasTargets = mode === "keyword" ? finalKeywords.length > 0 : finalTickers.length > 0;
 
+  const [expandedResult, setExpandedResult] = useState<{keywords: string[]; tickers: string[]} | null>(null);
+  const [createdMonitor, setCreatedMonitor] = useState<any>(null);
+
   const createMutation = useMutation({
     mutationFn: () => {
       const targets: Record<string, string[]> = {};
       if (mode === "keyword") targets.keywords = finalKeywords;
       if (mode === "ticker") targets.tickers = finalTickers;
 
-      const schedule: Record<string, unknown> = { frequency };
-      if (frequency !== "hourly") schedule.time = timeInput;
-
       return monitorApi.create({
         name: name || "Untitled", description, mode,
-        targets, sources: ["news", "prices"], schedule,
-        agent: { enabled: agentEnabled },
+        targets, sources: ["news", "prices"],
+        schedule: { frequency: "daily" },
+        agent: { enabled: true },
         output: { format: "summary", language: "zh" },
+        cron_expression: cronExpression,
+        expand_keywords: expandKeywords,
       } as any);
     },
-    onSuccess: onCreated,
+    onSuccess: (result: any) => {
+      if (result.expanded_keywords?.length > 0 || result.expanded_tickers?.length > 0) {
+        setCreatedMonitor(result);
+        setExpandedResult({ keywords: result.expanded_keywords || [], tickers: result.expanded_tickers || [] });
+      } else {
+        onCreated(result);
+      }
+    },
   });
 
   return (
@@ -373,48 +465,88 @@ function CreateMonitorForm({ onCreated, onCancel }: { onCreated: (m: MonitorTask
 
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-2">
-            <Label>Frequency</Label>
-            <Select value={frequency} onValueChange={(v) => v && setFrequency(v)}>
+            <Label>Schedule</Label>
+            <Select value={cronPreset} onValueChange={(v) => {
+              if (!v) return;
+              setCronPreset(v);
+              const presets: Record<string, string> = {
+                "hourly": "0 * * * *",
+                "daily9": "0 9 * * *",
+                "weekdays": "0 9 * * 1-5",
+                "weekly": "0 9 * * 1",
+                "daily18": "0 18 * * *",
+              };
+              setCronExpression(presets[v] || "0 9 * * 1-5");
+            }}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                {FREQUENCY_OPTIONS.map((f) => <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>)}
+                <SelectItem value="hourly">Every Hour</SelectItem>
+                <SelectItem value="daily9">Daily 9 AM</SelectItem>
+                <SelectItem value="weekdays">Weekdays 9 AM</SelectItem>
+                <SelectItem value="weekly">Weekly Monday 9 AM</SelectItem>
+                <SelectItem value="daily18">Daily 6 PM</SelectItem>
               </SelectContent>
             </Select>
           </div>
-          {frequency !== "hourly" && (
-            <div className="space-y-2">
-              <Label>Time</Label>
-              <Input type="time" value={timeInput} onChange={(e) => setTimeInput(e.target.value)} />
-            </div>
-          )}
+          <div className="space-y-2">
+            <Label>Cron (custom)</Label>
+            <Input placeholder="0 9 * * 1-5" value={cronExpression} onChange={(e) => { setCronExpression(e.target.value); setCronPreset(""); }} />
+          </div>
         </div>
 
         <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
           <div>
-            <Label className="text-sm">AI Summary</Label>
-            <p className="text-xs text-muted-foreground">Use Agent to generate intelligent summaries</p>
+            <Label className="text-sm">Auto-expand Keywords</Label>
+            <p className="text-xs text-muted-foreground">LLM suggests keywords & tickers on creation</p>
           </div>
-          <Button variant={agentEnabled ? "default" : "outline"} size="sm" onClick={() => setAgentEnabled(!agentEnabled)}>
-            {agentEnabled ? "Enabled" : "Disabled"}
+          <Button variant={expandKeywords ? "default" : "outline"} size="sm" onClick={() => setExpandKeywords(!expandKeywords)}>
+            {expandKeywords ? "Enabled" : "Disabled"}
           </Button>
         </div>
 
-        <div className="flex justify-end gap-2">
-          <Button variant="outline" onClick={onCancel}>Cancel</Button>
-          <Button
-            onClick={() => createMutation.mutate()}
-            disabled={createMutation.isPending || !name.trim() || !hasTargets}
-            title={!hasTargets ? "Add at least one keyword or ticker first" : ""}
-          >
-            {createMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-            Create
-          </Button>
-          {!hasTargets && (
-            <p className="text-xs text-destructive mt-1">
-              Add at least one keyword or ticker (type and press Enter or click Add).
-            </p>
-          )}
-        </div>
+        {expandedResult && (
+          <div className="p-3 rounded-lg bg-primary/5 border border-primary/10 space-y-2">
+            <p className="text-sm font-medium">LLM Suggested Keywords & Tickers</p>
+            {expandedResult.keywords.length > 0 && (
+              <div className="flex gap-1 flex-wrap">
+                {expandedResult.keywords.map((k) => <Badge key={k} className="text-xs">{k}</Badge>)}
+              </div>
+            )}
+            {expandedResult.tickers.length > 0 && (
+              <div className="flex gap-1 flex-wrap">
+                {expandedResult.tickers.map((t) => <Badge key={t} variant="secondary" className="font-mono text-xs">{t}</Badge>)}
+              </div>
+            )}
+            <div className="flex gap-2">
+              <Button size="sm" onClick={() => {
+                setKeywords([...keywords, ...expandedResult.keywords.filter((k: string) => !keywords.includes(k))]);
+                setTickers([...tickers, ...expandedResult.tickers.filter((t: string) => !tickers.includes(t))]);
+                setExpandedResult(null);
+                onCreated(createdMonitor);
+              }}>Accept & Save</Button>
+              <Button size="sm" variant="outline" onClick={() => { setExpandedResult(null); onCreated(createdMonitor); }}>Skip</Button>
+            </div>
+          </div>
+        )}
+
+        {!expandedResult && (
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={onCancel}>Cancel</Button>
+            <Button
+              onClick={() => createMutation.mutate()}
+              disabled={createMutation.isPending || !name.trim() || !hasTargets}
+              title={!hasTargets ? "Add at least one keyword or ticker first" : ""}
+            >
+              {createMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              Create
+            </Button>
+            {!hasTargets && (
+              <p className="text-xs text-destructive mt-1">
+                Add at least one keyword or ticker (type and press Enter or click Add).
+              </p>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   );

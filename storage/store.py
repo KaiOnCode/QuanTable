@@ -323,6 +323,15 @@ class ContextStore:
                 last_run_at TEXT
             )
         """)
+        # Migrations: add columns that may not exist in older DBs
+        for col in ("cron_expression TEXT DEFAULT ''",
+                     "expanded_keywords_json TEXT DEFAULT '[]'",
+                     "expanded_tickers_json TEXT DEFAULT '[]'",
+                     "report_language TEXT DEFAULT 'zh'"):
+            try:
+                db.execute(f"ALTER TABLE monitor_tasks ADD COLUMN {col}")
+            except Exception:
+                pass
         db.commit()
 
         # monitoring_reports go in insights.db
@@ -341,6 +350,34 @@ class ContextStore:
                 generated_at TEXT NOT NULL
             )
         """)
+        for col in ("title TEXT DEFAULT ''",
+                     "report_type TEXT DEFAULT 'scheduled'",
+                     "source_news_ids TEXT DEFAULT '[]'",
+                     "context_report_ids TEXT DEFAULT '[]'",
+                     "summary_text TEXT DEFAULT ''",
+                     "content_text TEXT DEFAULT ''"):
+            try:
+                idb.execute(f"ALTER TABLE monitoring_reports ADD COLUMN {col}")
+            except Exception:
+                pass
+
+        # New: per-monitor collected news
+        idb.execute("""
+            CREATE TABLE IF NOT EXISTS monitor_news (
+                id TEXT PRIMARY KEY,
+                monitor_id TEXT NOT NULL,
+                title TEXT DEFAULT '',
+                summary TEXT DEFAULT '',
+                url TEXT NOT NULL,
+                source_name TEXT DEFAULT '',
+                published_at TEXT,
+                relevance_score REAL DEFAULT 1.0,
+                fetched_at TEXT NOT NULL,
+                UNIQUE(monitor_id, url)
+            )
+        """)
+        idb.execute("CREATE INDEX IF NOT EXISTS idx_monitor_news_monitor ON monitor_news(monitor_id)")
+        idb.execute("CREATE INDEX IF NOT EXISTS idx_monitor_news_fetched ON monitor_news(fetched_at)")
         idb.execute("CREATE INDEX IF NOT EXISTS idx_reports_monitor ON monitoring_reports(monitor_id)")
         idb.execute("CREATE INDEX IF NOT EXISTS idx_reports_generated ON monitoring_reports(generated_at)")
         idb.commit()
@@ -354,8 +391,10 @@ class ContextStore:
         db.execute(
             """INSERT OR REPLACE INTO monitor_tasks
                (id, name, description, mode, targets_json, sources_json,
-                schedule_json, agent_json, output_json, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                schedule_json, agent_json, output_json,
+                cron_expression, expanded_keywords_json, expanded_tickers_json,
+                report_language, status, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (mid, config.get("name", ""), config.get("description", ""),
              config.get("mode", "keyword"),
              json.dumps(config.get("targets", {})),
@@ -363,6 +402,10 @@ class ContextStore:
              json.dumps(config.get("schedule", {})),
              json.dumps(config.get("agent", {})),
              json.dumps(config.get("output", {})),
+             config.get("cron_expression", ""),
+             json.dumps(config.get("expanded_keywords", [])),
+             json.dumps(config.get("expanded_tickers", [])),
+             config.get("report_language", "zh"),
              config.get("status", "active"),
              config.get("created_at", now), now),
         )
@@ -400,7 +443,9 @@ class ContextStore:
         db.execute(
             """UPDATE monitor_tasks SET name=?, description=?, mode=?,
                targets_json=?, sources_json=?, schedule_json=?, agent_json=?,
-               output_json=?, status=?, updated_at=?, last_run_at=?
+               output_json=?, cron_expression=?, expanded_keywords_json=?,
+               expanded_tickers_json=?, report_language=?,
+               status=?, updated_at=?, last_run_at=?
                WHERE id=?""",
             (merged["name"], merged.get("description", ""), merged["mode"],
              json.dumps(merged.get("targets", {})),
@@ -408,6 +453,10 @@ class ContextStore:
              json.dumps(merged.get("schedule", {})),
              json.dumps(merged.get("agent", {})),
              json.dumps(merged.get("output", {})),
+             merged.get("cron_expression", ""),
+             json.dumps(merged.get("expanded_keywords", [])),
+             json.dumps(merged.get("expanded_tickers", [])),
+             merged.get("report_language", "zh"),
              merged.get("status", "active"), merged["updated_at"],
              merged.get("last_run_at"), monitor_id),
         )
@@ -440,8 +489,10 @@ class ContextStore:
         idb.execute(
             """INSERT INTO monitoring_reports
                (id, monitor_id, session_id, summary, key_findings_json,
-                sentiment, related_tickers_json, alerts_json, raw_data_json, generated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                sentiment, related_tickers_json, alerts_json, raw_data_json,
+                title, report_type, source_news_ids, context_report_ids,
+                summary_text, content_text, generated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (rid, report.get("monitor_id", ""), report.get("session_id", ""),
              report.get("summary", ""),
              json.dumps(report.get("key_findings", [])),
@@ -449,6 +500,12 @@ class ContextStore:
              json.dumps(report.get("related_tickers", [])),
              json.dumps(report.get("alerts", [])),
              json.dumps(report.get("raw_data", {})),
+             report.get("title", ""),
+             report.get("report_type", "scheduled"),
+             json.dumps(report.get("source_news_ids", [])),
+             json.dumps(report.get("context_report_ids", [])),
+             report.get("summary_text", ""),
+             report.get("content_text", ""),
              report.get("generated_at", now)),
         )
         idb.commit()
@@ -462,6 +519,44 @@ class ContextStore:
             (monitor_id, limit),
         ).fetchall()
         return [_report_row_to_dict(r) for r in rows]
+
+    # ── Monitor News ─────────────────────────────────────────
+
+    def save_monitor_news(self, monitor_id: str, articles: list[dict]) -> int:
+        """Insert or ignore news articles for a monitor. Returns count of new articles."""
+        self._init_monitor_db()
+        idb = self._get_conn("insights.db")
+        count = 0
+        now = _now()
+        import uuid
+        for a in articles:
+            try:
+                idb.execute(
+                    """INSERT OR IGNORE INTO monitor_news
+                       (id, monitor_id, title, summary, url, source_name, published_at, relevance_score, fetched_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (str(uuid.uuid4()), monitor_id,
+                     a.get("title", ""), a.get("summary", ""),
+                     a.get("url", ""), a.get("source_name", ""),
+                     a.get("published_at"), a.get("relevance_score", 1.0),
+                     now),
+                )
+                if idb.changes > 0:
+                    count += 1
+            except Exception:
+                continue
+        idb.commit()
+        return count
+
+    def list_monitor_news(self, monitor_id: str, limit: int = 100) -> list[dict]:
+        """Get collected news for a monitor, newest first."""
+        self._init_monitor_db()
+        idb = self._get_conn("insights.db")
+        rows = idb.execute(
+            "SELECT * FROM monitor_news WHERE monitor_id = ? ORDER BY fetched_at DESC LIMIT ?",
+            (monitor_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     # ── Storage management ──────────────────────────────────
 
@@ -494,17 +589,19 @@ class ContextStore:
 
 def _monitor_row_to_dict(row) -> dict:
     d = dict(row)
-    for k in ("targets_json", "sources_json", "schedule_json", "agent_json", "output_json"):
+    for k in ("targets_json", "sources_json", "schedule_json", "agent_json", "output_json",
+              "expanded_keywords_json", "expanded_tickers_json"):
         try:
             d[k.replace("_json", "")] = json.loads(d.pop(k, "{}"))
         except Exception:
-            d[k.replace("_json", "")] = {}
+            d[k.replace("_json", "")] = []
     return d
 
 
 def _report_row_to_dict(row) -> dict:
     d = dict(row)
-    for k in ("key_findings_json", "related_tickers_json", "alerts_json", "raw_data_json"):
+    for k in ("key_findings_json", "related_tickers_json", "alerts_json", "raw_data_json",
+              "source_news_ids", "context_report_ids"):
         try:
             d[k.replace("_json", "")] = json.loads(d.pop(k, "[]"))
         except Exception:

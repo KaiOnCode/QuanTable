@@ -8,7 +8,8 @@ from .providers.YFinance import (
     df_get_prices,
     df_get_indicators,
     df_get_fundamentals as df_get_fundamentals_live,
-    df_get_sector_context
+    df_get_sector_context,
+    df_get_news_yahoo,
 )
 
 from .providers.news_google import get_company_news
@@ -154,6 +155,10 @@ class DataService:
                     days=window_days,
                     max_items=max_items,
                 )
+
+            # Fallback to Yahoo Finance if both above fail
+            if not items:
+                items = df_get_news_yahoo(ticker, limit=max_items)
 
             # Persist to MarketDataStore for accumulation
             if STORE_ENABLED and items:

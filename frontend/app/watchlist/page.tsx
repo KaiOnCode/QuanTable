@@ -15,11 +15,14 @@ import {
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from "@/components/ui/dialog";
 import { EmptyState } from "@/components/shared/empty-state";
 import { formatCurrency, formatPercent } from "@/lib/utils";
 import { watchlistApi } from "@/lib/api/watchlist";
 import { api } from "@/lib/api/client";
-import { Plus, MoreHorizontal, Trash2, Loader2, TrendingUp, TrendingDown, Minus } from "lucide-react";
+import { Plus, MoreHorizontal, Trash2, Loader2, TrendingUp, TrendingDown, Minus, Pencil, Check, X } from "lucide-react";
 import type { Watchlist } from "@/lib/types/models";
 
 function TickerRow({
@@ -135,6 +138,11 @@ export default function WatchlistPage() {
   const [newWatchlistName, setNewWatchlistName] = useState("");
   // Track tickers added in last 30s that are still fetching data
   const [pendingTickers, setPendingTickers] = useState<Record<string, number>>({});
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [createName, setCreateName] = useState("");
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const renameInputRef = useRef<HTMLInputElement>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ["watchlists"],
@@ -204,6 +212,15 @@ export default function WatchlistPage() {
     },
   });
 
+  const renameMutation = useMutation({
+    mutationFn: ({ wid, name }: { wid: string; name: string }) =>
+      watchlistApi.update(wid, { name }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["watchlists"] });
+      setRenamingId(null);
+    },
+  });
+
   return (
     <Shell>
       <div className="p-6 space-y-6">
@@ -212,7 +229,7 @@ export default function WatchlistPage() {
             <h2 className="text-lg font-semibold">Watchlist</h2>
             <p className="text-sm text-muted-foreground">Track your favorite tickers with real-time price data.</p>
           </div>
-          <Button onClick={() => createMutation.mutate("New Watchlist")} disabled={createMutation.isPending}>
+          <Button onClick={() => { setCreateName(""); setCreateDialogOpen(true); }}>
             <Plus className="mr-2 h-4 w-4" /> New Watchlist
           </Button>
         </div>
@@ -230,7 +247,7 @@ export default function WatchlistPage() {
                 title="No watchlists"
                 description="Create a watchlist to start tracking tickers."
                 action={
-                  <Button onClick={() => createMutation.mutate("My Watchlist")}>
+                  <Button onClick={() => { setCreateName("My Watchlist"); setCreateDialogOpen(true); }}>
                     <Plus className="mr-2 h-4 w-4" /> Create Watchlist
                   </Button>
                 }
@@ -258,7 +275,39 @@ export default function WatchlistPage() {
               <Card>
                 <CardHeader>
                   <div className="flex items-center justify-between">
-                    <CardTitle className="text-base">{active.name}</CardTitle>
+                    <CardTitle className="text-base flex items-center gap-2">
+                      {renamingId === active.id ? (
+                        <>
+                          <Input
+                            ref={renameInputRef}
+                            value={renameValue}
+                            onChange={(e) => setRenameValue(e.target.value)}
+                            className="h-8 w-48 text-sm"
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") renameMutation.mutate({ wid: active.id, name: renameValue });
+                              if (e.key === "Escape") setRenamingId(null);
+                            }}
+                          />
+                          <Button size="icon-sm" variant="ghost" onClick={() => renameMutation.mutate({ wid: active.id, name: renameValue })} disabled={renameMutation.isPending}>
+                            <Check className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button size="icon-sm" variant="ghost" onClick={() => setRenamingId(null)}>
+                            <X className="h-3.5 w-3.5" />
+                          </Button>
+                        </>
+                      ) : (
+                        <>
+                          {active.name}
+                          <Button
+                            size="icon-sm"
+                            variant="ghost"
+                            onClick={() => { setRenamingId(active.id); setRenameValue(active.name); setTimeout(() => renameInputRef.current?.focus(), 0); }}
+                          >
+                            <Pencil className="h-3 w-3 text-muted-foreground" />
+                          </Button>
+                        </>
+                      )}
+                    </CardTitle>
                     <Button
                       variant="outline"
                       size="sm"
@@ -332,6 +381,36 @@ export default function WatchlistPage() {
           </>
         )}
       </div>
+
+      {/* Create dialog */}
+      <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>New Watchlist</DialogTitle>
+          </DialogHeader>
+          <Input
+            placeholder="Watchlist name"
+            value={createName}
+            onChange={(e) => setCreateName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && createName.trim()) {
+                createMutation.mutate(createName.trim());
+                setCreateDialogOpen(false);
+              }
+            }}
+            autoFocus
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>Cancel</Button>
+            <Button
+              onClick={() => { createMutation.mutate(createName.trim() || "Watchlist"); setCreateDialogOpen(false); }}
+              disabled={createMutation.isPending}
+            >
+              Create
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Shell>
   );
 }

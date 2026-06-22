@@ -108,10 +108,14 @@ export function TickerPreview({ ticker }: Props) {
 
   const chartData = useMemo(() => {
     const bars = pricesQuery.data?.bars || [];
-    return bars.map((b) => ({
-      ...b,
-      date: b.date?.slice(5) || b.date, // MM-DD format
-    }));
+    const thisYear = new Date().getFullYear();
+    return bars.map((b) => {
+      const d = b.date;
+      if (!d) return { ...b, date: "" };
+      const year = parseInt(d.slice(0, 4), 10);
+      // Show year prefix for dates not in the current year
+      return { ...b, date: year !== thisYear ? d.slice(0, 10) : d.slice(5) };
+    });
   }, [pricesQuery.data]);
 
   const priceChange = useMemo(() => {

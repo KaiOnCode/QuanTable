@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/accordion";
 import { ActionBadge, DirectionBadge } from "@/components/shared/badges";
 import { api } from "@/lib/api/client";
+import { formatDateTime } from "@/lib/utils";
 import type { SSEResultEvent } from "@/lib/types/models";
 import {
   ArrowLeft,
@@ -151,7 +152,7 @@ export default function HistoryDetailPage() {
               </Badge>
               <span className="text-xs text-muted-foreground flex items-center gap-1">
                 <Clock className="h-3 w-3" />
-                {session.created_at?.slice(0, 16).replace("T", " ")}
+                {formatDateTime(session.created_at)}
               </span>
               {result.elapsed_s != null && (
                 <span className="text-xs text-muted-foreground">

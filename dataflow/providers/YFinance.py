@@ -243,6 +243,39 @@ def df_get_fundamentals(ticker: str) -> dict:
         return {}
 
 
+def df_get_news_yahoo(ticker: str, limit: int = 20) -> list[dict]:
+    """Fetch news from Yahoo Finance via yf.Ticker.news.
+
+    Returns structured JSON directly — no HTML scraping needed.
+    Each article has: title, link, publisher, providerPublishTime, thumbnail.
+    """
+    try:
+        t = yf.Ticker(ticker)
+        raw = t.news or []
+        articles = []
+        for item in raw[:limit]:
+            content = item.get("content", {}) or {}
+            pub_time = content.get("pubDate") or content.get("providerPublishTime") or ""
+            if pub_time and isinstance(pub_time, (int, float)):
+                from datetime import datetime, timezone
+                pub_time = datetime.fromtimestamp(pub_time, tz=timezone.utc).isoformat()
+            articles.append({
+                "title": content.get("title", "") or item.get("title", ""),
+                "summary": content.get("summary", "") or "",
+                "url": content.get("canonicalUrl", {}) or {},
+                "source_name": content.get("provider", {}).get("displayName", "") if isinstance(content.get("provider"), dict) else "",
+                "published_at": str(pub_time) if pub_time else "",
+            })
+            # Normalize url field
+            if isinstance(articles[-1]["url"], dict):
+                articles[-1]["url"] = articles[-1]["url"].get("url", "") or ""
+        return [a for a in articles if a["title"]]
+    except Exception as exc:
+        logger = __import__("logging").getLogger(__name__)
+        logger.warning("[yfinance] News fetch failed for %s: %s", ticker, exc)
+        return []
+
+
 def df_get_sector_context(ticker: str) -> Dict[str, Any]:
     """
     获取行业与风格标签 - 匹配 agent_design v1.0 规范

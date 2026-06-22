@@ -55,6 +55,14 @@ async def lifespan(app: FastAPI):
             app.state.monitor_runner = MonitorRunner(scheduler)
             app.state.monitor_runner.start()
             logger.info("MonitorRunner started")
+
+            # Store scheduler reference for monitor route to register jobs
+            import scheduler as sched_mod
+            sched_mod._shared_scheduler = scheduler
+
+            # Register all active monitor cron jobs
+            from server.routes.monitor import register_all_jobs
+            register_all_jobs()
         except Exception as exc:
             logger.warning("Background services failed to start: %s", exc)
 

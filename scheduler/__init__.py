@@ -19,6 +19,14 @@ from dataflow.cache import invalidate_cache, cache_key
 
 logger = logging.getLogger(__name__)
 
+# Shared scheduler instance — set by server startup, accessed by routes
+_shared_scheduler: BackgroundScheduler | None = None
+
+
+def _get_scheduler() -> BackgroundScheduler | None:
+    """Return the shared APScheduler instance (set during server startup)."""
+    return _shared_scheduler
+
 # Default watch list for periodic data collection
 DEFAULT_WATCH_TICKERS = [
     "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA",
@@ -366,7 +374,11 @@ class MonitorRunner:
             self._execute(task)
 
     def _should_run(self, task: dict, now) -> bool:
-        """Check if a task is due to run based on its schedule."""
+        """Check if a task is due to run based on its schedule.
+        If task has a cron_expression, it's handled by APScheduler CronTrigger — skip.
+        """
+        if task.get("cron_expression"):
+            return False  # Handled by per-task cron job
         schedule = task.get("schedule", {})
         freq = schedule.get("frequency", "daily")
         last_run = task.get("last_run_at")
@@ -405,14 +417,12 @@ class MonitorRunner:
                 store = get_store()
                 store.touch_monitor_run(task["id"])
 
-                # Import and execute
-                from server.routes.monitor import _execute_monitor_task
-                report = _execute_monitor_task(task)
-                report["monitor_id"] = task["id"]
-                rid = store.save_monitoring_report(report)
+                # Execute via new MonitorEngine
+                from server.monitor_engine import execute
+                report = execute(task["id"])
                 logger.info(
-                    "MonitorRunner: executed %s → report %s (%d findings)",
-                    task.get("name", ""), rid[:8], len(report.get("key_findings", [])),
+                    "MonitorRunner: executed %s → %d findings",
+                    task.get("name", ""), len(report.get("key_findings", [])),
                 )
             except Exception as exc:
                 logger.warning("MonitorRunner: execution failed for %s: %s",
