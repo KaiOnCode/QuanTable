@@ -6,6 +6,7 @@ import { Shell } from "@/components/layout/shell";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import {
   Accordion, AccordionItem, AccordionTrigger, AccordionContent,
@@ -17,7 +18,7 @@ import type { DailyBrief, Watchlist } from "@/lib/types/models";
 import ReactMarkdown from "react-markdown";
 import {
   Loader2, RefreshCw, CheckCircle2, Globe, ExternalLink,
-  X, Newspaper, List,
+  X, Newspaper, List, Circle, AlertCircle,
 } from "lucide-react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
@@ -42,8 +43,9 @@ function renderCitations(content: string, sources: any[]): string {
 }
 
 type ProgressStep = { stage: string; status: string; detail: string };
+const STAGE_ORDER = ["market", "news", "llm", "store"] as const;
 const STAGE_LABELS: Record<string, string> = {
-  start: "Init", market: "Market", news: "News", llm: "AI", store: "Save", done: "Done", error: "Error",
+  market: "Market Data", news: "News Collection", llm: "AI Generation", store: "Saving",
 };
 
 export default function InsightsPage() {
@@ -52,7 +54,7 @@ export default function InsightsPage() {
   const [selected, setSelected] = useState<DailyBrief | null>(null);
   const [hours24, setHours24] = useState(true);
   const [generating, setGenerating] = useState(false);
-  const [progress, setProgress] = useState<ProgressStep[]>([]);
+  const [progress, setProgress] = useState<Record<string, ProgressStep>>({});
 
   // Watchlist news state
   const [wlId, setWlId] = useState<string>("");
@@ -107,39 +109,40 @@ export default function InsightsPage() {
 
   const startGenerate = useCallback(() => {
     setGenerating(true);
-    setProgress([]);
+    setProgress({});
     const url = `${API_BASE}/insights/generate?hours=${hours24 ? 24 : 0}`;
     fetch(url, { method: "POST", headers: { Accept: "text/event-stream" } })
       .then(async (resp) => {
         const reader = resp.body!.getReader();
         const decoder = new TextDecoder();
-        let buf = "", ev = "message", lines: string[] = [];
+        let buf = "", ev = "message", dataLines: string[] = [];
         const flush = () => {
-          const s = lines.join("\n"); lines = []; ev = "message";
-          if (!s.trim()) return;
+          const dataStr = dataLines.join("\n");
+          const currentEvent = ev;
+          dataLines = []; ev = "message";
+          if (!dataStr.trim()) return;
           try {
-            const p = JSON.parse(s);
-            if (ev === "progress") setProgress((prev) => [...prev, p]);
-            else if (ev === "done") { setGenerating(false); setSelected(p as any); queryClient.invalidateQueries({ queryKey: ["insights"] }); }
-            else if (ev === "error") { setGenerating(false); setProgress((prev) => [...prev, { stage: "error", status: "error", detail: p.message }]); }
+            const p = JSON.parse(dataStr);
+            if (currentEvent === "progress") setProgress((prev) => ({ ...prev, [p.stage]: p }));
+            else if (currentEvent === "done") { setGenerating(false); setSelected(p as any); queryClient.invalidateQueries({ queryKey: ["insights"] }); }
+            else if (currentEvent === "error") { setGenerating(false); setProgress((prev) => ({ ...prev, error: { stage: "error", status: "error", detail: p.message } })); }
           } catch { /* skip */ }
         };
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
           buf += decoder.decode(value, { stream: true });
-          for (const l of buf.split(/\r?\n/)) { buf = buf.includes(l + "\n") ? buf.slice(buf.indexOf(l + "\n") + l.length + 1) : buf; }
-          const allLines = buf.split(/\r?\n/);
-          buf = allLines.pop() ?? "";
-          for (const l of allLines) {
-            if (l === "") flush();
-            else if (l.startsWith("event:")) ev = l.slice(6).trim();
-            else if (l.startsWith("data:")) lines.push(l.slice(5).trimStart());
+          const lines = buf.split(/\r?\n/);
+          buf = lines.pop() ?? "";
+          for (const line of lines) {
+            if (line === "") flush();
+            else if (line.startsWith("event:")) ev = line.slice(6).trim();
+            else if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
           }
         }
-        if (lines.length) flush();
+        if (dataLines.length) flush();
       })
-      .catch((err) => { if (err.name !== "AbortError") { setProgress((prev) => [...prev, { stage: "error", status: "error", detail: String(err) }]); setGenerating(false); } });
+      .catch((err) => { if (err.name !== "AbortError") { setProgress((prev) => ({ ...prev, error: { stage: "error", status: "error", detail: String(err) } })); setGenerating(false); } });
   }, [hours24, queryClient]);
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
@@ -214,7 +217,42 @@ export default function InsightsPage() {
         {tab === "briefs" && (
           <>
             {generating && (
-              <Card><CardHeader><CardTitle className="text-base">Progress</CardTitle></CardHeader><CardContent><div className="space-y-2 text-sm">{progress.map((p, i) => (<div key={i} className="flex items-center gap-3">{p.status === "done" ? <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" /> : p.status === "error" ? <CheckCircle2 className="h-4 w-4 text-red-500 shrink-0" /> : <Loader2 className="h-4 w-4 animate-spin text-blue-500 shrink-0" />}<span className="text-muted-foreground w-24 shrink-0">{STAGE_LABELS[p.stage] || p.stage}</span><span className="text-xs text-muted-foreground truncate">{p.detail}</span></div>))}{progress.length === 0 && (<div className="flex items-center gap-3"><Loader2 className="h-4 w-4 animate-spin text-blue-500" /><span className="text-muted-foreground">Starting...</span></div>)}</div></CardContent></Card>
+              <Card>
+                <CardHeader className="pb-2"><CardTitle className="text-base">Generating Brief</CardTitle></CardHeader>
+                <CardContent className="space-y-3">
+                  <Progress value={
+                    STAGE_ORDER.filter((s) => progress[s]?.status === "done").length / STAGE_ORDER.length * 100
+                  } />
+                  {STAGE_ORDER.map((stage) => {
+                    const p = progress[stage];
+                    const done = p?.status === "done";
+                    const active = p && !done;
+                    return (
+                      <div key={stage} className={`flex items-center gap-3 text-sm transition-opacity duration-300 ${!p ? "opacity-40" : "opacity-100"}`}>
+                        {done ? (
+                          <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0 transition-all duration-300 scale-110" />
+                        ) : active ? (
+                          <Loader2 className="h-4 w-4 animate-spin text-blue-500 shrink-0" />
+                        ) : (
+                          <Circle className="h-4 w-4 text-muted-foreground/30 shrink-0" />
+                        )}
+                        <span className={`w-32 shrink-0 text-xs ${active ? "text-foreground font-medium" : "text-muted-foreground"}`}>
+                          {STAGE_LABELS[stage]}
+                        </span>
+                        <span className={`text-xs truncate ${active ? "text-foreground" : "text-muted-foreground"}`}>
+                          {p?.detail || "Waiting"}
+                        </span>
+                      </div>
+                    );
+                  })}
+                  {progress.error && (
+                    <div className="flex items-center gap-3 text-sm text-red-500">
+                      <AlertCircle className="h-4 w-4 shrink-0" />
+                      <span>{progress.error.detail}</span>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
             )}
             {isLoading ? (<Card><CardContent className="pt-8 flex justify-center"><Loader2 className="h-6 w-6 animate-spin" /></CardContent></Card>) : error ? (<Card><CardContent className="pt-8"><p className="text-sm text-muted-foreground">Failed to load.</p></CardContent></Card>) : briefs.length === 0 && !generating ? (<Card><CardContent className="pt-8"><EmptyState title="No briefs yet" description="Generate your first morning brief." action={<Button onClick={startGenerate}><RefreshCw className="mr-2 h-4 w-4" />Generate</Button>} /></CardContent></Card>) : (
               <div className="space-y-3">
