@@ -295,6 +295,10 @@ export default function InsightsPage() {
 }
 
 function WatchlistNewsList({ articles, search }: { articles: any[]; search: string }) {
+  const [summaries, setSummaries] = useState<Record<string, string>>({});
+  const [allSummary, setAllSummary] = useState<string>("");
+  const [summLoading, setSummLoading] = useState<string | null>(null); // ticker or "all"
+
   const filtered = search
     ? articles.filter((a: any) =>
         a.ticker?.toLowerCase().includes(search.toLowerCase()) ||
@@ -314,12 +318,42 @@ function WatchlistNewsList({ articles, search }: { articles: any[]; search: stri
     return Object.entries(map).sort((a, b) => b[1].length - a[1].length);
   }, [filtered]);
 
+  const doSummary = async (ticker: string, arts: any[]) => {
+    setSummLoading(ticker);
+    try {
+      const d = await api.post<{ summary: string }>("insights/watchlist-summary", { ticker, articles: arts });
+      setSummaries((prev) => ({ ...prev, [ticker]: d.summary }));
+    } catch { /* ignore */ }
+    setSummLoading(null);
+  };
+
+  const doSummaryAll = async () => {
+    setSummLoading("all");
+    try {
+      const d = await api.post<{ summary: string }>("insights/watchlist-summary", { articles: filtered });
+      setAllSummary(d.summary);
+    } catch { /* ignore */ }
+    setSummLoading(null);
+  };
+
   if (grouped.length === 0) return null;
 
   return (
-    <Card>
-      <CardContent className="pt-4 max-h-[calc(100vh-300px)] overflow-y-auto">
-        <Accordion className="space-y-0">
+    <div className="space-y-3">
+      {/* Summarize All */}
+      <div className="flex items-center gap-2">
+        <Button size="sm" variant="outline" onClick={doSummaryAll} disabled={summLoading === "all"}>
+          {summLoading === "all" ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : null}
+          Summarize All
+        </Button>
+      </div>
+      {allSummary && (
+        <Card><CardContent className="py-3 text-sm text-muted-foreground">{allSummary}</CardContent></Card>
+      )}
+
+      <Card>
+        <CardContent className="pt-4 max-h-[calc(100vh-380px)] overflow-y-auto">
+          <Accordion className="space-y-0">
           {grouped.map(([ticker, arts]) => (
             <AccordionItem key={ticker} value={ticker}>
               <AccordionTrigger className="py-2 pr-2">
@@ -335,6 +369,20 @@ function WatchlistNewsList({ articles, search }: { articles: any[]; search: stri
               </AccordionTrigger>
               <AccordionContent>
                 <div className="space-y-0.5 pl-2">
+                  {/* Per-ticker summary */}
+                  {summaries[ticker] && (
+                    <div className="py-2 px-3 mb-2 rounded bg-primary/5 border border-primary/10 text-xs text-muted-foreground">
+                      {summaries[ticker]}
+                    </div>
+                  )}
+                  <div className="flex justify-end mb-1">
+                    <Button variant="ghost" size="sm" className="h-6 text-[10px]"
+                      onClick={(e) => { e.stopPropagation(); doSummary(ticker, arts); }}
+                      disabled={summLoading === ticker}>
+                      {summLoading === ticker ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
+                      Summarize
+                    </Button>
+                  </div>
                   {arts.map((a: any, i: number) => (
                     <div key={i} className="flex items-start gap-2 py-1.5 border-b border-muted/10 last:border-0">
                       <div className="shrink-0 mt-0.5">
@@ -359,5 +407,6 @@ function WatchlistNewsList({ articles, search }: { articles: any[]; search: stri
         </Accordion>
       </CardContent>
     </Card>
+    </div>
   );
 }

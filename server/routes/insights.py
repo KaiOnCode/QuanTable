@@ -37,6 +37,44 @@ async def latest_insight():
     return {"insight": brief} if brief else {"insight": None}
 
 
+# ── Watchlist Summary ──
+
+@router.post("/insights/watchlist-summary")
+async def watchlist_summary(data: dict):
+    """Generate a short summary of news articles. Body: {ticker?, articles}"""
+    articles = data.get("articles", [])
+    ticker = data.get("ticker", "")
+    if not articles:
+        return {"summary": "No articles to summarize."}
+
+    import os
+    from langchain_openai import ChatOpenAI
+
+    titles = "\n".join(
+        f"- [{a.get('ticker','')}] {a.get('title','')} ({a.get('source','')}, {a.get('published_at','')[:10]})"
+        for a in articles[:30]
+    )
+    scope = f"关于 {ticker} 的" if ticker else "关于多个标的的"
+    prompt = f"""你是市场分析师，请{scope}以下新闻标题做一个简洁总结（100-200字中文）。
+1. 概括关键信号和趋势，不要逐条复述
+2. 如有冲突信号请指出 3. 用自然段落 4. 只基于提供的数据
+
+{titles}
+
+只输出总结文本。"""
+
+    try:
+        llm = ChatOpenAI(model=os.getenv("OPENAI_MODEL","deepseek-chat"),
+            openai_api_key=os.getenv("OPENAI_API_KEY"),
+            openai_api_base=os.getenv("OPENAI_API_BASE") or None,
+            temperature=0.3, max_tokens=512)
+        result = llm.invoke(prompt)
+        text = result.content if hasattr(result, "content") else str(result)
+        return {"summary": text.strip()}
+    except Exception as exc:
+        return {"summary": f"Summary failed: {str(exc)[:200]}"}
+
+
 # ── Watchlist News (must be before {insight_id} to avoid route conflict) ──
 
 @router.get("/insights/watchlist-news")
