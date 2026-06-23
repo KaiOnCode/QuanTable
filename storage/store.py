@@ -623,6 +623,14 @@ class ContextStore:
         ).fetchone()
         return _brief_row_to_dict(row) if row else None
 
+    def delete_daily_brief(self, brief_id: str) -> bool:
+        """Delete a daily brief by ID. Returns True if deleted."""
+        self._init_monitor_db()
+        idb = self._get_conn("insights.db")
+        cur = idb.execute("DELETE FROM daily_briefs WHERE id = ?", (brief_id,))
+        idb.commit()
+        return cur.rowcount > 0
+
     def get_latest_brief(self) -> dict | None:
         """Get the most recent daily brief."""
         self._init_monitor_db()

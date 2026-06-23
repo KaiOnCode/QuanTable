@@ -1,16 +1,11 @@
-"""Daily Insights REST endpoints.
-
-GET  /api/insights          — list recent briefs
-GET  /api/insights/latest   — latest brief only
-GET  /api/insights/{id}     — full brief detail
-POST /api/insights/generate — SSE streaming brief generation
-"""
+"""Daily Insights REST endpoints."""
 
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from queue import Empty, Queue
 from threading import Thread
 
@@ -28,6 +23,8 @@ def _sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {payload}\n\n"
 
 
+# ── CRUD ──
+
 @router.get("/insights")
 async def list_insights(limit: int = Query(20, ge=1, le=100)):
     briefs = get_store().list_daily_briefs(limit=limit)
@@ -40,6 +37,73 @@ async def latest_insight():
     return {"insight": brief} if brief else {"insight": None}
 
 
+# ── Watchlist News (must be before {insight_id} to avoid route conflict) ──
+
+@router.get("/insights/watchlist-news")
+async def watchlist_news(
+    watchlist_id: str = Query(...),
+    hours: int = Query(168, ge=1, le=720),
+):
+    """Fetch news for all tickers in a watchlist using Yahoo + Google RSS + Bing."""
+    store = get_store()
+    wl = store._system_db().execute(
+        "SELECT * FROM watchlists WHERE id = ?", (watchlist_id,)
+    ).fetchone()
+    if wl is None:
+        raise HTTPException(404, "Watchlist not found")
+
+    import json as _json
+    tickers = _json.loads(wl["tickers_json"])
+    if not tickers:
+        return {"tickers": [], "articles": [], "total": 0}
+
+    from dataflow.providers.YFinance import df_get_news_yahoo
+    from dataflow.providers.news_rss import fetch_google_news_rss
+    from dataflow.providers.news_bing import get_company_news_bing
+
+    all_articles: list[dict] = []
+
+    def _fetch(ticker: str):
+        results: list[dict] = []
+        try:
+            for a in df_get_news_yahoo(ticker, limit=5):
+                a["_ticker"] = ticker; a["_source"] = "Yahoo"; results.append(a)
+        except: pass
+        try:
+            for a in fetch_google_news_rss(f"{ticker} stock", hours=hours):
+                a["_ticker"] = ticker; a["_source"] = "Google"; results.append(a)
+        except: pass
+        try:
+            days = max(1, hours // 24)
+            for a in get_company_news_bing(ticker, days=days, max_items=5):
+                a["_ticker"] = ticker; a["_source"] = "Bing"; results.append(a)
+        except: pass
+        return results
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = {executor.submit(_fetch, t): t for t in tickers[:30]}
+        for f in as_completed(futures):
+            all_articles.extend(f.result())
+
+    seen: set[str] = set()
+    unique: list[dict] = []
+    for a in all_articles:
+        url = a.get("url", a.get("link", ""))
+        if url and url not in seen:
+            seen.add(url)
+            unique.append({
+                "title": a.get("title", ""),
+                "url": url,
+                "source": a.get("_source", a.get("source_name", "")),
+                "ticker": a.get("_ticker", ""),
+                "published_at": a.get("published_at", ""),
+                "summary": a.get("summary", a.get("snippet", "")),
+            })
+
+    unique.sort(key=lambda a: a.get("published_at", ""), reverse=True)
+    return {"tickers": tickers, "articles": unique, "total": len(unique)}
+
+
 @router.get("/insights/{insight_id}")
 async def get_insight(insight_id: str):
     brief = get_store().get_daily_brief(insight_id)
@@ -47,6 +111,16 @@ async def get_insight(insight_id: str):
         raise HTTPException(404, "Brief not found")
     return brief
 
+
+@router.delete("/insights/{insight_id}")
+async def delete_insight(insight_id: str):
+    deleted = get_store().delete_daily_brief(insight_id)
+    if not deleted:
+        raise HTTPException(404, "Brief not found")
+    return {"ok": True}
+
+
+# ── Generation (SSE) ──
 
 @router.post("/insights/generate")
 async def generate_insight(hours: int = Query(0)):
@@ -96,3 +170,5 @@ async def generate_insight(hours: int = Query(0)):
             "X-Accel-Buffering": "no",
         },
     )
+
+
