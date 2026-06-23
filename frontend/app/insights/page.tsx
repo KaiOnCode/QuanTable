@@ -1,193 +1,330 @@
 "use client";
 
+import { useState, useRef, useCallback } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Shell } from "@/components/layout/shell";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import {
+  Accordion, AccordionItem, AccordionTrigger, AccordionContent,
+} from "@/components/ui/accordion";
 import { EmptyState } from "@/components/shared/empty-state";
-import { formatDate } from "@/lib/utils";
-import { Newspaper, TrendingUp, TrendingDown, Mail, MessageCircle, CheckCircle2, XCircle } from "lucide-react";
+import { api } from "@/lib/api/client";
+import { formatDateTime } from "@/lib/utils";
+import type { DailyBrief } from "@/lib/types/models";
+import ReactMarkdown from "react-markdown";
+import {
+  Loader2, RefreshCw, CheckCircle2, Globe, ExternalLink,
+} from "lucide-react";
 
-const MOCK_INSIGHTS = [
-  {
-    id: "i1",
-    type: "morning_brief" as const,
-    title: "May 28 Morning Brief",
-    summary: "Tech earnings drive pre-market optimism. NVDA reports tonight.",
-    content: "Asian markets mixed overnight. European futures pointing higher. Key catalysts: NVDA earnings (after close), US consumer confidence (10am ET), Fed minutes (2pm ET). Sector focus: semis running hot, financials cooling off. Watch AAPL $190 support, MSFT $440 resistance.",
-    tickers_covered: ["NVDA", "AAPL", "MSFT"],
-    key_events: ["NVDA Earnings After Close", "US Consumer Confidence 10am", "Fed Minutes 2pm"],
-    generated_at: "2026-05-28T08:00:00Z",
-    direction_correct: null,
-  },
-  {
-    id: "i2",
-    type: "midday_update" as const,
-    title: "May 27 Midday Update",
-    summary: "Markets flat at midday. Rotation from tech into financials.",
-    content: "S&P 500 +0.1%, Nasdaq -0.3%, DJIA +0.4%. Volume below average. Financials leading on yield curve steepening. Tech taking a breather after yesterday's rally.",
-    tickers_covered: ["SPY", "QQQ", "XLF"],
-    key_events: ["Sector rotation observed"],
-    generated_at: "2026-05-27T12:30:00Z",
-    direction_correct: true,
-  },
-  {
-    id: "i3",
-    type: "morning_brief" as const,
-    title: "May 27 Morning Brief",
-    summary: "Futures higher after strong European PMI data. AAPL earnings beat.",
-    content: "S&P 500 futures +0.5%. AAPL beat on EPS ($1.52 vs $1.50 est) and raised guidance. Tech sector expected to lead. Oil prices steady. 10Y at 4.25%.",
-    tickers_covered: ["AAPL", "SPY", "QQQ"],
-    key_events: ["AAPL Earnings Beat", "European PMI Strong"],
-    generated_at: "2026-05-27T08:00:00Z",
-    direction_correct: true,
-  },
-];
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+
+// Convert [N] citations to markdown links
+function renderCitations(content: string, sources: any[]): string {
+  if (!sources || sources.length === 0) return content;
+  return content.replace(/\[(\d+)\]/g, (match, num) => {
+    const idx = parseInt(num, 10);
+    const src = sources.find((s: any) => s.idx === idx);
+    if (src?.url) return `[${match}](${src.url})`;
+    return match;
+  });
+}
+
+type ProgressStep = {
+  stage: string;
+  status: string;
+  detail: string;
+};
 
 export default function InsightsPage() {
-  const insights = MOCK_INSIGHTS;
-  const checked = insights.filter((i) => i.direction_correct !== null);
-  const accuracy =
-    checked.length > 0
-      ? ((checked.filter((i) => i.direction_correct).length / checked.length) * 100).toFixed(0)
-      : "—";
+  const queryClient = useQueryClient();
+  const [selected, setSelected] = useState<DailyBrief | null>(null);
+  const [hours24, setHours24] = useState(true);
+  const [generating, setGenerating] = useState(false);
+  const [progress, setProgress] = useState<ProgressStep[]>([]);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["insights"],
+    queryFn: () => api.get<{ insights: DailyBrief[] }>("insights?limit=20"),
+  });
+  const briefs = data?.insights ?? [];
+
+  const startGenerate = useCallback(() => {
+    setGenerating(true);
+    setProgress([]);
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    const url = `${API_BASE}/insights/generate?hours=${hours24 ? 24 : 0}`;
+
+    fetch(url, {
+      method: "POST",
+      headers: { Accept: "text/event-stream" },
+      signal: controller.signal,
+    })
+      .then(async (resp) => {
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const reader = resp.body!.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let eventName = "message";
+        let dataLines: string[] = [];
+
+        const flush = () => {
+          const dataStr = dataLines.join("\n");
+          dataLines = [];
+          eventName = "message";
+          if (!dataStr.trim()) return;
+          try {
+            const payload = JSON.parse(dataStr);
+            if (eventName === "progress") {
+              setProgress((prev) => [...prev, payload]);
+            } else if (eventName === "done") {
+              setGenerating(false);
+              setSelected(payload as any);
+              queryClient.invalidateQueries({ queryKey: ["insights"] });
+            } else if (eventName === "error") {
+              setGenerating(false);
+              setProgress((prev) => [...prev, { stage: "error", status: "error", detail: payload.message }]);
+            }
+          } catch { /* skip parse errors */ }
+        };
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split(/\r?\n/);
+          buffer = lines.pop() ?? "";
+          for (const line of lines) {
+            if (line === "") { flush(); }
+            else if (line.startsWith("event:")) { eventName = line.slice(6).trim(); }
+            else if (line.startsWith("data:")) { dataLines.push(line.slice(5).trimStart()); }
+          }
+        }
+        if (dataLines.length > 0) flush();
+      })
+      .catch((err) => {
+        if (err.name === "AbortError") return;
+        setProgress((prev) => [...prev, { stage: "error", status: "error", detail: String(err) }]);
+        setGenerating(false);
+      });
+  }, [hours24, queryClient]);
+
+  const stageLabels: Record<string, string> = {
+    start: "Initializing",
+    market: "Market Data",
+    news: "News Collection",
+    llm: "AI Generation",
+    store: "Saving",
+    done: "Complete",
+    error: "Error",
+  };
+
+  if (selected) {
+    const sources = (selected as any).sources || (selected as any).news_sources || [];
+    const allArticles = (selected as any).all_articles || [];
+    // Group all articles by category
+    const byCategory: Record<string, any[]> = {};
+    for (const a of allArticles) {
+      const cat = a.category || "other";
+      if (!byCategory[cat]) byCategory[cat] = [];
+      if (byCategory[cat].length < 20) byCategory[cat].push(a);
+    }
+
+    return (
+      <Shell>
+        <div className="p-6 max-w-6xl mx-auto space-y-4">
+          <Button variant="ghost" size="sm" onClick={() => setSelected(null)}>← Back</Button>
+
+          {/* Brief Content */}
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <Badge>Morning Brief</Badge>
+                <CardTitle className="text-lg">{selected.title}</CardTitle>
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {formatDateTime(selected.generated_at)}
+                {selected.news_count != null && <> · {selected.news_count} articles</>}
+                {selected.elapsed_s != null && <> · {selected.elapsed_s}s</>}
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="text-sm leading-relaxed prose prose-sm dark:prose-invert max-w-none">
+                <ReactMarkdown
+                  components={{
+                    a: ({ href, children, ...props }: any) => {
+                      if (href?.startsWith("http")) {
+                        return <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>;
+                      }
+                      return <a href={href} {...props}>{children}</a>;
+                    },
+                  }}
+                >
+                  {renderCitations(selected.content, sources)}
+                </ReactMarkdown>
+              </div>
+
+              {/* Cited Sources */}
+              {sources.length > 0 && (
+                <Accordion className="mt-4">
+                  <AccordionItem value="cited">
+                    <AccordionTrigger className="text-sm font-medium">
+                      Cited Sources ({sources.length})
+                    </AccordionTrigger>
+                    <AccordionContent>
+                      <div className="max-h-64 overflow-y-auto space-y-1 text-xs">
+                        {sources.map((s: any) => (
+                          <div key={s.idx} className="flex items-start gap-2 py-1 border-b border-muted/20 last:border-0">
+                            <span className="text-muted-foreground font-mono w-7 shrink-0 text-right">[{s.idx}]</span>
+                            <div className="min-w-0">
+                              {s.url ? (
+                                <a href={s.url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline leading-snug">{s.title}</a>
+                              ) : <span className="leading-snug">{s.title}</span>}
+                              <div className="text-muted-foreground mt-0.5">{s.source} · {s.category}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
+                </Accordion>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* All Articles by Category */}
+          {Object.keys(byCategory).length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">
+                  <Globe className="inline h-4 w-4 mr-1" />
+                  All Collected Articles ({allArticles.length})
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <Accordion className="space-y-1">
+                  {Object.entries(byCategory).sort().map(([cat, arts]) => (
+                    <AccordionItem key={cat} value={cat}>
+                      <AccordionTrigger className="text-sm py-2">
+                        <span className="font-mono text-xs text-muted-foreground mr-2">{cat}</span>
+                        <span className="text-xs">({arts.length} articles)</span>
+                      </AccordionTrigger>
+                      <AccordionContent>
+                        <div className="max-h-48 overflow-y-auto space-y-1 text-xs pl-4">
+                          {arts.map((a: any, i: number) => (
+                            <div key={i} className="flex items-start gap-2 py-1 border-b border-muted/10 last:border-0">
+                              <span className="shrink-0">{(a as any).url ? (
+                                <a href={(a as any).url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                                  <ExternalLink className="h-3 w-3" />
+                                </a>
+                              ) : null}</span>
+                              <div className="min-w-0">
+                                <p className="leading-snug">{a.title}</p>
+                                <span className="text-muted-foreground">{a.source}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </AccordionContent>
+                    </AccordionItem>
+                  ))}
+                </Accordion>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      </Shell>
+    );
+  }
 
   return (
     <Shell>
-      <div className="p-6 space-y-6">
-        <div>
-          <h2 className="text-lg font-semibold flex items-center gap-2">
-            <Newspaper className="h-5 w-5" />
-            Daily Insights
-          </h2>
-          <p className="text-sm text-muted-foreground">
-            Morning briefs, midday updates, and event-driven alerts sent via multiple channels.
-          </p>
+      <div className="p-6 max-w-6xl mx-auto space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold">Daily Insights</h2>
+            <p className="text-sm text-muted-foreground">52 news categories · 50+ sources · AI-generated brief</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <Button variant={hours24 ? "default" : "outline"} size="sm" onClick={() => setHours24(!hours24)}>
+              24h
+            </Button>
+            <Button onClick={startGenerate} disabled={generating}>
+              {generating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+              {generating ? "Generating..." : "Generate Now"}
+            </Button>
+          </div>
         </div>
 
-        {/* Accuracy + Channel Status */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Real-time Progress */}
+        {generating && (
           <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Directional Accuracy</CardTitle>
-            </CardHeader>
+            <CardHeader><CardTitle className="text-base">Progress</CardTitle></CardHeader>
             <CardContent>
-              <div className="flex items-center gap-4">
-                <div className="text-5xl font-bold font-mono">{accuracy}%</div>
-                <div className="text-sm text-muted-foreground">
-                  <p>{checked.length} checked insights</p>
-                  <p className="text-green-500">
-                    {checked.filter((i) => i.direction_correct).length} correct
-                  </p>
-                  <p className="text-red-500">
-                    {checked.filter((i) => !i.direction_correct).length} incorrect
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Channel Status</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2">
-                {[
-                  { label: "Email", icon: Mail, active: true },
-                  { label: "Telegram", icon: MessageCircle, active: true },
-                  { label: "WeChat", icon: MessageCircle, active: false },
-                  { label: "Feishu", icon: MessageCircle, active: false },
-                ].map((ch) => (
-                  <div key={ch.label} className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <ch.icon className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm">{ch.label}</span>
-                    </div>
-                    <Badge
-                      variant={ch.active ? "default" : "secondary"}
-                      className={ch.active ? "text-green-500" : ""}
-                    >
-                      {ch.active ? "Active" : "Disabled"}
-                    </Badge>
+              <div className="space-y-2 text-sm">
+                {progress.map((p, i) => (
+                  <div key={i} className="flex items-center gap-3">
+                    {p.status === "done" ? (
+                      <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
+                    ) : p.status === "error" ? (
+                      <CheckCircle2 className="h-4 w-4 text-red-500 shrink-0" />
+                    ) : (
+                      <Loader2 className="h-4 w-4 animate-spin text-blue-500 shrink-0" />
+                    )}
+                    <span className="text-muted-foreground w-24 shrink-0">{stageLabels[p.stage] || p.stage}</span>
+                    <span className="text-xs text-muted-foreground truncate">{p.detail}</span>
                   </div>
                 ))}
+                {progress.length === 0 && (
+                  <div className="flex items-center gap-3 text-sm">
+                    <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+                    <span className="text-muted-foreground">Starting...</span>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
-        </div>
+        )}
 
-        {/* Calendar placeholder */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Insight Calendar</CardTitle>
-            <CardDescription>Click a day to view that day&apos;s briefs.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="h-40 flex items-center justify-center bg-muted/30 rounded-lg">
-              <div className="text-center">
-                <Newspaper className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-                <p className="text-sm text-muted-foreground">
-                  Monthly calendar with insight dots will render here
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Insight Cards */}
-        <div className="space-y-4">
-          {insights.map((insight) => (
-            <Card key={insight.id}>
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Badge
-                      variant={insight.type === "morning_brief" ? "default" : "secondary"}
-                    >
-                      {insight.type === "morning_brief" ? "Morning" : "Midday"}
-                    </Badge>
-                    <CardTitle className="text-base">{insight.title}</CardTitle>
+        {/* Brief List */}
+        {isLoading ? (
+          <Card><CardContent className="pt-8 flex justify-center"><Loader2 className="h-6 w-6 animate-spin" /></CardContent></Card>
+        ) : error ? (
+          <Card><CardContent className="pt-8"><p className="text-sm text-muted-foreground">Failed to load. Is the backend running?</p></CardContent></Card>
+        ) : briefs.length === 0 && !generating ? (
+          <Card>
+            <CardContent className="pt-8">
+              <EmptyState
+                title="No briefs yet"
+                description="Generate your first morning brief."
+                action={<Button onClick={startGenerate}><RefreshCw className="mr-2 h-4 w-4" />Generate</Button>}
+              />
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="space-y-3">
+            {briefs.map((brief) => (
+              <Card key={brief.id} className="cursor-pointer hover:bg-muted/30 transition-colors" onClick={() => setSelected(brief)}>
+                <CardHeader className="pb-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Badge variant="default">Morning</Badge>
+                      <CardTitle className="text-base">{brief.title}</CardTitle>
+                    </div>
+                    <span className="text-xs text-muted-foreground">{formatDateTime(brief.generated_at)}</span>
                   </div>
-                  <div className="flex items-center gap-2">
-                    {insight.direction_correct === true && (
-                      <CheckCircle2 className="h-4 w-4 text-green-500" />
-                    )}
-                    {insight.direction_correct === false && (
-                      <XCircle className="h-4 w-4 text-red-500" />
-                    )}
-                    <span className="text-xs text-muted-foreground">
-                      {formatDate(insight.generated_at)}
-                    </span>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm font-medium mb-1">{insight.summary}</p>
-                <p className="text-sm text-muted-foreground mb-3">{insight.content}</p>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-xs text-muted-foreground">Covered:</span>
-                  {insight.tickers_covered.map((t) => (
-                    <Badge key={t} variant="outline" className="text-xs font-mono">
-                      ${t}
-                    </Badge>
-                  ))}
-                  <span className="text-xs text-muted-foreground ml-4">Events:</span>
-                  {insight.key_events.map((e, i) => (
-                    <Badge key={i} variant="secondary" className="text-xs">
-                      {e}
-                    </Badge>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-muted-foreground line-clamp-2">{brief.summary}</p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
       </div>
     </Shell>
   );

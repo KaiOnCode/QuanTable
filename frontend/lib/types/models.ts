@@ -196,10 +196,13 @@ export interface Conversation {
   tags: string[]; is_saved: boolean; description: string;
 }
 
-export interface DailyInsight {
+export interface DailyBrief {
   id: string; type: "morning_brief" | "midday_update" | "event_alert";
-  title: string; content: string; summary: string; tickers_covered: string[];
-  key_events: string[]; generated_at: string; sent_via: string[];
+  title: string; summary: string; content: string;
+  key_events: string[]; tickers_covered: string[];
+  market_data?: Record<string, Record<string, { name: string; price: number | null; change_pct: number | null; currency: string }>>;
+  news_count?: number; elapsed_s?: number;
+  generated_at: string;
 }
 
 export interface InsightFeedback {

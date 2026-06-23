@@ -15,6 +15,7 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { StatusBadge } from "@/components/shared/badges";
 import { formatCurrency, formatPercent } from "@/lib/utils";
 import { strategiesApi } from "@/lib/api/strategies";
+import { api } from "@/lib/api/client";
 import type { StrategyConfig, PerformanceMetrics } from "@/lib/types/models";
 import {
   TrendingUp,
@@ -189,21 +190,31 @@ export default function DashboardPage() {
         </div>
 
         {/* Market Brief */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Today&apos;s Market Brief</CardTitle>
-            <CardDescription>
-              Morning insight summary — updated at market open
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground">
-              Market brief will appear once the Daily Insights service is active.
-              DataCollector is running — {strategies.length} strategies configured.
-            </p>
-          </CardContent>
-        </Card>
+        <MarketBriefCard />
       </div>
     </Shell>
+  );
+}
+
+function MarketBriefCard() {
+  const { data } = useQuery({
+    queryKey: ["insights", "latest"],
+    queryFn: () => api.get<{ insight: import("@/lib/types/models").DailyBrief | null }>("insights/latest"),
+    staleTime: 300_000,
+  });
+  const brief = data?.insight;
+  if (!brief) return null;
+  return (
+    <Card
+      className="cursor-pointer hover:bg-muted/30 transition-colors"
+      onClick={() => window.location.href = "/insights"}
+    >
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">{brief.title}</CardTitle>
+        <p className="text-xs text-muted-foreground">
+          {brief.summary?.slice(0, 150)}
+        </p>
+      </CardHeader>
+    </Card>
   );
 }

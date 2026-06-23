@@ -380,6 +380,24 @@ class ContextStore:
         idb.execute("CREATE INDEX IF NOT EXISTS idx_monitor_news_fetched ON monitor_news(fetched_at)")
         idb.execute("CREATE INDEX IF NOT EXISTS idx_reports_monitor ON monitoring_reports(monitor_id)")
         idb.execute("CREATE INDEX IF NOT EXISTS idx_reports_generated ON monitoring_reports(generated_at)")
+
+        # Daily briefs
+        idb.execute("""
+            CREATE TABLE IF NOT EXISTS daily_briefs (
+                id TEXT PRIMARY KEY,
+                type TEXT DEFAULT 'morning_brief',
+                title TEXT DEFAULT '',
+                summary TEXT DEFAULT '',
+                content TEXT DEFAULT '',
+                sections_json TEXT DEFAULT '[]',
+                key_events_json TEXT DEFAULT '[]',
+                tickers_covered_json TEXT DEFAULT '[]',
+                market_data_json TEXT DEFAULT '{}',
+                news_sources_json TEXT DEFAULT '[]',
+                generated_at TEXT NOT NULL
+            )
+        """)
+        idb.execute("CREATE INDEX IF NOT EXISTS idx_briefs_generated ON daily_briefs(generated_at)")
         idb.commit()
 
     def register_monitor(self, config: dict) -> str:
@@ -558,6 +576,62 @@ class ContextStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    # ── Daily Briefs ──────────────────────────────────────────
+
+    def save_daily_brief(self, brief: dict) -> str:
+        """Save a generated daily brief. Returns the brief ID."""
+        import uuid as _uuid
+        self._init_monitor_db()
+        rid = brief.get("id") or str(_uuid.uuid4())
+        now = _now()
+        idb = self._get_conn("insights.db")
+        idb.execute(
+            """INSERT INTO daily_briefs
+               (id, type, title, summary, content, sections_json,
+                key_events_json, tickers_covered_json, market_data_json,
+                news_sources_json, generated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (rid, brief.get("type", "morning_brief"),
+             brief.get("title", ""), brief.get("summary", ""),
+             brief.get("content", ""),
+             json.dumps(brief.get("sections", [])),
+             json.dumps(brief.get("key_events", [])),
+             json.dumps(brief.get("tickers_covered", [])),
+             json.dumps(brief.get("market_data", {})),
+             json.dumps(brief.get("news_sources", [])),
+             brief.get("generated_at", now)),
+        )
+        idb.commit()
+        return rid
+
+    def list_daily_briefs(self, limit: int = 20) -> list[dict]:
+        """List recent daily briefs, newest first."""
+        self._init_monitor_db()
+        idb = self._get_conn("insights.db")
+        rows = idb.execute(
+            "SELECT * FROM daily_briefs ORDER BY generated_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [_brief_row_to_dict(r) for r in rows]
+
+    def get_daily_brief(self, brief_id: str) -> dict | None:
+        """Get a single daily brief by ID."""
+        self._init_monitor_db()
+        idb = self._get_conn("insights.db")
+        row = idb.execute(
+            "SELECT * FROM daily_briefs WHERE id = ?", (brief_id,)
+        ).fetchone()
+        return _brief_row_to_dict(row) if row else None
+
+    def get_latest_brief(self) -> dict | None:
+        """Get the most recent daily brief."""
+        self._init_monitor_db()
+        idb = self._get_conn("insights.db")
+        row = idb.execute(
+            "SELECT * FROM daily_briefs ORDER BY generated_at DESC LIMIT 1"
+        ).fetchone()
+        return _brief_row_to_dict(row) if row else None
+
     # ── Storage management ──────────────────────────────────
 
     def _get_conn(self, db_name: str) -> sqlite3.Connection:
@@ -606,6 +680,17 @@ def _report_row_to_dict(row) -> dict:
             d[k.replace("_json", "")] = json.loads(d.pop(k, "[]"))
         except Exception:
             d[k.replace("_json", "")] = []
+    return d
+
+
+def _brief_row_to_dict(row) -> dict:
+    d = dict(row)
+    for k in ("sections_json", "key_events_json", "tickers_covered_json",
+              "market_data_json", "news_sources_json"):
+        try:
+            d[k.replace("_json", "")] = json.loads(d.pop(k, "{}"))
+        except Exception:
+            d[k.replace("_json", "")] = [] if k.endswith("s_json") or k.endswith("d_json") else {}
     return d
 
 

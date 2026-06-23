@@ -429,3 +429,38 @@ class MonitorRunner:
                               task.get("name", ""), exc)
 
         threading.Thread(target=_run, daemon=True).start()
+
+
+class MorningBriefRunner:
+    """Scheduled morning brief generation — daily at 8:00 AM UTC on weekdays."""
+
+    def __init__(self, scheduler: BackgroundScheduler):
+        self._scheduler = scheduler
+        self._job_id = "morning_brief"
+
+    def start(self):
+        from apscheduler.triggers.cron import CronTrigger
+        self._scheduler.add_job(
+            self._run_brief,
+            CronTrigger.from_crontab("0 8 * * 1-5"),
+            id=self._job_id,
+            replace_existing=True,
+        )
+        logger.info("MorningBrief: scheduled weekdays at 08:00 UTC")
+
+    def stop(self):
+        try:
+            self._scheduler.remove_job(self._job_id)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _run_brief():
+        import threading
+        def _run():
+            try:
+                from server.morning_brief import run
+                run()
+            except Exception as exc:
+                logger.error("MorningBrief failed: %s", exc)
+        threading.Thread(target=_run, daemon=True).start()

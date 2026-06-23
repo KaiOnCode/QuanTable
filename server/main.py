@@ -63,6 +63,12 @@ async def lifespan(app: FastAPI):
             # Register all active monitor cron jobs
             from server.routes.monitor import register_all_jobs
             register_all_jobs()
+
+            # Morning brief daily scheduler
+            from scheduler import MorningBriefRunner
+            app.state.brief_runner = MorningBriefRunner(scheduler)
+            app.state.brief_runner.start()
+            logger.info("MorningBriefRunner started")
         except Exception as exc:
             logger.warning("Background services failed to start: %s", exc)
 
@@ -101,7 +107,7 @@ app.add_middleware(
 
 # ── Register routes ────────────────────────────────────────
 
-from server.routes import analyze, strategies, memory, settings, health, market, watchlist, monitor
+from server.routes import analyze, strategies, memory, settings, health, market, watchlist, monitor, insights
 
 app.include_router(analyze.router, prefix="/api")
 app.include_router(strategies.router, prefix="/api")
@@ -111,3 +117,4 @@ app.include_router(health.router, prefix="/api")
 app.include_router(market.router, prefix="/api")
 app.include_router(watchlist.router, prefix="/api")
 app.include_router(monitor.router, prefix="/api")
+app.include_router(insights.router, prefix="/api")
