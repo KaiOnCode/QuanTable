@@ -191,6 +191,19 @@ export default function DashboardPage() {
 
         {/* Market Brief */}
         <MarketBriefCard />
+
+        {/* Agent */}
+        <Card className="cursor-pointer hover:bg-muted/30 transition-colors"
+          onClick={() => window.location.href = "/agent"}>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Zap className="h-4 w-4 text-primary" /> Agent Terminal
+            </CardTitle>
+            <p className="text-xs text-muted-foreground">
+              AI agent with 6+ tools — ask anything about markets, analyze stocks, search the web.
+            </p>
+          </CardHeader>
+        </Card>
       </div>
     </Shell>
   );

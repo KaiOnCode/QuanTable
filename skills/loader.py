@@ -29,11 +29,21 @@ class SkillLoader:
         self.skills: dict[str, Skill] = {}
 
     def discover(self) -> list[Skill]:
-        """Scan for *.skill.md files and return parsed Skill objects."""
+        """Scan for *.md files with YAML frontmatter and return parsed Skill objects."""
         self.skills.clear()
-        for skill_file in sorted(self.skills_dir.rglob("*.skill.md")):
-            skill = self._parse(skill_file)
-            self.skills[skill.name] = skill
+        patterns = ["*.skill.md", "*/SKILL.md", "*.md"]
+        seen = set()
+        for pattern in patterns:
+            for skill_file in sorted(self.skills_dir.rglob(pattern)):
+                if str(skill_file) in seen:
+                    continue
+                seen.add(str(skill_file))
+                try:
+                    skill = self._parse(skill_file)
+                    if skill and skill.name:
+                        self.skills[skill.name] = skill
+                except Exception:
+                    pass
         return list(self.skills.values())
 
     def get(self, name: str) -> Skill | None:
@@ -44,23 +54,34 @@ class SkillLoader:
         """Filter skills by category."""
         return [s for s in self.skills.values() if s.category == category]
 
-    def _parse(self, filepath: Path) -> Skill:
-        """Parse a single SKILL.md file: YAML frontmatter between --- fences, then Markdown body."""
+    def _parse(self, filepath: Path) -> Skill | None:
+        """Parse a SKILL.md file. Returns None if not a valid skill."""
+        # Skip non-skill files
+        skip_names = {"README", "LICENSE", "CHANGELOG", "CONTRIBUTING", "SKILL"}
+        if filepath.stem in skip_names:
+            return None
+
         raw = filepath.read_text(encoding="utf-8")
         parts = raw.split("---")
 
-        frontmatter: dict = {}
-        body = raw
+        if len(parts) < 3 or not raw.startswith("---"):
+            return None  # No YAML frontmatter
 
-        if len(parts) >= 3 and raw.startswith("---"):
-            try:
-                frontmatter = yaml.safe_load(parts[1]) or {}
-            except yaml.YAMLError:
-                pass
-            body = "---".join(parts[2:]).strip()
+        try:
+            frontmatter = yaml.safe_load(parts[1]) or {}
+        except yaml.YAMLError:
+            return None
+
+        name = frontmatter.get("name", "")
+        if not name:
+            return None  # No name = not a valid skill
+
+        body = "---".join(parts[2:]).strip()
+        if len(body) < 50:
+            return None  # Too short to be useful
 
         return Skill(
-            name=frontmatter.get("name", filepath.stem.replace(".skill", "")),
+            name=name,
             version=str(frontmatter.get("version", "1.0")),
             category=frontmatter.get("category", "uncategorized"),
             description=frontmatter.get("description", ""),
