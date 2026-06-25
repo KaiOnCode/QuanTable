@@ -17,9 +17,10 @@ logger = logging.getLogger(__name__)
 class GetPriceTool(BaseTool):
     meta = ToolMeta(
         name="get_price",
-        description="获取股票的价格数据(OHLCV)。参数: ticker(股票代码), days(天数,默认30)。返回最近N天的开盘/最高/最低/收盘/成交量。",
+        description="获取股票历史价格数据(OHLCV)。参数: ticker(股票代码,必填), days(天数,默认30,1Y=365,2Y=730,5Y=1825,MAX=3650)。返回每日开盘/最高/最低/收盘/成交量。支持最多10年数据。",
         category="financial",
-        timeout=15,
+        timeout=20,
+        repeatable=False,
     )
 
     def execute(self, ticker: str = "", days: int | str = 30) -> str:
@@ -53,18 +54,18 @@ class GetPriceTool(BaseTool):
                 "close": latest["close"], "volume": latest["volume"],
             },
             "change_pct": round(change_pct, 2),
-            "recent": [
-                {"date": b["date"], "close": b["close"]} for b in bars[-5:]
-            ],
+            "recent": [{"date": b["date"], "close": b["close"]} for b in bars[-5:]],
+            "bars": [{"date": b["date"], "close": b["close"]} for b in bars[-100:]],
         })
 
 
 class GetIndicatorsTool(BaseTool):
     meta = ToolMeta(
         name="get_indicators",
-        description="获取技术指标(RSI/MACD/SMA/ATR)。参数: ticker(股票代码)。返回当前指标值和信号。",
+        description="获取技术指标：RSI(相对强弱)、MACD(异同移动平均线)、SMA(简单移动平均线/均线/MA)、ATR(真实波幅)。参数: ticker(股票代码,必填)。返回当前值和多空信号。如需均线数据用此工具。",
         category="financial",
         timeout=15,
+        repeatable=False,
     )
 
     def execute(self, ticker: str = "") -> str:

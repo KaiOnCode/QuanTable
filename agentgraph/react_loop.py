@@ -178,24 +178,45 @@ class AgentLoop:
                 previous_summary = new_summary
                 _emit("compact_done", {"after_tokens": estimate_tokens(messages)})
 
-            # ── Call LLM ──
+            # ── Call LLM (manual tool calling for DeepSeek compat) ──
             _emit("thinking_start", {"iteration": iteration})
 
             try:
                 llm = self._get_llm()
-                llm_with_tools = llm.bind_tools(tools)
-                response = llm_with_tools.invoke(messages)
+                # Use raw API call to avoid LangChain's Pydantic validation
+                # which breaks on DeepSeek's string-typed tool call arguments
+                raw_response = llm.root_client.chat.completions.create(
+                    model=llm.model_name,
+                    messages=_convert_messages(messages),
+                    tools=_convert_tools(tools),
+                    temperature=llm.temperature,
+                    max_tokens=llm.max_tokens,
+                )
+                choice = raw_response.choices[0]
+                content = choice.message.content or ""
+                raw_tool_calls = choice.message.tool_calls or []
+                # Parse tool calls — DeepSeek returns args as JSON strings
+                tool_calls = []
+                for tc in raw_tool_calls:
+                    fn = tc.function
+                    args = fn.arguments if isinstance(fn.arguments, dict) else {}
+                    if isinstance(fn.arguments, str) and fn.arguments.strip():
+                        try:
+                            args = json.loads(fn.arguments)
+                        except Exception:
+                            pass
+                    tool_calls.append({
+                        "name": fn.name,
+                        "args": args,
+                        "id": tc.id or f"call_{len(tool_calls)}",
+                    })
             except Exception as exc:
                 _emit("error", {"message": f"LLM call failed: {exc}"})
                 break
 
-            content = response.content if hasattr(response, "content") else ""
-            tool_calls = response.tool_calls if hasattr(response, "tool_calls") else []
-
             _emit("thinking_end", {
                 "text": str(content)[:2000] if content else "",
-                "tool_calls": [{"name": tc.get("name", ""), "args": tc.get("args", {})}
-                               for tc in (tool_calls or [])],
+                "tool_calls": [{"name": tc["name"], "args": tc["args"]} for tc in tool_calls],
             })
 
             # ── No tool calls → check if done ──
@@ -204,22 +225,36 @@ class AgentLoop:
                 messages.append(assistant_msg)
 
                 if not content or len(str(content).strip()) < 50:
-                    # Very short response, prompt to continue
                     messages.append({"role": "user", "content": "Please continue your analysis or provide a final answer. What have you found so far?"})
                     continue
                 else:
                     _emit("answer", {"text": str(content)})
                     break
 
+            # ── Filter out empty-args tool calls (LLM hallucination) ──
+            valid_calls = []
+            for tc in tool_calls:
+                args = tc["args"] or {}
+                # Reject calls with no parameters for tools that need them
+                if tc["name"] in ("get_price","get_indicators","get_news","get_fundamentals",
+                    "get_meta","get_sentiment","search_symbol","search_news","web_search",
+                    "web_fetch","load_skill"):
+                    if not args.get("ticker") and not args.get("query") and not args.get("name") and not args.get("url"):
+                        _emit("tool_error", {"tool": tc["name"],
+                            "error": "Skipped: no ticker/query parameter"})
+                        continue
+                valid_calls.append(tc)
+            tool_calls = valid_calls
+
             # ── Execute tools ──
             assistant_msg = {
                 "role": "assistant",
                 "content": str(content) if content else None,
                 "tool_calls": [
-                    {"id": tc.get("id", f"call_{i}"),
+                    {"id": tc["id"],
                      "type": "function",
-                     "function": {"name": tc.get("name", ""),
-                                  "arguments": json.dumps(tc.get("args", {}), ensure_ascii=False)}}
+                     "function": {"name": tc["name"],
+                                  "arguments": json.dumps(tc["args"], ensure_ascii=False)}}
                     for i, tc in enumerate(tool_calls)
                 ],
             }
@@ -230,12 +265,20 @@ class AgentLoop:
             for tc, result in zip(tool_calls, results):
                 tool_msg = {
                     "role": "tool",
-                    "tool_call_id": tc.get("id", f"call_{hash(tc.get('name',''))}"),
-                    "name": tc.get("name", ""),
+                    "tool_call_id": tc["id"],
+                    "name": tc["name"],
                     "content": result,
                 }
+                # Store chart data in message for session persistence
+                try:
+                    parsed = json.loads(result)
+                    cd = _extract_chart(parsed)
+                    if cd:
+                        tool_msg["chart_data"] = cd
+                except Exception:
+                    pass
                 messages.append(tool_msg)
-                memory.increment(tc.get("name", "unknown"))
+                memory.increment(tc["name"])
 
         # ── Done ──
         elapsed = time.time() - started
@@ -256,26 +299,44 @@ class AgentLoop:
         }
 
     def _execute_batch(self, tool_calls: list, registry, memory, emit):
-        """Execute tools: read-only parallel, write serial."""
+        """Execute tools: read-only parallel, write serial. Dedup + non-repeatable skip."""
         if not tool_calls:
             return []
 
-        # Separate read-only and write tools
+        # Map each tool_call to either "execute" or "skip" with a reason
+        seen_calls: set[str] = set()
+        exec_plan: list[tuple] = []  # (index, tc, skip_reason or None)
+        for i, tc in enumerate(tool_calls):
+            name = tc["name"]
+            args_key = json.dumps(tc["args"], sort_keys=True) if tc["args"] else "{}"
+            call_key = f"{name}:{args_key}"
+            if call_key in seen_calls:
+                exec_plan.append((i, tc, "duplicate"))
+                continue
+            meta = registry.get_meta(name)
+            if meta and not meta.repeatable and memory.counters.get(name, 0) > 0:
+                exec_plan.append((i, tc, "non_repeatable"))
+                continue
+            seen_calls.add(call_key)
+            exec_plan.append((i, tc, None))
+
+        # Separate non-skipped calls for execution
         readonly = []
         write = []
-        for tc in tool_calls:
-            name = tc.get("name", "")
-            meta = registry.get_meta(name)
-            if meta and meta.is_readonly:
-                readonly.append(tc)
-            else:
-                write.append(tc)
+        for _, tc, skip in exec_plan:
+            if not skip:
+                name = tc["name"]
+                meta = registry.get_meta(name)
+                if meta and meta.is_readonly:
+                    readonly.append(tc)
+                else:
+                    write.append(tc)
 
         results: list[tuple[int, str]] = []  # (index, result)
 
         def _invoke(index, tc):
-            name = tc.get("name", "")
-            args = tc.get("args", {})
+            name = tc["name"]
+            args = tc["args"] or {}
             started = time.time()
             emit("tool_call", {"tool": name, "args": args})
 
@@ -301,13 +362,16 @@ class AgentLoop:
 
                 elapsed = time.time() - started
                 # Try to parse result as JSON for a preview
-                preview = result[:200]
+                preview = result[:1500]  # Enough for chart data
+                chart_data = None
                 try:
                     parsed = json.loads(result)
                     if parsed.get("status") == "ok":
+                        # Extract chartable data
+                        chart_data = _extract_chart(parsed)
                         emit("tool_done", {"tool": name, "status": "ok",
                                            "elapsed_s": round(elapsed, 2),
-                                           "preview": preview})
+                                           "preview": preview, "chart_data": chart_data})
                     else:
                         emit("tool_error", {"tool": name, "status": "error",
                                             "elapsed_s": round(elapsed, 2),
@@ -338,7 +402,19 @@ class AgentLoop:
 
         # Sort by original index
         results.sort(key=lambda x: x[0])
-        return [r[1] for r in results]
+        final_results = []
+        for i, tc, skip in exec_plan:
+            if skip:
+                final_results.append(f'{{"status":"error","error":"Skipped: {skip}"}}')
+            else:
+                # Find the result for this index
+                for ri, r in results:
+                    if ri == i:
+                        final_results.append(r)
+                        break
+                else:
+                    final_results.append('{"status":"error","error":"No result"}')
+        return final_results
 
     def _build_default_system_prompt(self, registry) -> str:
         """Build default system prompt with tool descriptions + skills."""
@@ -390,4 +466,49 @@ Today's date is {today}. All analysis should be based on this date.
 - If you're unsure about something, use web_search to find the answer
 - For Chinese A-share stocks, include sector and fund flow analysis
 - For US stocks, include fundamental metrics and macro context
+- If you need more detailed methodology (e.g. \"how to do a DCF valuation\"), use load_skill to read the full skill document
+- Do NOT call the same tool with the same arguments more than once — if it succeeds, use the result
 - Wrap up each analysis with a clear conclusion"""
+
+
+def _convert_messages(messages: list[dict]) -> list[dict]:
+    """Convert internal message format to OpenAI API format."""
+    api_msgs = []
+    for m in messages:
+        role = m.get("role", "user")
+        entry: dict = {"role": role}
+        if m.get("content"):
+            entry["content"] = str(m["content"])
+        if m.get("tool_calls"):
+            entry["tool_calls"] = [
+                {"id": tc.get("id", f"call_{i}"), "type": "function",
+                 "function": {"name": tc.get("name", tc.get("function", {}).get("name", "")),
+                              "arguments": json.dumps(tc.get("args", tc.get("function", {}).get("arguments", {})),
+                                                     ensure_ascii=False)}}
+                for i, tc in enumerate(m["tool_calls"])
+            ]
+        if m.get("tool_call_id"):
+            entry["tool_call_id"] = m["tool_call_id"]
+        if m.get("name"):
+            entry["name"] = m["name"]
+        if role == "system":
+            entry["role"] = "system"
+        api_msgs.append(entry)
+    return api_msgs
+
+
+def _convert_tools(tools: list[dict]) -> list[dict]:
+    """Convert tool definitions to OpenAI API format."""
+    return [{"type": "function", "function": t["function"]} for t in tools]
+
+
+def _extract_chart(result: dict) -> list | None:
+    """Extract chart data from tool result. Prefers 'bars' (all data) over 'recent' (last 5)."""
+    try:
+        data = result.get("bars") or result.get("recent")
+        if data and isinstance(data, list) and len(data) >= 2:
+            return [{"d": (b.get("date") or "")[-5:], "v": float(b.get("close", b.get("c", 0)))}
+                    for b in data[:100]]
+    except Exception:
+        pass
+    return None

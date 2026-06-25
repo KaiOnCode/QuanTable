@@ -242,6 +242,8 @@ class DataService:
             period = "1y"
         elif days <= 800:
             period = "2y"
+        elif days <= 2000:
+            period = "5y"
         else:
             period = "max"
 

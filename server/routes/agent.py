@@ -42,6 +42,7 @@ async def agent_chat(req: AgentChatRequest):
 
     async def event_stream():
         queue: Queue = Queue()
+        stop_event = __import__("threading").Event()
         session_id = req.session_id or __import__("uuid").uuid4().hex[:12]
         run_dir = RUNS_DIR / session_id
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -178,6 +179,17 @@ async def get_session(session_id: str):
     return data
 
 
+@router.delete("/agent/sessions/{session_id}")
+async def delete_session(session_id: str):
+    """Delete a session and all its data."""
+    import shutil
+    d = RUNS_DIR / session_id
+    if not d.is_dir():
+        raise HTTPException(404, "Session not found")
+    shutil.rmtree(d)
+    return {"ok": True}
+
+
 # ── Helpers ──────────────────────────────────────────────────
 
 
@@ -200,35 +212,32 @@ def _compact_messages(messages: list[dict]) -> list[dict]:
             entry["tool_call_id"] = m["tool_call_id"]
         if m.get("role") == "tool" and m.get("content"):
             content = str(m["content"])
-            entry["preview"] = content[:200]
-            if len(content) > 200:
+            entry["preview"] = content[:500]  # Enough for chart data
+            if len(content) > 500:
                 entry["preview"] += "..."
+        # Preserve chart data for historical session display
+        if m.get("chart_data"):
+            entry["chart_data"] = m["chart_data"]
         compacted.append(entry)
     return compacted
 
 
 def _reconstruct_history(messages: list[dict]) -> list[dict]:
-    """Reconstruct LangChain-compatible message list from stored messages."""
+    """Reconstruct message list for LLM continuation. Only keeps user messages
+    and final assistant answers — strips tool calls/results to avoid DeepSeek
+    validation errors on old tool call IDs."""
     history = []
     for m in messages:
         role = m.get("role", "")
         content = m.get("content", "")
         if role == "user":
             history.append({"role": "user", "content": content})
-        elif role == "assistant":
-            entry: dict = {"role": "assistant", "content": content}
-            if m.get("tool_calls"):
-                entry["tool_calls"] = [
-                    {"id": f"call_{i}", "type": "function",
-                     "function": {"name": tc["name"], "arguments": json.dumps(tc.get("args", {}))}}
-                    for i, tc in enumerate(m["tool_calls"])
-                ]
-            history.append(entry)
-        elif role == "tool":
-            history.append({
-                "role": "tool",
-                "tool_call_id": m.get("tool_call_id", ""),
-                "name": m.get("name", ""),
-                "content": m.get("preview", content),
-            })
+        elif role == "assistant" and content:
+            # Only keep final answers (no tool_calls) — strip intermediate thinking
+            if not m.get("tool_calls"):
+                history.append({"role": "assistant", "content": content})
+    # Remove the last assistant message (the final answer from last turn)
+    # so the LLM has context but re-generates the answer
+    if history and history[-1]["role"] == "assistant":
+        history.pop()
     return history
