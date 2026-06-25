@@ -10,8 +10,10 @@ import remarkGfm from "remark-gfm";
 import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip as ReTooltip } from "recharts";
 import {
   Send, Loader2, CheckCircle2, AlertCircle, Circle,
-  ChevronDown, ChevronRight, ChevronLeft, Zap, StopCircle, Plug, Copy, RefreshCw, Trash2,
+  ChevronDown, ChevronRight, ChevronLeft, Zap, StopCircle, Plug, Copy, RefreshCw, Trash2, BookOpen,
 } from "lucide-react";
+
+import { SkillsPanel } from "@/components/agent/skills-panel";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
@@ -44,8 +46,10 @@ export default function AgentPage() {
   const [running, setRunning] = useState(false);
   const [connected, setConnected] = useState(false);
   const [sessionId, setSessionId] = useState("");
+  const [sessionName, setSessionName] = useState("");
   const [sessions, setSessions] = useState<{ session_id: string; modified: number; first_message?: string; tool_count?: number }[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [skillsPanelOpen, setSkillsPanelOpen] = useState(false);
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -96,6 +100,10 @@ export default function AgentPage() {
       { id: aid, role: "agent", content: "", thinking: "", toolCalls: [], done: false },
     ]);
     setRunning(true);
+    // Set session name from first message if starting a new session
+    if (!sessionId) {
+      setSessionName(msg.slice(0, 60));
+    }
     scrollBottom();
 
     const controller = new AbortController();
@@ -220,6 +228,10 @@ export default function AgentPage() {
     fetch(`${API_BASE}/agent/sessions/${sid}`)
       .then((r) => r.json())
       .then((data) => {
+        // Set the session display name from stored first_message
+        if (data.first_message) {
+          setSessionName(data.first_message.slice(0, 60));
+        }
         const msgs = data.messages || [];
         if (msgs.length === 0) return;
         // Reconstruct message blocks from stored data
@@ -282,7 +294,7 @@ export default function AgentPage() {
             <span className="text-xs font-medium text-muted-foreground">Sessions</span>
             <div className="flex items-center gap-0.5">
               <Button variant="ghost" size="sm" className="h-6 text-[10px] px-1.5"
-                onClick={() => { setSessionId(""); setMessages([]); }}>+ New</Button>
+                onClick={() => { setSessionId(""); setSessionName(""); setMessages([]); }}>+ New</Button>
               <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => setSidebarOpen(false)}>
                 <ChevronLeft className="h-3 w-3" />
               </Button>
@@ -324,10 +336,17 @@ export default function AgentPage() {
           <div className="flex items-center justify-between px-4 py-2 border-b shrink-0">
             <div className="flex items-center gap-2 min-w-0">
               <Zap className="h-4 w-4 text-primary shrink-0" />
-              <span className="font-semibold text-sm truncate">{sessionId ? sessionId.slice(0, 12) : "New Session"}</span>
+              <span className="font-semibold text-sm truncate" title={sessionName || sessionId}>
+                {sessionName || (sessionId ? `Session ${sessionId.slice(0, 8)}` : "New Session")}
+              </span>
               {connected && <Badge variant="outline" className="text-[10px] shrink-0"><Plug className="h-2.5 w-2.5 mr-0.5" />Connected</Badge>}
             </div>
-            {running && <Button variant="outline" size="sm" onClick={handleStop} className="shrink-0"><StopCircle className="mr-1 h-3.5 w-3.5" />Stop</Button>}
+            <div className="flex items-center gap-1.5">
+              <Button variant="ghost" size="sm" onClick={() => setSkillsPanelOpen(!skillsPanelOpen)} className="shrink-0 text-xs">
+                <BookOpen className="h-3.5 w-3.5 mr-1" />Skills
+              </Button>
+              {running && <Button variant="outline" size="sm" onClick={handleStop} className="shrink-0"><StopCircle className="mr-1 h-3.5 w-3.5" />Stop</Button>}
+            </div>
           </div>
 
           <div ref={scrollRef} className="flex-1 overflow-y-auto">
@@ -351,7 +370,16 @@ export default function AgentPage() {
                   {block.role === "agent" && (
                     <div className="space-y-2">
                       {block.thinking && !block.content && (
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" /><span className="italic text-xs">{block.thinking.slice(-300)}</span></div>
+                        <div className="text-sm text-muted-foreground">
+                          <div className="flex items-center gap-2 mb-1">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
+                            <span className="text-xs font-medium">Thinking...</span>
+                          </div>
+                          <div className="pl-6 text-xs leading-relaxed whitespace-pre-wrap max-h-40 overflow-y-auto">
+                            {block.thinking.slice(-800)}
+                            <span className="inline-block w-1.5 h-3.5 bg-primary animate-pulse ml-0.5 align-middle" />
+                          </div>
+                        </div>
                       )}
                       {block.toolCalls.map((tc, i) => {
                         const tid = `${block.id}-tc-${i}`;
@@ -442,6 +470,11 @@ export default function AgentPage() {
             </div>
           </div>
         </div>
+        {skillsPanelOpen && (
+          <div className="w-72 shrink-0">
+            <SkillsPanel onClose={() => setSkillsPanelOpen(false)} />
+          </div>
+        )}
       </div>
     </Shell>
   );

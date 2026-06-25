@@ -139,7 +139,7 @@ class AgentLoop:
 
         # ── Build initial messages ──
         tools = registry.get_definitions()
-        sys_prompt = system_prompt or self._build_default_system_prompt(registry)
+        sys_prompt = system_prompt or self._build_default_system_prompt(registry, user_message)
         messages = [{"role": "system", "content": sys_prompt}]
         if history:
             messages.extend(history)
@@ -178,38 +178,65 @@ class AgentLoop:
                 previous_summary = new_summary
                 _emit("compact_done", {"after_tokens": estimate_tokens(messages)})
 
-            # ── Call LLM (manual tool calling for DeepSeek compat) ──
+            # ── Call LLM with streaming (manual API for DeepSeek compat) ──
             _emit("thinking_start", {"iteration": iteration})
 
             try:
                 llm = self._get_llm()
-                # Use raw API call to avoid LangChain's Pydantic validation
-                # which breaks on DeepSeek's string-typed tool call arguments
-                raw_response = llm.root_client.chat.completions.create(
+                # Use streaming API call for word-by-word output
+                stream = llm.root_client.chat.completions.create(
                     model=llm.model_name,
                     messages=_convert_messages(messages),
                     tools=_convert_tools(tools),
                     temperature=llm.temperature,
                     max_tokens=llm.max_tokens,
+                    stream=True,
                 )
-                choice = raw_response.choices[0]
-                content = choice.message.content or ""
-                raw_tool_calls = choice.message.tool_calls or []
-                # Parse tool calls — DeepSeek returns args as JSON strings
+
+                content = ""
+                tool_call_buffers: dict[int, dict] = {}  # index → {id, name, args_str}
+
+                for chunk in stream:
+                    delta = chunk.choices[0].delta if chunk.choices else None
+                    if delta is None:
+                        continue
+
+                    # Text content delta
+                    if delta.content:
+                        content += delta.content
+                        _emit("thinking_delta", {"text": delta.content, "iteration": iteration})
+
+                    # Tool call deltas (accumulate across chunks)
+                    if delta.tool_calls:
+                        for tc_delta in delta.tool_calls:
+                            idx = tc_delta.index
+                            if idx not in tool_call_buffers:
+                                tool_call_buffers[idx] = {"id": "", "name": "", "args_str": ""}
+                            buf = tool_call_buffers[idx]
+                            if tc_delta.id:
+                                buf["id"] = tc_delta.id
+                            if tc_delta.function:
+                                if tc_delta.function.name:
+                                    buf["name"] = tc_delta.function.name
+                                if tc_delta.function.arguments:
+                                    buf["args_str"] += tc_delta.function.arguments
+
+                # Parse accumulated tool calls
                 tool_calls = []
-                for tc in raw_tool_calls:
-                    fn = tc.function
-                    args = fn.arguments if isinstance(fn.arguments, dict) else {}
-                    if isinstance(fn.arguments, str) and fn.arguments.strip():
+                for idx in sorted(tool_call_buffers.keys()):
+                    buf = tool_call_buffers[idx]
+                    args = {}
+                    if buf["args_str"].strip():
                         try:
-                            args = json.loads(fn.arguments)
+                            args = json.loads(buf["args_str"])
                         except Exception:
                             pass
                     tool_calls.append({
-                        "name": fn.name,
+                        "name": buf["name"],
                         "args": args,
-                        "id": tc.id or f"call_{len(tool_calls)}",
+                        "id": buf["id"] or f"call_{idx}",
                     })
+
             except Exception as exc:
                 _emit("error", {"message": f"LLM call failed: {exc}"})
                 break
@@ -416,32 +443,18 @@ class AgentLoop:
                     final_results.append('{"status":"error","error":"No result"}')
         return final_results
 
-    def _build_default_system_prompt(self, registry) -> str:
+    def _build_default_system_prompt(self, registry, user_message: str = "") -> str:
         """Build default system prompt with tool descriptions + skills."""
         today = time.strftime("%Y-%m-%d")
         tool_text = registry.get_description_text()
 
         # Load skills for injection
-        skill_text = ""
-        try:
-            import os as _os
-            from skills.loader import SkillLoader
-            skills_dir = _os.path.join(_os.path.dirname(_os.path.dirname(
-                _os.path.dirname(_os.path.abspath(__file__)))), "skills")
-            loader = SkillLoader(skills_dir)
-            loader.discover()
-            if loader.skills:
-                cats: dict[str, list[str]] = {}
-                for s in loader.skills.values():
-                    cats.setdefault(s.category, []).append(s.name)
-                skill_lines = []
-                for cat, names in sorted(cats.items()):
-                    skill_lines.append(f"\n### {cat}")
-                    for n in sorted(names)[:5]:  # Top 5 per category
-                        skill_lines.append(f"- {n}: {loader.skills[n].description[:100]}")
-                skill_text = "\n".join(skill_lines)
-        except Exception:
-            pass
+        if user_message:
+            skill_text = self._select_relevant_skills(user_message, max_skills=20)
+            skill_header = "## Relevant Skills (based on your query)"
+        else:
+            skill_text = self._list_all_skills_compact()
+            skill_header = "## Available Skills"
 
         return f"""You are a financial AI agent with access to {registry.tool_count} tools. You can research markets, analyze stocks, search the web, read documents, and execute analyses.
 
@@ -450,7 +463,7 @@ Today's date is {today}. All analysis should be based on this date.
 ## Available Tools
 {tool_text}
 
-## Skills (use load_skill to read full docs)
+{skill_header}
 {skill_text if skill_text else "No skills loaded."}
 
 ## How to Work
@@ -468,7 +481,72 @@ Today's date is {today}. All analysis should be based on this date.
 - For US stocks, include fundamental metrics and macro context
 - If you need more detailed methodology (e.g. \"how to do a DCF valuation\"), use load_skill to read the full skill document
 - Do NOT call the same tool with the same arguments more than once — if it succeeds, use the result
-- Wrap up each analysis with a clear conclusion"""
+- Wrap up each analysis with a clear conclusion
+- After your analysis, suggest 1-3 relevant skills the user might want to explore (via load_skill)"""
+
+    def _select_relevant_skills(self, user_message: str, max_skills: int = 20) -> str:
+        """Select top N skills relevant to user's query using keyword matching."""
+        import re
+        from skills.loader import get_loader
+
+        loader = get_loader()
+        loader.discover()
+
+        if not loader.skills:
+            return "No skills available."
+
+        # Extract keywords (Chinese 2+ chars, English 3+ chars)
+        keywords = set(re.findall(r'[\u4e00-\u9fff]{2,}', user_message.lower()))
+        keywords |= set(re.findall(r'[a-z]{3,}', user_message.lower()))
+
+        # Score each skill
+        scored = []
+        for skill in loader.skills.values():
+            text = f"{skill.name} {skill.description} {skill.category}".lower()
+            score = sum(1 for kw in keywords if kw in text)
+            scored.append((score, skill))
+
+        scored.sort(key=lambda x: (-x[0], x[1].name))
+        selected = scored[:max_skills]
+
+        lines = []
+        for score, skill in selected:
+            marker = "**" if score > 0 else ""
+            lines.append(f"- {marker}{skill.name}{marker} [{skill.category}]: {skill.description[:120]}")
+
+        remaining = len(loader.skills) - len(selected)
+        if remaining > 0:
+            lines.append(f"\n(+{remaining} more skills. Use list_skills to browse all, search_skills(keyword) to find specific ones.)")
+
+        return "\n".join(lines)
+
+    def _list_all_skills_compact(self) -> str:
+        """List all skills grouped by category in compact format."""
+        from skills.loader import get_loader
+
+        loader = get_loader()
+        loader.discover()
+
+        if not loader.skills:
+            return "No skills available."
+
+        cats: dict[str, list[str]] = {}
+        for s in loader.skills.values():
+            cats.setdefault(s.category, []).append(s.name)
+
+        lines = []
+        for cat in sorted(cats):
+            names = sorted(cats[cat])
+            lines.append(f"\n### {cat} ({len(names)})")
+            for n in names:
+                sk = loader.skills[n]
+                builtin_tag = "" if sk.is_builtin else " [user]"
+                lines.append(f"- {n}{builtin_tag}: {sk.description[:120]}")
+
+        if len(loader.skills) > 50:
+            lines.append("\nTip: Use search_skills(query) to find skills by keyword, or list_skills to browse by category.")
+
+        return "\n".join(lines)
 
 
 def _convert_messages(messages: list[dict]) -> list[dict]:

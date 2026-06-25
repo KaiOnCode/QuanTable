@@ -288,15 +288,21 @@ class GenerateBriefTool(BaseTool):
 
 class LoadSkillTool(BaseTool):
     meta = ToolMeta(name="load_skill",
-        description="加载指定技能/策略的完整文档。参数: name(技能名称)。用于获取详细方法论、分析框架或交易策略。",
+        description="加载指定技能/策略的完整文档。参数: name(技能名称), offset(起始字符位置,默认0), limit(最大字符数,默认8000)。用于获取详细方法论、分析框架或交易策略。",
         category="workspace", timeout=5)
 
-    def execute(self, name: str = "") -> str:
-        from skills.loader import SkillLoader
-        import os
-        skills_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__)))), "skills")
-        loader = SkillLoader(skills_dir)
+    def execute(self, name: str = "", offset: int | str = 0, limit: int | str = 8000) -> str:
+        try:
+            offset = int(offset)
+            limit = int(limit)
+        except (ValueError, TypeError):
+            offset = 0
+            limit = 8000
+        if not name.strip():
+            return self._error("name required")
+
+        from skills.loader import get_loader
+        loader = get_loader()
         loader.discover()
         skill = loader.get(name)
         if not skill:
@@ -308,11 +314,166 @@ class LoadSkillTool(BaseTool):
         if not skill:
             names = ", ".join(sorted(loader.skills.keys())[:30])
             return self._error(f"Skill '{name}' not found. Available: {names}...")
+
+        full_content = skill.prompt_template
+        total_len = len(full_content)
+        chunk = full_content[offset:offset + limit]
+
         return self._ok({
             "name": skill.name,
             "category": skill.category,
             "description": skill.description,
-            "content": skill.prompt_template[:3000],
+            "version": skill.version,
+            "is_builtin": skill.is_builtin,
+            "content": chunk,
+            "total_length": total_len,
+            "offset": offset,
+            "limit": limit,
+            "has_more": (offset + limit) < total_len,
+        })
+
+
+class SearchSkillsTool(BaseTool):
+    meta = ToolMeta(name="search_skills",
+        description="搜索技能/策略(匹配名称/描述/内容)。参数: query(关键词,必填), category(分类过滤,可选), limit(默认20)。",
+        category="workspace", timeout=5)
+
+    def execute(self, query: str = "", category: str = "", limit: int | str = 20) -> str:
+        try: limit = int(limit)
+        except: limit = 20
+        if not query.strip():
+            return self._error("query required")
+
+        from skills.loader import get_loader
+        loader = get_loader()
+        loader.discover()
+        query_lower = query.lower()
+        results = []
+        for skill in loader.skills.values():
+            if category and skill.category != category:
+                continue
+            score = 0
+            match_context = ""
+            if query_lower in skill.name.lower():
+                score = 100
+                match_context = f"name: {skill.name}"
+            elif query_lower in skill.description.lower():
+                score = 50
+                match_context = skill.description[:200]
+            elif query_lower in skill.prompt_template.lower():
+                score = 10
+                idx = skill.prompt_template.lower().find(query_lower)
+                start = max(0, idx - 40)
+                end = min(len(skill.prompt_template), idx + len(query) + 40)
+                match_context = "..." + skill.prompt_template[start:end] + "..."
+            if score > 0:
+                results.append({
+                    "name": skill.name, "category": skill.category,
+                    "description": skill.description[:150], "version": skill.version,
+                    "is_builtin": skill.is_builtin, "match_score": score,
+                    "match_context": match_context[:300],
+                })
+        results.sort(key=lambda x: -x["match_score"])
+        return self._ok({"query": query, "count": len(results), "results": results[:limit]})
+
+
+class ListSkillsTool(BaseTool):
+    meta = ToolMeta(name="list_skills",
+        description="列出所有可用技能。参数: category(分类过滤,可选), limit(默认50)。返回技能列表含分类概览和计数。",
+        category="workspace", timeout=5)
+
+    def execute(self, category: str = "", limit: int | str = 50) -> str:
+        try: limit = int(limit)
+        except: limit = 50
+        from skills.loader import get_loader
+        loader = get_loader()
+        loader.discover()
+        skills = list(loader.skills.values())
+        if category:
+            skills = [s for s in skills if s.category == category]
+        skills.sort(key=lambda s: (s.category, s.name))
+        result = [{
+            "name": s.name, "category": s.category,
+            "description": s.description[:200], "version": s.version,
+            "is_builtin": s.is_builtin,
+        } for s in skills[:limit]]
+        cat_counts: dict[str, int] = {}
+        for s in loader.skills.values():
+            cat_counts[s.category] = cat_counts.get(s.category, 0) + 1
+        return self._ok({
+            "total": len(loader.skills),
+            "shown": len(result),
+            "categories": cat_counts,
+            "skills": result,
+        })
+
+
+class SaveSkillTool(BaseTool):
+    meta = ToolMeta(name="save_skill",
+        description="创建或更新用户技能。参数: name(小写+连字符), content(完整SKILL.md含YAML frontmatter), category(默认user)。",
+        category="workspace", timeout=10, is_readonly=False)
+
+    def execute(self, name: str = "", content: str = "", category: str = "user") -> str:
+        import re
+        from pathlib import Path
+        if not name or not content:
+            return self._error("name and content required")
+        slug = re.sub(r"[^a-z0-9-]", "-", name.lower().strip())[:60]
+        skills_dir = Path(__file__).resolve().parent.parent.parent / "skills"
+        user_dir = skills_dir / "user" / slug
+        user_dir.mkdir(parents=True, exist_ok=True)
+        skill_path = user_dir / "SKILL.md"
+        if not content.strip().startswith("---"):
+            content = (
+                f"---\nname: {slug}\n"
+                f"description: User-created skill\n"
+                f"category: {category}\n"
+                f"version: \"1.0\"\n"
+                f"---\n\n{content}"
+            )
+        # Validate YAML frontmatter
+        try:
+            import yaml
+            parts = content.split("---")
+            if len(parts) >= 3:
+                yaml.safe_load(parts[1])
+        except Exception as e:
+            return self._error(f"Invalid YAML frontmatter: {e}")
+        skill_path.write_text(content, encoding="utf-8")
+        from skills.loader import reset_loader
+        reset_loader()
+        return self._ok({
+            "name": slug, "path": str(skill_path),
+            "message": f"Skill '{slug}' saved. Use load_skill('{slug}') to read it.",
+        })
+
+
+class DeleteSkillTool(BaseTool):
+    meta = ToolMeta(name="delete_skill",
+        description="删除用户创建的技能（不能删除内置技能）。参数: name(技能名称)。",
+        category="workspace", timeout=5, is_readonly=False)
+
+    def execute(self, name: str = "") -> str:
+        import re, shutil
+        from pathlib import Path
+        if not name.strip():
+            return self._error("name required")
+        slug = re.sub(r"[^a-z0-9-]", "-", name.lower().strip())[:60]
+        skills_dir = Path(__file__).resolve().parent.parent.parent / "skills"
+        user_skill_dir = skills_dir / "user" / slug
+        # Safety: ensure we're only deleting from user/
+        try:
+            user_skill_dir.resolve().relative_to((skills_dir / "user").resolve())
+        except ValueError:
+            return self._error("Cannot delete skills outside user directory")
+        if not user_skill_dir.exists():
+            return self._error(f"User skill '{slug}' not found. Only user skills can be deleted.")
+        shutil.rmtree(user_skill_dir)
+        from skills.loader import reset_loader
+        reset_loader()
+        return self._ok({
+            "name": slug,
+            "message": f"Skill '{slug}' deleted.",
         })
 
 

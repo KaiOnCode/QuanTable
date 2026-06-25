@@ -190,6 +190,141 @@ async def delete_session(session_id: str):
     return {"ok": True}
 
 
+# ── Skills ────────────────────────────────────────────────────
+
+class SkillCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, description="Skill name (lowercase, hyphens)")
+    content: str = Field(..., min_length=1, description="Full SKILL.md content with YAML frontmatter")
+    category: str = Field("user", description="Skill category")
+
+
+@router.get("/agent/skills")
+async def list_skills(category: str | None = None, search: str | None = None):
+    """List all skills with optional category filter and keyword search."""
+    from skills.loader import get_loader, reset_loader
+    reset_loader()
+    loader = get_loader()
+    loader.discover()
+
+    skills = list(loader.skills.values())
+    if category:
+        skills = [s for s in skills if s.category == category]
+    if search:
+        q = search.lower()
+        skills = [s for s in skills
+                  if q in s.name.lower()
+                  or q in s.description.lower()
+                  or q in s.prompt_template.lower()]
+
+    skills.sort(key=lambda s: (s.category, s.name))
+
+    cat_counts: dict[str, int] = {}
+    for s in loader.skills.values():
+        cat_counts[s.category] = cat_counts.get(s.category, 0) + 1
+
+    return {
+        "total": len(loader.skills),
+        "filtered": len(skills),
+        "categories": cat_counts,
+        "skills": [
+            {"name": s.name, "category": s.category,
+             "description": s.description[:200], "version": s.version,
+             "is_builtin": s.is_builtin, "tools": s.tools}
+            for s in skills
+        ],
+    }
+
+
+@router.get("/agent/skills/{name}")
+async def get_skill(name: str):
+    """Get full content of a skill by name."""
+    from skills.loader import get_loader, reset_loader
+    reset_loader()
+    loader = get_loader()
+    loader.discover()
+
+    skill = loader.get(name)
+    if not skill:
+        for s in loader.skills.values():
+            if name.lower() in s.name.lower():
+                skill = s
+                break
+    if not skill:
+        raise HTTPException(404, f"Skill '{name}' not found")
+
+    return {
+        "name": skill.name, "category": skill.category,
+        "description": skill.description, "version": skill.version,
+        "is_builtin": skill.is_builtin, "tools": skill.tools,
+        "model": skill.model, "temperature": skill.temperature,
+        "content": skill.prompt_template, "file_path": skill.file_path,
+    }
+
+
+@router.post("/agent/skills")
+async def create_skill(req: SkillCreateRequest):
+    """Create or update a user skill."""
+    import re
+    from pathlib import Path
+
+    slug = re.sub(r"[^a-z0-9-]", "-", req.name.lower().strip())[:60]
+    skills_dir = Path(__file__).resolve().parent.parent.parent / "skills"
+    user_dir = skills_dir / "user" / slug
+    user_dir.mkdir(parents=True, exist_ok=True)
+    skill_path = user_dir / "SKILL.md"
+
+    content = req.content
+    if not content.strip().startswith("---"):
+        content = (
+            f"---\nname: {slug}\n"
+            f"description: User-created skill\n"
+            f"category: {req.category}\n"
+            f"version: \"1.0\"\n"
+            f"---\n\n{content}"
+        )
+
+    try:
+        import yaml
+        parts = content.split("---")
+        if len(parts) >= 3:
+            yaml.safe_load(parts[1])
+    except Exception as e:
+        raise HTTPException(400, f"Invalid YAML frontmatter: {e}")
+
+    skill_path.write_text(content, encoding="utf-8")
+
+    from skills.loader import reset_loader
+    reset_loader()
+
+    return {"ok": True, "name": slug, "path": str(skill_path)}
+
+
+@router.delete("/agent/skills/{name}")
+async def delete_skill(name: str):
+    """Delete a user skill (bundled skills are protected)."""
+    import re, shutil
+    from pathlib import Path
+
+    slug = re.sub(r"[^a-z0-9-]", "-", name.lower().strip())[:60]
+    skills_dir = Path(__file__).resolve().parent.parent.parent / "skills"
+    user_skill_dir = skills_dir / "user" / slug
+
+    try:
+        user_skill_dir.resolve().relative_to((skills_dir / "user").resolve())
+    except ValueError:
+        raise HTTPException(403, "Cannot delete skills outside user directory")
+
+    if not user_skill_dir.exists():
+        raise HTTPException(404, f"User skill '{slug}' not found")
+
+    shutil.rmtree(user_skill_dir)
+
+    from skills.loader import reset_loader
+    reset_loader()
+
+    return {"ok": True, "deleted": slug}
+
+
 # ── Helpers ──────────────────────────────────────────────────
 
 
