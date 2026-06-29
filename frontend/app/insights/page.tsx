@@ -15,7 +15,7 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { api } from "@/lib/api/client";
 import { formatDateTime } from "@/lib/utils";
 import type { DailyBrief, Watchlist } from "@/lib/types/models";
-import ReactMarkdown from "react-markdown";
+import { Markdown } from "@/components/markdown";
 import {
   Loader2, RefreshCw, CheckCircle2, Globe, ExternalLink,
   X, Newspaper, List, Circle, AlertCircle,
@@ -173,9 +173,9 @@ export default function InsightsPage() {
             </CardHeader>
             <CardContent>
               <div className="text-sm leading-relaxed prose prose-sm dark:prose-invert max-w-none">
-                <ReactMarkdown components={{ a: ({ href, children, ...p }: any) => href?.startsWith("http") ? <a href={href} target="_blank" rel="noopener noreferrer" {...p}>{children}</a> : <a href={href} {...p}>{children}</a> }}>
+                <Markdown components={{ a: ({ href, children, ...p }: any) => href?.startsWith("http") ? <a href={href} target="_blank" rel="noopener noreferrer" {...p}>{children}</a> : <a href={href} {...p}>{children}</a> }}>
                   {renderCitations(selected.content, sources)}
-                </ReactMarkdown>
+                </Markdown>
               </div>
               {sources.length > 0 && (
                 <Accordion className="mt-4"><AccordionItem value="cited"><AccordionTrigger className="text-sm font-medium">Cited Sources ({sources.length})</AccordionTrigger><AccordionContent><div className="max-h-64 overflow-y-auto space-y-1 text-xs">{sources.map((s: any) => (<div key={s.idx} className="flex items-start gap-2 py-1 border-b border-muted/20 last:border-0"><span className="text-muted-foreground font-mono w-7 shrink-0 text-right">[{s.idx}]</span><div className="min-w-0">{s.url ? <a href={s.url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline leading-snug">{s.title}</a> : <span className="leading-snug">{s.title}</span>}<div className="text-muted-foreground mt-0.5">{s.source} · {s.category}</div></div></div>))}</div></AccordionContent></AccordionItem></Accordion>

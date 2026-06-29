@@ -37,7 +37,7 @@ import {
   TrendingUp,
   Shield,
 } from "lucide-react";
-import ReactMarkdown from "react-markdown";
+import { Markdown } from "@/components/markdown";
 import { createSSEStream } from "@/lib/api/client";
 import { HistoryPanel } from "@/components/quick-ask/history-panel";
 import { TickerPreview } from "@/components/quick-ask/ticker-preview";
@@ -152,7 +152,7 @@ function ReportCard({ result }: { result: SSEResultEvent }) {
               </Button>
               {showFull && (
                 <div className="mt-2 p-4 rounded-lg bg-muted/30 text-sm leading-relaxed max-h-96 overflow-y-auto prose prose-sm dark:prose-invert max-w-none">
-                  <ReactMarkdown>{bodyText}</ReactMarkdown>
+                  <Markdown>{bodyText}</Markdown>
                 </div>
               )}
             </div>
@@ -170,7 +170,7 @@ function ReportCard({ result }: { result: SSEResultEvent }) {
                   </AccordionTrigger>
                   <AccordionContent>
                     <div className="p-3 rounded-lg bg-muted/20 text-xs leading-relaxed max-h-64 overflow-y-auto prose prose-sm dark:prose-invert max-w-none">
-                      <ReactMarkdown>{report}</ReactMarkdown>
+                      <Markdown>{report}</Markdown>
                     </div>
                   </AccordionContent>
                 </AccordionItem>
@@ -468,7 +468,7 @@ export default function QuickAskPage() {
                     </AccordionTrigger>
                     <AccordionContent>
                       <div className="p-3 rounded-lg bg-muted/20 text-xs leading-relaxed max-h-64 overflow-y-auto prose prose-sm dark:prose-invert max-w-none">
-                        <ReactMarkdown>{report}</ReactMarkdown>
+                        <Markdown>{report}</Markdown>
                       </div>
                     </AccordionContent>
                   </AccordionItem>

@@ -5,8 +5,7 @@ import { Shell } from "@/components/layout/shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { Markdown } from "@/components/markdown";
 import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip as ReTooltip } from "recharts";
 import {
   Send, Loader2, CheckCircle2, AlertCircle, Circle,
@@ -427,7 +426,7 @@ export default function AgentPage() {
                       })}
                       {block.content && (
                         <div className="relative group/content">
-                          <div className="text-sm leading-relaxed prose prose-sm dark:prose-invert max-w-none"><ReactMarkdown remarkPlugins={[remarkGfm]}>{block.content}</ReactMarkdown></div>
+                          <div className="text-sm leading-relaxed prose prose-sm dark:prose-invert max-w-none"><Markdown>{block.content}</Markdown></div>
                           <button className="absolute top-0 right-0 p-1 rounded bg-muted/50 opacity-0 group-hover/content:opacity-100 transition-opacity"
                             onClick={() => navigator.clipboard.writeText(block.content)} title="Copy">
                             <Copy className="h-3 w-3 text-muted-foreground" />

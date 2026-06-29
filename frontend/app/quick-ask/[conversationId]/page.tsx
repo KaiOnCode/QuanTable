@@ -31,7 +31,7 @@ import {
   TrendingUp,
   TrendingDown,
 } from "lucide-react";
-import ReactMarkdown from "react-markdown";
+import { Markdown } from "@/components/markdown";
 
 type SessionData = {
   session_id: string;
@@ -203,7 +203,7 @@ export default function HistoryDetailPage() {
             {bodyText && (
               <ScrollArea className="max-h-96">
                 <div className="p-4 rounded-lg bg-muted/30 text-sm leading-relaxed prose prose-sm dark:prose-invert max-w-none">
-                  <ReactMarkdown>{bodyText}</ReactMarkdown>
+                  <Markdown>{bodyText}</Markdown>
                 </div>
               </ScrollArea>
             )}
@@ -229,7 +229,7 @@ export default function HistoryDetailPage() {
                         </AccordionTrigger>
                         <AccordionContent>
                           <div className="p-3 rounded-lg bg-muted/20 text-xs leading-relaxed max-h-80 overflow-y-auto prose prose-sm dark:prose-invert max-w-none">
-                            <ReactMarkdown>{report}</ReactMarkdown>
+                            <Markdown>{report}</Markdown>
                           </div>
                         </AccordionContent>
                       </AccordionItem>

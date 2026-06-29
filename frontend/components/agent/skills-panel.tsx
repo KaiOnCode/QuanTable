@@ -4,9 +4,8 @@ import { useState, useEffect, useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Search, BookOpen, X, Loader2, Trash2 } from "lucide-react";
-import ReactMarkdown from "react-markdown";
+import { Markdown } from "@/components/markdown";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
@@ -202,11 +201,11 @@ export function SkillsPanel({ onClose }: { onClose: () => void }) {
             </div>
           </div>
           {/* Modal body */}
-          <ScrollArea className="flex-1">
+          <div className="flex-1 overflow-y-auto">
             <div className="p-4 prose prose-sm dark:prose-invert max-w-none">
-              <ReactMarkdown>{selectedSkill.content}</ReactMarkdown>
+              <Markdown>{selectedSkill.content}</Markdown>
             </div>
-          </ScrollArea>
+          </div>
         </div>
       </div>
     )}

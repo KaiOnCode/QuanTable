@@ -16,7 +16,7 @@ import { monitorApi } from "@/lib/api/monitor";
 import { formatDateTime } from "@/lib/utils";
 import type { MonitorTask, MonitoringReport, MonitorMode } from "@/lib/types/models";
 import { Eye, Plus, Loader2, Play, Trash2, Clock, ChevronRight, Pencil, Check, X, ExternalLink, Pause, Power } from "lucide-react";
-import ReactMarkdown from "react-markdown";
+import { Markdown } from "@/components/markdown";
 
 // Human-readable cron descriptions
 function cronLabel(expr?: string): string {
@@ -211,7 +211,7 @@ function MonitorDetail({ monitor }: { monitor: MonitorTask }) {
         {/* Full report content */}
         {viewReport.content_text && (
           <div className="text-sm leading-relaxed bg-muted/20 p-3 rounded max-h-96 overflow-y-auto prose prose-sm dark:prose-invert max-w-none">
-            <ReactMarkdown>{viewReport.content_text}</ReactMarkdown>
+            <Markdown>{viewReport.content_text}</Markdown>
           </div>
         )}
 
