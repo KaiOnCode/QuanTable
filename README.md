@@ -137,11 +137,18 @@ OPENAI_MODEL=deepseek-chat
 ### 2. Backend
 
 ```bash
+# Always clean up old processes before starting
+pkill -f uvicorn 2>/dev/null; sleep 1
+
 uv sync
-uv run uvicorn server.main:app --host 0.0.0.0 --port 8000 --reload
+PYTHONPATH=. uv run uvicorn server.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir server --reload-dir agentgraph --reload-dir agents --reload-dir dataflow --reload-dir memory --reload-dir skills --reload-dir storage --reload-dir scheduler
 # → http://localhost:8000
 # → API docs: http://localhost:8000/docs
 ```
+
+> **Important**: `PYTHONPATH=.` is required so Python can find the `server` module.
+> `--reload-dir` limits file watching to source directories only (avoids watching `.venv`, `data/`, `frontend/`).
+> If you hit port conflicts or stale processes, run `pkill -f uvicorn` first.
 
 Verify:
 
@@ -156,13 +163,23 @@ Open a second terminal:
 ```bash
 cd frontend
 npm install
-npm run dev
+
+# Turbopack cache grows over time → can cause memory explosion on startup.
+# Clean it when you see high memory usage or slow startup:
+rm -rf .next
+
+# Limit Node.js memory to prevent runaway V8 heap growth
+NODE_OPTIONS="--max-old-space-size=2048" npm run dev
 # → http://localhost:3000
 ```
 
+> **Memory tip**: Turbopack's incremental compilation cache (`.next/dev/cache/turbopack/`) accumulates `.sst` files that can reach 1-2 GB. Every startup loads these into RAM. If `next dev` suddenly uses huge memory, `rm -rf .next` fixes it.
+>
+> The 2GB memory cap is well above normal usage (~80 MB for `next dev`) and prevents runaway heap growth in long-running sessions.
+
 ### 4. Test
 
-Open `http://localhost:3000/quick-ask`, type `AAPL`, click **Analyze**. Watch the SSE progress stream and see the result.
+Open `http://localhost:3000/agent`, ask a question like "What is the current price of AAPL?". Watch the streaming agent response.
 
 ### CLI (legacy)
 

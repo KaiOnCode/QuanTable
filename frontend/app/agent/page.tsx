@@ -287,7 +287,7 @@ export default function AgentPage() {
 
   return (
     <Shell>
-      <div className="flex h-[calc(100vh-4rem)]">
+      <div className="flex h-full overflow-hidden">
         {sidebarOpen ? (
         <div className="w-56 border-r flex flex-col shrink-0 bg-muted/10">
           <div className="px-3 py-2.5 border-b flex items-center justify-between">
@@ -471,7 +471,7 @@ export default function AgentPage() {
           </div>
         </div>
         {skillsPanelOpen && (
-          <div className="w-72 shrink-0">
+          <div className="w-72 shrink-0 h-full min-h-0">
             <SkillsPanel onClose={() => setSkillsPanelOpen(false)} />
           </div>
         )}

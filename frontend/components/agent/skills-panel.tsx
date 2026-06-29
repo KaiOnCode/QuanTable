@@ -64,7 +64,18 @@ export function SkillsPanel({ onClose }: { onClose: () => void }) {
     fetchSkills();
   };
 
+  // Esc key to close modal
+  useEffect(() => {
+    if (!selectedSkill) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSelectedSkill(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedSkill]);
+
   return (
+    <>
     <div className="flex flex-col h-full border-l bg-background">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b shrink-0">
@@ -110,7 +121,7 @@ export function SkillsPanel({ onClose }: { onClose: () => void }) {
       </div>
 
       {/* Skill list */}
-      <ScrollArea className="flex-1">
+      <div className="flex-1 overflow-y-auto">
         {loading ? (
           <div className="flex items-center justify-center py-8">
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -154,52 +165,51 @@ export function SkillsPanel({ onClose }: { onClose: () => void }) {
             )}
           </div>
         )}
-      </ScrollArea>
+      </div>
 
-      {/* Skill detail */}
-      {selectedSkill && (
-        <div className="border-t shrink-0 flex flex-col" style={{ maxHeight: "40%" }}>
-          <div className="flex items-center justify-between px-3 py-1.5 border-b bg-muted/20">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <span className="text-xs font-medium truncate">{selectedSkill.name}</span>
+    </div>
+
+    {/* Skill detail modal */}
+    {selectedSkill && (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+        onClick={() => setSelectedSkill(null)}
+      >
+        <div
+          className="bg-background border rounded-lg shadow-xl w-[480px] max-h-[75vh] flex flex-col m-4"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Modal header */}
+          <div className="flex items-center justify-between px-4 py-2.5 border-b shrink-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-sm font-semibold truncate">{selectedSkill.name}</span>
               {!selectedSkill.is_builtin && (
-                <Badge variant="secondary" className="text-[9px] h-4 px-1">
-                  user
-                </Badge>
+                <Badge variant="secondary" className="text-[10px] h-4 px-1.5">user</Badge>
               )}
-              <span className="text-[9px] text-muted-foreground">
-                {selectedSkill.category}
-              </span>
+              <span className="text-[10px] text-muted-foreground">{selectedSkill.category}</span>
+              <span className="text-[10px] text-muted-foreground">v{selectedSkill.version}</span>
             </div>
             <div className="flex items-center gap-0.5 shrink-0">
               {!selectedSkill.is_builtin && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-5 w-5 p-0 text-destructive hover:text-destructive"
-                  onClick={() => deleteSkill(selectedSkill.name)}
-                  title="Delete"
-                >
-                  <Trash2 className="h-3 w-3" />
+                <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-destructive hover:text-destructive"
+                  onClick={() => deleteSkill(selectedSkill.name)} title="Delete">
+                  <Trash2 className="h-3.5 w-3.5" />
                 </Button>
               )}
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-5 w-5 p-0"
-                onClick={() => setSelectedSkill(null)}
-              >
-                <X className="h-3 w-3" />
+              <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => setSelectedSkill(null)}>
+                <X className="h-4 w-4" />
               </Button>
             </div>
           </div>
-          <ScrollArea className="flex-1 p-2">
-            <div className="text-xs prose prose-sm dark:prose-invert max-w-none">
-              <ReactMarkdown>{selectedSkill.content.slice(0, 5000)}</ReactMarkdown>
+          {/* Modal body */}
+          <ScrollArea className="flex-1">
+            <div className="p-4 prose prose-sm dark:prose-invert max-w-none">
+              <ReactMarkdown>{selectedSkill.content}</ReactMarkdown>
             </div>
           </ScrollArea>
         </div>
-      )}
-    </div>
-  );
+      </div>
+    )}
+    </>
+    );
 }
