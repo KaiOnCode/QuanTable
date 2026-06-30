@@ -27,12 +27,13 @@ load_dotenv("properties.env")
 from .progress import HeartbeatTimer, ProgressEvent
 from .compression import (
     estimate_tokens, micro_compact, collapse_large_texts,
-    llm_compress, TOKEN_THRESHOLD, TOKEN_WARN,
+    llm_compress, apply_tool_result_budget,
+    TOKEN_THRESHOLD, TOKEN_WARN,
 )
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MAX_ITERATIONS = 25
+DEFAULT_MAX_ITERATIONS = 8
 DEFAULT_TIMEOUT = 600  # 10 minutes
 
 
@@ -206,158 +207,88 @@ class AgentLoop:
         iteration = 0
         previous_summary = ""
 
-        # ── ReAct Loop ──
+        # ── Run the ReAct loop ──
+        gen = self._query_loop(messages, tools, registry, memory, sid, run_dir, started, previous_summary)
+        try:
+            while True:
+                event_type, payload = next(gen)
+                _emit(event_type, payload)
+        except StopIteration as e:
+            return e.value
+
+    def _query_loop(self, messages, tools, registry, memory, sid, run_dir, started, previous_summary):
+        """ReAct loop with 5-phase structure per iteration.
+
+        Phases (inspired by Claude Code queryLoop):
+        1. preprocess     — context compression
+        2. call_model     — streaming LLM call
+        3. execute_tools  — run tool calls
+        4. inject_attach  — memory/skill injection (placeholder)
+        5. check_terminate — decide whether to stop or continue
+        """
+        iteration = 0
+
         while iteration < self.config.max_iterations:
-            elapsed = time.time() - started
-            if elapsed > self.config.timeout_seconds:
-                _emit("error", {"message": f"Timeout after {self.config.timeout_seconds}s"})
+            if time.time() - started > self.config.timeout_seconds:
+                yield ("error", {"message": f"Timeout after {self.config.timeout_seconds}s"})
                 break
 
             iteration += 1
 
-            # ── Context compression ──
-            token_count = estimate_tokens(messages)
+            # Wrap-up: inject message once at 70%, force no-tools at 100%
+            wrap_at = int(self.config.max_iterations * 0.7)
+            if iteration == wrap_at:
+                messages.append({
+                    "role": "user",
+                    "content": "Stop calling tools. Answer based on the data you have now."
+                })
+            force_answer = iteration >= self.config.max_iterations - 1
+            active_tools = [] if force_answer else tools
 
-            # L1: micro-compact (every iteration, zero cost)
-            messages = micro_compact(messages)
+            # ── Phase 1: preprocess ──
+            messages, previous_summary = self._preprocess_messages(
+                messages, previous_summary, run_dir)
 
-            # L2: collapse large texts
-            if token_count > TOKEN_WARN:
-                messages = collapse_large_texts(messages)
+            # ── Phase 2: call model ──
+            content, tool_calls = yield from self._call_model_streaming(
+                messages, active_tools, iteration)
 
-            # L3: LLM compression
-            if token_count > self.config.compress_threshold:
-                _emit("compact", {"before_tokens": token_count})
-                messages, new_summary = llm_compress(
-                    messages, llm=None,
-                    trace_dir=run_dir,
-                    previous_summary=previous_summary,
-                )
-                previous_summary = new_summary
-                _emit("compact_done", {"after_tokens": estimate_tokens(messages)})
-
-            # ── Call LLM with streaming (manual API for DeepSeek compat) ──
-            _emit("thinking_start", {"iteration": iteration})
-
-            try:
-                llm = self._get_llm()
-                # Use streaming API call for word-by-word output
-                stream = llm.root_client.chat.completions.create(
-                    model=llm.model_name,
-                    messages=_convert_messages(messages),
-                    tools=_convert_tools(tools),
-                    temperature=llm.temperature,
-                    max_tokens=llm.max_tokens,
-                    stream=True,
-                )
-
-                content = ""
-                tool_call_buffers: dict[int, dict] = {}  # index → {id, name, args_str}
-
-                for chunk in stream:
-                    delta = chunk.choices[0].delta if chunk.choices else None
-                    if delta is None:
-                        continue
-
-                    # Text content delta
-                    if delta.content:
-                        content += delta.content
-                        _emit("thinking_delta", {"text": delta.content, "iteration": iteration})
-
-                    # Tool call deltas (accumulate across chunks)
-                    if delta.tool_calls:
-                        for tc_delta in delta.tool_calls:
-                            idx = tc_delta.index
-                            if idx not in tool_call_buffers:
-                                tool_call_buffers[idx] = {"id": "", "name": "", "args_str": ""}
-                            buf = tool_call_buffers[idx]
-                            if tc_delta.id:
-                                buf["id"] = tc_delta.id
-                            if tc_delta.function:
-                                if tc_delta.function.name:
-                                    buf["name"] = tc_delta.function.name
-                                if tc_delta.function.arguments:
-                                    buf["args_str"] += tc_delta.function.arguments
-
-                # Parse accumulated tool calls
-                tool_calls = []
-                for idx in sorted(tool_call_buffers.keys()):
-                    buf = tool_call_buffers[idx]
-                    args = {}
-                    if buf["args_str"].strip():
-                        try:
-                            args = json.loads(buf["args_str"])
-                        except Exception:
-                            pass
-                    tool_calls.append({
-                        "name": buf["name"],
-                        "args": args,
-                        "id": buf["id"] or f"call_{idx}",
-                    })
-
-            except Exception as exc:
-                _emit("error", {"message": f"LLM call failed: {exc}"})
+            if content is None:  # error occurred
                 break
 
-            _emit("thinking_end", {
-                "text": str(content)[:2000] if content else "",
-                "tool_calls": [{"name": tc["name"], "args": tc["args"]} for tc in tool_calls],
-            })
-
-            # ── No tool calls → check if done ──
+            # ── Phase 3: execute tools (or check done) ──
             if not tool_calls:
-                assistant_msg = {"role": "assistant", "content": str(content) if content else ""}
-                messages.append(assistant_msg)
-
-                if not content or len(str(content).strip()) < 50:
-                    messages.append({"role": "user", "content": "Please continue your analysis or provide a final answer. What have you found so far?"})
-                    continue
-                else:
-                    _emit("answer", {"text": str(content)})
+                is_done, messages = self._check_termination(messages, content)
+                if is_done:
+                    yield ("answer", {"text": str(content)})
                     break
+                continue  # empty content → continuation prompt was added
 
-            # ── Filter out empty-args tool calls (LLM hallucination) ──
-            valid_calls = []
-            for tc in tool_calls:
-                args = tc["args"] or {}
-                # Reject calls with no parameters for tools that need them
-                if tc["name"] in ("get_price","get_indicators","get_news","get_fundamentals",
-                    "get_meta","get_sentiment","search_symbol","search_news","web_search",
-                    "web_fetch","load_skill"):
-                    if not args.get("ticker") and not args.get("query") and not args.get("name") and not args.get("url"):
-                        _emit("tool_error", {"tool": tc["name"],
-                            "error": "Skipped: no ticker/query parameter"})
-                        continue
-                valid_calls.append(tc)
-            tool_calls = valid_calls
-
-            # ── Execute tools ──
-            assistant_msg = {
+            # Build assistant message with ALL tool_calls
+            messages.append({
                 "role": "assistant",
                 "content": str(content) if content else None,
                 "tool_calls": [
-                    {"id": tc["id"],
-                     "type": "function",
+                    {"id": tc["id"], "type": "function",
                      "function": {"name": tc["name"],
                                   "arguments": json.dumps(tc["args"], ensure_ascii=False)}}
-                    for i, tc in enumerate(tool_calls)
+                    for tc in tool_calls
                 ],
-            }
-            messages.append(assistant_msg)
+            })
 
-            results = self._execute_batch(tool_calls, registry, memory, _emit)
+            # Execute ALL tools — let tools themselves validate params
+            # and return errors if needed. The LLM learns from tool results.
+            tool_events = []
+            results = self._execute_batch(tool_calls, registry, memory,
+                                          lambda t, p: tool_events.append((t, p)))
+            for ev in tool_events:
+                yield ev
 
             for tc, result in zip(tool_calls, results):
-                tool_msg = {
-                    "role": "tool",
-                    "tool_call_id": tc["id"],
-                    "name": tc["name"],
-                    "content": result,
-                }
-                # Store chart data in message for session persistence
+                tool_msg = {"role": "tool", "tool_call_id": tc["id"],
+                            "name": tc["name"], "content": result}
                 try:
-                    parsed = json.loads(result)
-                    cd = _extract_chart(parsed)
+                    cd = _extract_chart(json.loads(result))
                     if cd:
                         tool_msg["chart_data"] = cd
                 except Exception:
@@ -365,23 +296,149 @@ class AgentLoop:
                 messages.append(tool_msg)
                 memory.increment(tc["name"])
 
+            # ── Phase 4: inject attachments (placeholder) ──
+            messages = self._inject_attachments(messages)
+
         # ── Done ──
         elapsed = time.time() - started
-        _emit("done", {
-            "iterations": iteration,
-            "tool_calls": sum(memory.counters.values()),
-            "elapsed_s": round(elapsed, 2),
+        yield ("done", {"iterations": iteration,
+                        "tool_calls": sum(memory.counters.values()),
+                        "elapsed_s": round(elapsed, 2)})
+        return {"status": "ok", "session_id": sid, "messages": messages,
+                "iterations": iteration,
+                "tool_count": sum(memory.counters.values()),
+                "elapsed_s": round(elapsed, 2),
+                "memory": memory.to_summary()}
+
+    # ── Phase 1: preprocess ────────────────────────────────────
+
+    def _preprocess_messages(self, messages, previous_summary, run_dir):
+        """Phase 1: Serial compression pipeline before each LLM call.
+
+        L0 → L1 → L2 → L3 (if needed)
+        """
+        # L0: tool result budget (every iteration)
+        messages = apply_tool_result_budget(messages)
+
+        # L1: micro-compact (every iteration)
+        messages = micro_compact(messages)
+
+        # L2: collapse large texts (when over warn threshold)
+        token_count = estimate_tokens(messages)
+        if token_count > TOKEN_WARN:
+            messages = collapse_large_texts(messages)
+
+        # L3: LLM summary (when over compress threshold)
+        if token_count > self.config.compress_threshold:
+            messages, new_summary = llm_compress(
+                messages, llm=None, trace_dir=run_dir,
+                previous_summary=previous_summary,
+            )
+            return messages, new_summary
+
+        return messages, previous_summary
+
+    # ── Phase 2: call model ────────────────────────────────────
+
+    def _call_model_streaming(self, messages, tools, iteration):
+        """Phase 2: Stream LLM response, accumulate text + tool calls.
+
+        Yields thinking_start, thinking_delta events.
+        Returns (content, tool_calls) tuple, or (None, []) on error.
+        """
+        yield ("thinking_start", {"iteration": iteration})
+
+        try:
+            llm = self._get_llm()
+            stream = llm.root_client.chat.completions.create(
+                model=llm.model_name,
+                messages=_convert_messages(messages),
+                tools=_convert_tools(tools),
+                temperature=llm.temperature,
+                max_tokens=llm.max_tokens,
+                stream=True,
+            )
+        except Exception as exc:
+            yield ("error", {"message": f"LLM call failed: {exc}"})
+            return None, []
+
+        content = ""
+        tool_call_buffers: dict[int, dict] = {}
+
+        for chunk in stream:
+            delta = chunk.choices[0].delta if chunk.choices else None
+            if delta is None:
+                continue
+
+            if delta.content:
+                content += delta.content
+                yield ("thinking_delta", {"text": delta.content, "iteration": iteration})
+
+            if delta.tool_calls:
+                for tc_delta in delta.tool_calls:
+                    idx = tc_delta.index
+                    if idx not in tool_call_buffers:
+                        tool_call_buffers[idx] = {"id": "", "name": "", "args_str": ""}
+                    buf = tool_call_buffers[idx]
+                    if tc_delta.id:
+                        buf["id"] = tc_delta.id
+                    if tc_delta.function:
+                        if tc_delta.function.name:
+                            buf["name"] = tc_delta.function.name
+                        if tc_delta.function.arguments:
+                            buf["args_str"] += tc_delta.function.arguments
+
+        tool_calls = []
+        for idx in sorted(tool_call_buffers.keys()):
+            buf = tool_call_buffers[idx]
+            args = {}
+            if buf["args_str"].strip():
+                try:
+                    args = json.loads(buf["args_str"])
+                except Exception:
+                    pass
+            tool_calls.append({
+                "name": buf["name"], "args": args,
+                "id": buf["id"] or f"call_{idx}",
+            })
+
+        yield ("thinking_end", {
+            "text": str(content)[:2000] if content else "",
+            "tool_calls": [{"name": tc["name"], "args": tc["args"]} for tc in tool_calls],
         })
 
-        return {
-            "status": "ok",
-            "session_id": sid,
-            "messages": messages,
-            "iterations": iteration,
-            "tool_count": sum(memory.counters.values()),
-            "elapsed_s": round(elapsed, 2),
-            "memory": memory.to_summary(),
-        }
+        return content, tool_calls
+
+    # ── Phase 3 helper: filter tools ────────────────────────────
+
+    def _is_empty_args_tool(self, tc: dict) -> bool:
+        """Check if a tool call has empty args for tools that need params."""
+        if tc["name"] not in ("get_price","get_indicators","get_news","get_fundamentals",
+            "get_meta","get_sentiment","search_symbol","search_news","web_search",
+            "web_fetch","load_skill"):
+            return False
+        args = tc.get("args") or {}
+        return not (args.get("ticker") or args.get("query") or args.get("name") or args.get("url"))
+
+    # ── Phase 4: inject attachments ─────────────────────────────
+
+    def _inject_attachments(self, messages):
+        """Phase 4: Inject memory/skill attachments into messages.
+        Placeholder for Phase 4 memory system.
+        """
+        return messages
+
+    # ── Phase 5: check termination ──────────────────────────────
+
+    def _check_termination(self, messages, content):
+        """Phase 5: Check if the loop should terminate.
+        Returns (is_done: bool, messages: list).
+        """
+        messages.append({"role": "assistant", "content": str(content) if content else ""})
+        if not content or not str(content).strip():
+            messages.append({"role": "user", "content": "Please continue."})
+            return False, messages
+        return True, messages
 
     def _execute_batch(self, tool_calls: list, registry, memory, emit):
         """Execute tools: read-only parallel, write serial. Dedup + non-repeatable skip."""
@@ -504,43 +561,22 @@ class AgentLoop:
     def _build_default_system_prompt(self, registry, user_message: str = "") -> str:
         """Build default system prompt with tool descriptions + skills."""
         today = time.strftime("%Y-%m-%d")
-        tool_text = registry.get_description_text()
+        tool_names = registry.get_compact_text()
 
-        # Load skills for injection
-        if user_message:
-            skill_text = self._select_relevant_skills(user_message, max_skills=20)
-            skill_header = "## Relevant Skills (based on your query)"
-        else:
-            skill_text = self._list_all_skills_compact()
-            skill_header = "## Available Skills"
+        # Load skills for injection — only if user message is substantial
+        skill_text = ""
+        skill_header = ""
+        if user_message and len(user_message) > 20:
+            skill_text = self._select_relevant_skills(user_message, max_skills=10)
+            skill_header = "\n## Relevant Skills\n" + skill_text
 
-        return f"""You are a financial AI agent with access to {registry.tool_count} tools. You can research markets, analyze stocks, search the web, read documents, and execute analyses.
+        return f"""You are a concise interactive agent. Follow instructions exactly. Never add "What would you like me to do?" or similar offers. Answer briefly.
 
-Today's date is {today}. All analysis should be based on this date.
+Today: {today}.
 
-## Available Tools
-{tool_text}
-
+Tools: {tool_names}
 {skill_header}
-{skill_text if skill_text else "No skills loaded."}
-
-## How to Work
-1. Think step by step. Before calling tools, explain your reasoning.
-2. Use tools to gather data. Don't guess — always verify with real data.
-3. Read-only tools can be called in parallel. Write tools must be called one at a time.
-4. When you have enough information, provide a complete answer in Chinese.
-5. Cite specific data from tool results in your analysis.
-6. If a tool fails, try an alternative approach.
-
-## Guidelines
-- Always provide specific numbers (prices, percentages, dates) from tool results
-- If you're unsure about something, use web_search to find the answer
-- For Chinese A-share stocks, include sector and fund flow analysis
-- For US stocks, include fundamental metrics and macro context
-- If you need more detailed methodology (e.g. \"how to do a DCF valuation\"), use load_skill to read the full skill document
-- Do NOT call the same tool with the same arguments more than once — if it succeeds, use the result
-- Wrap up each analysis with a clear conclusion
-- After your analysis, suggest 1-3 relevant skills the user might want to explore (via load_skill)"""
+Work: Call tools to get data, then answer immediately. After a tool succeeds, use its result — don't call it again. After a tool fails, try an alternative or answer with what you have. Stop calling tools once you have enough information."""
 
     def _select_relevant_skills(self, user_message: str, max_skills: int = 20) -> str:
         """Select top N skills relevant to user's query using keyword matching."""

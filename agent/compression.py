@@ -1,5 +1,7 @@
 """Context compression — prevents token overflow in long agent conversations.
 
+L0: Tool result budget (zero-cost, every iteration) — truncate each
+    tool_result to max 50K chars, keeping head 30K + tail 20K.
 L1: Micro-compact (zero-cost, every iteration) — keep last 3 tool_results,
     mark older ones as [cleared].
 L2: Collapse large texts (zero-cost) — truncate >2000-char messages to
@@ -7,7 +9,8 @@ L2: Collapse large texts (zero-cost) — truncate >2000-char messages to
 L3: LLM summary (1 LLM call when over threshold) — summarize head, protect
     tail (recent 20K tokens).
 
-Design borrowed from Vibe-Trading's five-layer compression system.
+Design borrowed from Claude Code's 5-layer compression pipeline
+and Vibe-Trading's compression system.
 """
 
 from __future__ import annotations
@@ -27,6 +30,35 @@ TAIL_TOKEN_BUDGET = 20_000     # Keep recent ~20K tokens uncompressed in L3
 MAX_TEXT_LEN = 2_000           # L2: collapse text longer than this
 HEAD_CHARS = 900               # L2: keep first N chars
 TAIL_CHARS = 500               # L2: keep last N chars
+TOOL_RESULT_BUDGET = 50_000    # L0: max chars per tool_result
+TOOL_BUDGET_HEAD = 30_000      # L0: keep first N chars of tool_result
+TOOL_BUDGET_TAIL = 20_000      # L0: keep last N chars of tool_result
+
+
+def apply_tool_result_budget(messages: list[dict], max_chars: int = TOOL_RESULT_BUDGET) -> list[dict]:
+    """L0: Truncate each tool_result to max_chars, keeping head + tail.
+
+    Applied every iteration before micro_compact. Prevents a single huge
+    tool result (e.g., web_fetch with 500K chars) from blowing up context.
+
+    Inspired by Claude Code's applyToolResultBudget in query.ts.
+    """
+    head = TOOL_BUDGET_HEAD
+    tail = TOOL_BUDGET_TAIL
+    for i, m in enumerate(messages):
+        if m.get("role") != "tool":
+            continue
+        content = m.get("content", "")
+        if isinstance(content, str) and len(content) > max_chars:
+            messages[i] = {
+                **m,
+                "content": (
+                    content[:head]
+                    + f"\n\n[...truncated {len(content) - head - tail} chars...]\n\n"
+                    + content[-tail:]
+                ),
+            }
+    return messages
 
 
 def estimate_tokens(messages: list[dict]) -> int:

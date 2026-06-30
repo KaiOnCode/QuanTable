@@ -12,8 +12,8 @@
 1. **每完成一条, 立即测试, 测试通过再继续**
 2. **经常回看 Claude Code 源码** (`docs/research/06-claude-code-architecture-python-guide.md` 和 `/tmp/claude-code/src/`)
 3. **测试命令必须具体可执行** (curl / Python script / Bash)
-4. **只改当前条目涉及的文件**, 不做无关重构
-
+4. 之前的结构可能过于简单，你随时可以修改整体的架构，做出大改动，让使用变得更好，让内容变得更完整，但是你需要注意改完必须做全量测试。
+5. 注意出了具体的代码的测试，对于agent的能力也要实际的进行测试，比如用几个问题去尝试
 ---
 
 ## Phase 1: Agent Loop 核心重构 (P0, 12 条)

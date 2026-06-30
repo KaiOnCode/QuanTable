@@ -97,7 +97,9 @@ class GetNewsTool(BaseTool):
         timeout=20,
     )
 
-    def execute(self, ticker: str = "", days: int = 7) -> str:
+    def execute(self, ticker: str = "", days: int | str = 7) -> str:
+        try: days = int(days)
+        except: days = 7
         emit_progress("fetching", message=f"Fetching news for {ticker}...")
         from dataflow.service import DataService
 

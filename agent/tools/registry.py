@@ -84,6 +84,11 @@ class ToolRegistry:
                 logger.warning("Schema generation failed for %s: %s", tool.meta.name, exc)
         return defs
 
+    def get_compact_text(self) -> str:
+        """Return a compact one-line listing of tool names for system prompt."""
+        names = sorted(self._tools.keys())
+        return ", ".join(names)
+
     def get_description_text(self) -> str:
         """Return a formatted string listing all tools for system prompt."""
         lines = []
