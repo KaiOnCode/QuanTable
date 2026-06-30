@@ -75,19 +75,34 @@ def estimate_tokens(messages: list[dict]) -> int:
     return total
 
 
-def micro_compact(messages: list[dict], keep_last: int = 3) -> list[dict]:
-    """L1: Keep only the last N tool_result messages; mark older ones [cleared].
+# L1 whitelist: tools whose results can be safely cleared.
+# Read-only data tools produce large results that are "look once and done".
+# Write tools and expensive analysis tools are NOT cleared.
+# Inspired by Claude Code's MICROCOMPACT_WHITELIST in query.ts.
+MICROCOMPACT_WHITELIST = {
+    "get_price", "get_indicators", "get_fundamentals", "get_news",
+    "get_sentiment", "get_meta", "get_macro_calendar",
+    "web_search", "web_fetch", "search_news", "search_symbol",
+    "read_file", "glob", "list_skills", "search_skills",
+    "load_skill", "generate_brief",
+}
 
-    Zero-cost. Runs every iteration. Prevents unbounded tool result accumulation.
+
+def micro_compact(messages: list[dict], keep_last: int = 3) -> list[dict]:
+    """L1: Clear old tool results, but ONLY for whitelisted tools.
+
+    Non-whitelisted tools (write tools, run_analysis, etc.) are preserved.
+    Zero-cost. Runs every iteration.
     """
-    result_indices = [i for i, m in enumerate(messages)
-                      if m.get("role") == "tool"]
+    result_indices = [(i, m) for i, m in enumerate(messages)
+                      if m.get("role") == "tool"
+                      and m.get("name", "") in MICROCOMPACT_WHITELIST]
     if len(result_indices) <= keep_last:
         return messages
 
     to_clear = result_indices[:-keep_last]
-    for i in to_clear:
-        content = messages[i].get("content", "")
+    for i, m in to_clear:
+        content = m.get("content", "")
         if isinstance(content, str) and not content.startswith("[cleared]"):
             messages[i] = {
                 **messages[i],

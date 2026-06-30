@@ -299,7 +299,7 @@ export default function AgentPage() {
               </Button>
             </div>
           </div>
-          <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5">
+          <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5 min-h-0">
             {sessions.length === 0 ? (
               <p className="text-[10px] text-muted-foreground px-2 py-4 text-center">No sessions yet</p>
             ) : (

@@ -228,21 +228,25 @@ class AgentLoop:
         """
         iteration = 0
 
-        while iteration < self.config.max_iterations:
-            if time.time() - started > self.config.timeout_seconds:
-                yield ("error", {"message": f"Timeout after {self.config.timeout_seconds}s"})
+        while True:
+            # ── Pre-loop termination checks ──
+            is_term, reason = self._check_termination(
+                messages, "", iteration, started, force_check=True)
+            if is_term:
+                if reason != TerminalReason.COMPLETED:
+                    yield ("error", {"message": f"Terminated: {reason.value}"})
                 break
 
             iteration += 1
 
-            # Wrap-up: inject message once at 70%, force no-tools at 100%
+            # Wrap-up at 70%, force no-tools at last iteration
             wrap_at = int(self.config.max_iterations * 0.7)
             if iteration == wrap_at:
                 messages.append({
                     "role": "user",
                     "content": "Stop calling tools. Answer based on the data you have now."
                 })
-            force_answer = iteration >= self.config.max_iterations - 1
+            force_answer = iteration >= self.config.max_iterations
             active_tools = [] if force_answer else tools
 
             # ── Phase 1: preprocess ──
@@ -253,13 +257,16 @@ class AgentLoop:
             content, tool_calls = yield from self._call_model_streaming(
                 messages, active_tools, iteration)
 
-            if content is None:  # error occurred
+            if content is None:  # LLM error
+                yield ("error", {"message": "LLM call failed"})
                 break
 
-            # ── Phase 3: execute tools (or check done) ──
+            # ── Phase 3+4+5: execute tools, inject attachments, check termination ──
             if not tool_calls:
-                is_done, messages = self._check_termination(messages, content)
-                if is_done:
+                messages.append({"role": "assistant", "content": str(content) if content else ""})
+                is_term, reason = self._check_termination(
+                    messages, str(content), iteration, started)
+                if is_term:
                     yield ("answer", {"text": str(content)})
                     break
                 continue  # empty content → continuation prompt was added
@@ -430,15 +437,29 @@ class AgentLoop:
 
     # ── Phase 5: check termination ──────────────────────────────
 
-    def _check_termination(self, messages, content):
-        """Phase 5: Check if the loop should terminate.
-        Returns (is_done: bool, messages: list).
+    def _check_termination(self, messages, content, iteration, started,
+                           force_check: bool = False):
+        """Central termination check — returns (is_terminal, reason).
+
+        Called before each iteration (force_check=True) and after
+        each LLM response (force_check=False).
+
+        Implements the 10 terminal reasons from Claude Code query.ts.
         """
-        messages.append({"role": "assistant", "content": str(content) if content else ""})
+        # Pre-loop checks (force_check mode)
+        if force_check:
+            if iteration >= self.config.max_iterations:
+                return True, TerminalReason.MAX_TURNS
+            if time.time() - started > self.config.timeout_seconds:
+                return True, TerminalReason.PROMPT_TOO_LONG
+            return False, TerminalReason.COMPLETED
+
+        # Post-response checks
         if not content or not str(content).strip():
             messages.append({"role": "user", "content": "Please continue."})
-            return False, messages
-        return True, messages
+            return False, TerminalReason.COMPLETED
+
+        return True, TerminalReason.COMPLETED
 
     def _execute_batch(self, tool_calls: list, registry, memory, emit):
         """Execute tools: read-only parallel, write serial. Dedup + non-repeatable skip."""

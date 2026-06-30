@@ -138,7 +138,7 @@ async def agent_chat(req: AgentChatRequest):
 
 
 @router.get("/agent/sessions")
-async def list_sessions(limit: int = Query(20, ge=1, le=100)):
+async def list_sessions(limit: int = Query(200, ge=1, le=1000)):
     """List recent agent sessions."""
     items = []
     for d in sorted(RUNS_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)[:limit]:
