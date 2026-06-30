@@ -1,7 +1,7 @@
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
-from agents.utils.output_prase import TradingDecision
+from quick_ask.agents.utils.output_prase import TradingDecision
 
 output_parser = PydanticOutputParser(pydantic_object=TradingDecision)
 

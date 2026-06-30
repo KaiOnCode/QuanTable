@@ -64,7 +64,7 @@ async def agent_chat(req: AgentChatRequest):
 
         def _worker():
             try:
-                from agentgraph.react_loop import AgentLoop, AgentConfig
+                from agent.loop import AgentLoop, AgentConfig
                 loop = AgentLoop(AgentConfig(include_shell_tools=req.include_shell))
                 result = loop.run(
                     user_message=req.message,

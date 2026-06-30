@@ -1,6 +1,6 @@
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
-from agents.utils.agent_tools import get_fundamentals
+from quick_ask.agents.utils.agent_tools import get_fundamentals
 
 
 def fundamentals_analyst_agent(llm):

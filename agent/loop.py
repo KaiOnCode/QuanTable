@@ -15,6 +15,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from queue import Queue
 from typing import Any, Callable
@@ -24,7 +25,7 @@ from dotenv import load_dotenv
 load_dotenv("properties.env")
 
 from .progress import HeartbeatTimer, ProgressEvent
-from .context_compression import (
+from .compression import (
     estimate_tokens, micro_compact, collapse_large_texts,
     llm_compress, TOKEN_THRESHOLD, TOKEN_WARN,
 )
@@ -33,6 +34,63 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_ITERATIONS = 25
 DEFAULT_TIMEOUT = 600  # 10 minutes
+
+
+class TerminalReason(Enum):
+    """Why the agent loop terminated.
+
+    Inspired by Claude Code query.ts — 10 terminal conditions
+    checked at multiple points in the loop. Each reason maps to
+    a specific exit path with different recovery behavior.
+    """
+    # Normal exits
+    COMPLETED = "completed"
+    # → Model responded without tool_use, stop hooks passed, token budget OK
+
+    # Limit exits
+    MAX_TURNS = "max_turns"
+    # → turnCount exceeded maxTurns limit
+
+    MAX_BUDGET_USD = "max_budget_usd"
+    # → Cumulative API cost exceeded dollar budget
+
+    # User interrupt exits
+    ABORTED_STREAMING = "aborted_streaming"
+    # → User interrupted during model streaming (Ctrl+C / Stop button)
+
+    ABORTED_TOOLS = "aborted_tools"
+    # → User interrupted during tool execution
+
+    # Recovery-failure exits
+    PROMPT_TOO_LONG = "prompt_too_long"
+    # → 413 error and all recovery paths (collapse drain, reactive compact) failed
+
+    # Hook-prevented exits
+    STOP_HOOK_PREVENTED = "stop_hook_prevented"
+    # → A stop hook returned preventContinuation: true
+
+    HOOK_STOPPED = "hook_stopped"
+    # → A hook during tool execution returned shouldPreventContinuation
+
+    # Error exits
+    MODEL_ERROR = "model_error"
+    # → Unrecoverable API error (rate limit, auth failure)
+
+    BLOCKING_LIMIT = "blocking_limit"
+    # → Token count exceeded hard blocking limit (non-auto-compact mode)
+
+    @property
+    def is_user_initiated(self) -> bool:
+        """Did the user cause this termination?"""
+        return self in (TerminalReason.ABORTED_STREAMING, TerminalReason.ABORTED_TOOLS)
+
+    @property
+    def is_recoverable(self) -> bool:
+        """Can this termination be recovered from (e.g., via resume)?"""
+        return self not in (
+            TerminalReason.MODEL_ERROR,
+            TerminalReason.BLOCKING_LIMIT,
+        )
 
 
 @dataclass

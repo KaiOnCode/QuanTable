@@ -1,3 +1,4 @@
+# [LEGACY] Track 1 — Do NOT add features. See: docs/codebase-tracks.md
 from typing import Literal
 
 from pydantic import BaseModel, Field

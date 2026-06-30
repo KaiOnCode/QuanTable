@@ -106,7 +106,7 @@ async def analyze(request: AnalyzeRequest):
 
         def _stream_worker():
             try:
-                from agentgraph.orchestrator import IntelliFin_Assistant
+                from quick_ask.orchestrator import IntelliFin_Assistant
 
                 analysis_date = request.date or time.strftime("%Y-%m-%dT00:00:00Z")
 

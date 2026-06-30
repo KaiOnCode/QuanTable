@@ -2,7 +2,7 @@
 
 > 基于 `docs/research/06-claude-code-architecture-python-guide.md` 的架构分析
 > 参考源码: `/tmp/claude-code/src/` (3560 文件)
-> 最后更新: 2026-06-29
+> 最后更新: 2026-06-30 (重构: agent/ + quick_ask/ 分离)
 > 总条目: 55 条
 
 ---
@@ -19,23 +19,23 @@
 ## Phase 1: Agent Loop 核心重构 (P0, 12 条)
 
 ### 1.1 — 不可变 State 对象
-- **文件**: `agentgraph/state.py` (修改)
+- **文件**: `agent/state.py` (修改)
 - **参考**: Claude Code `query.ts` State + transition 字段, `docs/research/06-...` 第一节 1.2
 - **内容**:
   - 新建 `AgentLoopState` dataclass (frozen=True)
   - 字段: `messages: tuple`, `iteration: int`, `transition: str | None`, `cost_usd: float`, `started_at: float`
   - 添加 `next_iteration(**kwargs)` 方法 (使用 `dataclasses.replace`)
   - 添加 `TransitionType` 枚举: `TOOL_CALLS, TEXT_RESPONSE, COMPACT_TRIGGERED, ERROR_RECOVERY`
-- **测试**: `PYTHONPATH=. uv run python3 -c "from agentgraph.state import AgentLoopState, TransitionType; s = AgentLoopState(messages=()); s2 = s.next_iteration(transition=TransitionType.TOOL_CALLS); assert s2.iteration == 1; print('OK')"`
+- **测试**: `PYTHONPATH=. uv run python3 -c "from agent.state import AgentLoopState, TransitionType; s = AgentLoopState(messages=()); s2 = s.next_iteration(transition=TransitionType.TOOL_CALLS); assert s2.iteration == 1; print('OK')"`
 
 ### 1.2 — TerminalReason 枚举
-- **文件**: `agentgraph/react_loop.py` (修改)
+- **文件**: `agent/loop.py` (修改)
 - **参考**: Claude Code `query.ts` 10 种 terminal reasons
 - **内容**: 添加 `TerminalReason` 枚举, 包含: `COMPLETED, MAX_TURNS, MAX_BUDGET_USD, ABORTED_STREAMING, ABORTED_TOOLS, PROMPT_TOO_LONG, STOP_HOOK_PREVENTED, MODEL_ERROR, BLOCKING_LIMIT`
-- **测试**: `PYTHONPATH=. uv run python3 -c "from agentgraph.react_loop import TerminalReason; assert TerminalReason.COMPLETED.value == 'completed'; print('OK')"`
+- **测试**: `PYTHONPATH=. uv run python3 -c "from agent.loop import TerminalReason; assert TerminalReason.COMPLETED.value == 'completed'; print('OK')"`
 
 ### 1.3 — 重构 query_loop 为 async generator
-- **文件**: `agentgraph/react_loop.py` (修改 `AgentLoop.run()`)
+- **文件**: `agent/loop.py` (修改 `AgentLoop.run()`)
 - **参考**: Claude Code `queryLoop()` async generator pattern
 - **内容**:
   - 将当前 `run()` 中的 while loop 拆分为独立的 `_query_loop()` async generator
@@ -44,7 +44,7 @@
 - **测试**: 启动后端, `curl -N POST /api/agent/chat -d '{"message":"hello"}'`, 验证 SSE events 仍正常
 
 ### 1.4 — 5-phase 迭代结构
-- **文件**: `agentgraph/react_loop.py` (修改 `_query_loop()`)
+- **文件**: `agent/loop.py` (修改 `_query_loop()`)
 - **参考**: Claude Code queryLoop 5 phases: pre-processing → streaming API → tool execution → attachment injection → termination check
 - **内容**:
   - Phase 1: 调用 `_preprocess_messages()` (预留压缩 pipeline 入口)
@@ -55,16 +55,16 @@
 - **测试**: 发送 "分析 AAPL 价格" 请求, 验证完整 5-phase 流程
 
 ### 1.5 — Pre-processing pipeline 入口
-- **文件**: `agentgraph/react_loop.py` (新增 `_preprocess_messages()`)
+- **文件**: `agent/loop.py` (新增 `_preprocess_messages()`)
 - **参考**: Claude Code 5-layer 压缩 pipeline 入口
 - **内容**:
   - 统一调用: `apply_tool_result_budget()` → `micro_compact()` → `check_autocompact()`
   - 每个函数接收 messages 返回 messages (纯函数风格)
   - 第一阶段: tool_result_budget 和 micro_compact 已有, 只需串联
-- **测试**: `PYTHONPATH=. uv run python3 -c "from agentgraph.react_loop import AgentLoop; loop = AgentLoop(AgentConfig()); msgs = [{'role':'tool','content':'x'*200000}]; result = loop._preprocess_messages(msgs); print(len(str(result)))"`
+- **测试**: `PYTHONPATH=. uv run python3 -c "from agent.loop import AgentLoop; loop = AgentLoop(AgentConfig()); msgs = [{'role':'tool','content':'x'*200000}]; result = loop._preprocess_messages(msgs); print(len(str(result)))"`
 
 ### 1.6 — 增强 tool_result_budget 截断
-- **文件**: `agentgraph/context_compression.py` (修改)
+- **文件**: `agent/compression.py` (修改)
 - **参考**: Claude Code `applyToolResultBudget`, maxResultSizeChars (~100K)
 - **内容**:
   - 添加 `TOOL_RESULT_MAX_CHARS = 100_000` 常量
@@ -74,7 +74,7 @@
 - **测试**: 创建 200K chars 的 tool result, 验证截断到 100K 且保留头尾
 
 ### 1.7 — 增强 micro_compact 白名单
-- **文件**: `agentgraph/context_compression.py` (修改)
+- **文件**: `agent/compression.py` (修改)
 - **参考**: Claude Code `microcompact`, `MICROCOMPACT_WHITELIST`
 - **内容**:
   - 添加 `MICROCOMPACT_WHITELIST = {"read_file", "glob", "web_search", "web_fetch", "get_price", "get_indicators", "get_news", "get_fundamentals", "search_news", "search_symbol", "get_sentiment"}`
@@ -83,7 +83,7 @@
 - **测试**: 构造 10 条 tool messages (mix of whitelist/non-whitelist), 验证只清理白名单的
 
 ### 1.8 — 终止条件重构
-- **文件**: `agentgraph/react_loop.py` (新增 `_check_termination()`)
+- **文件**: `agent/loop.py` (新增 `_check_termination()`)
 - **参考**: Claude Code 10 种 terminal reasons
 - **内容**:
   - 抽取现有终止检查逻辑为独立方法
@@ -93,7 +93,7 @@
 - **测试**: 验证各终止条件正常触发
 
 ### 1.9 — transition 追踪
-- **文件**: `agentgraph/react_loop.py` (修改)
+- **文件**: `agent/loop.py` (修改)
 - **参考**: Claude Code State.transition field
 - **内容**:
   - 每次迭代结束时设置 state.transition (TOOL_CALLS / TEXT_RESPONSE / ...)
@@ -102,7 +102,7 @@
 - **测试**: 运行一个会 loop 的请求, 验证 3 次相同 transition 后终止
 
 ### 1.10 — 错误恢复 withholding 模式
-- **文件**: `agentgraph/react_loop.py` (修改)
+- **文件**: `agent/loop.py` (修改)
 - **参考**: Claude Code error withholding pattern
 - **内容**:
   - 可恢复错误 (413, max_output_tokens) 不立即抛给用户
@@ -111,7 +111,7 @@
 - **测试**: 模拟 413 错误, 验证自动触发 compact 而不是直接报错
 
 ### 1.11 — Immutable messages 风格
-- **文件**: `agentgraph/react_loop.py` (修改)
+- **文件**: `agent/loop.py` (修改)
 - **参考**: Claude Code 不可变 state 更新
 - **内容**:
   - 每次对 messages 的修改都返回新 list (不原地修改)
@@ -120,7 +120,7 @@
 - **测试**: 验证原始 messages 不被修改
 
 ### 1.12 — Transcript 先写后调
-- **文件**: `agentgraph/react_loop.py` + `server/routes/agent.py` (修改)
+- **文件**: `agent/loop.py` + `server/routes/agent.py` (修改)
 - **参考**: Claude Code "transcript before API call" pattern
 - **内容**:
   - 在调用 LLM 之前, 先把 user message 写入 session.json
@@ -133,7 +133,7 @@
 ## Phase 2: 工具系统升级 (P0, 10 条)
 
 ### 2.1 — build_tool 工厂函数
-- **文件**: `agentgraph/tools/base.py` (修改)
+- **文件**: `agent/tools/base.py` (修改)
 - **参考**: Claude Code `buildTool(name, description, execute, schema, options)`
 - **内容**:
   - 添加 `build_tool(name, description, execute_fn, input_schema, *, is_readonly=True, is_destructive=False, timeout=30, repeatable=True)` 工厂函数
@@ -142,7 +142,7 @@
 - **测试**: 用 build_tool 创建一个简单工具, 验证 schema 正确生成
 
 ### 2.2 — 工具分类系统
-- **文件**: `agentgraph/tools/registry.py` (修改)
+- **文件**: `agent/tools/registry.py` (修改)
 - **参考**: Claude Code 13 类工具分类
 - **内容**:
   - 定义 `ToolCategory` 枚举: `FILE_SYSTEM, SEARCH, SHELL, WEB, FINANCIAL, ANALYSIS, WORKSPACE, MEMORY, SKILL, MCP, INTERACTION, SCHEDULING, WORKFLOW`
@@ -152,7 +152,7 @@
 - **测试**: 验证所有现有工具都有分类
 
 ### 2.3 — StreamingToolExecutor
-- **文件**: `agentgraph/tools/streaming_executor.py` (新建)
+- **文件**: `agent/tools/streaming_executor.py` (新建)
 - **参考**: Claude Code `StreamingToolExecutor` — LLM streaming 期间并行执行
 - **内容**:
   - `StreamingToolExecutor` 类
@@ -164,7 +164,7 @@
 - **测试**: 创建 5 个 sleep tool, 验证并发执行; 创建 2 个 write tool, 验证串行
 
 ### 2.4 — 读写工具分离执行
-- **文件**: `agentgraph/react_loop.py` (修改 `_execute_batch()`)
+- **文件**: `agent/loop.py` (修改 `_execute_batch()`)
 - **参考**: Claude Code 并行读/串行写
 - **内容**:
   - 在 `_execute_batch()` 中: 分离 read_only vs write 工具
@@ -173,7 +173,7 @@
 - **测试**: 混合 3 个只读 + 2 个写工具, 验证执行顺序
 
 ### 2.5 — 权限决策框架
-- **文件**: `agentgraph/tools/permissions.py` (新建)
+- **文件**: `agent/tools/permissions.py` (新建)
 - **参考**: Claude Code 16-step permission pipeline
 - **内容**:
   - `PermissionDecision` 枚举: `ALLOW, ASK, DENY`
@@ -184,7 +184,7 @@
 - **测试**: 验证 plan mode 下拒绝写工具
 
 ### 2.6 — 工具去重 + non-repeatable 增强
-- **文件**: `agentgraph/react_loop.py` (修改)
+- **文件**: `agent/loop.py` (修改)
 - **参考**: Claude Code tool call dedup + cooldown
 - **内容**:
   - 增强现有去重: 添加基于 (tool_name, sha256(params_json)) 的去重 key
@@ -193,7 +193,7 @@
 - **测试**: 发送 3 个完全相同的 get_price 请求, 验证只执行 1 次
 
 ### 2.7 — 工具结果截断与 preview
-- **文件**: `agentgraph/tools/base.py` 或 `agentgraph/react_loop.py` (修改)
+- **文件**: `agent/tools/base.py` 或 `agent/loop.py` (修改)
 - **参考**: Claude Code tool result preview + content replacement
 - **内容**:
   - 每个 tool result 存储: `{"status": "ok", "data": {...}, "preview": "...", "full_size": N, "truncated": bool}`
@@ -202,7 +202,7 @@
 - **测试**: 返回 50K chars 结果的工具, 验证 preview 截断
 
 ### 2.8 — Bash/Shell 工具安全增强
-- **文件**: `agentgraph/tools/workspace_tools.py` (修改 BashTool)
+- **文件**: `agent/tools/workspace.py` (修改 BashTool)
 - **参考**: Claude Code Bash tool — AST parsing, 20+ injection patterns
 - **内容**:
   - 添加命令注入检测: `$(...)`, `` `cmd` ``, `| sh`, `curl|bash`, `rm -rf /`
@@ -212,7 +212,7 @@
 - **测试**: 分别测试安全命令和危险命令, 验证拒绝危险命令
 
 ### 2.9 — 工具调用统计
-- **文件**: `agentgraph/react_loop.py` (修改)
+- **文件**: `agent/loop.py` (修改)
 - **参考**: Claude Code tool usage tracking
 - **内容**:
   - 在 WorkspaceMemory 中记录: `tool_call_counts: dict[str, int]`
@@ -222,7 +222,7 @@
 - **测试**: 运行多工具请求, 验证统计正确
 
 ### 2.10 — PostToolUse hook 预留
-- **文件**: `agentgraph/tools/hooks.py` (新建)
+- **文件**: `agent/tools/hooks.py` (新建)
 - **参考**: Claude Code PostToolUse/PostToolUseFailure hooks
 - **内容**:
   - `HookEvent` 枚举: `PRE_TOOL_USE, POST_TOOL_USE, POST_TOOL_USE_FAILURE, PRE_COMPACT, STOP, SESSION_START...`
@@ -236,7 +236,7 @@
 ## Phase 3: 上下文压缩增强 (P0, 6 条)
 
 ### 3.1 — 压缩 pipeline 串联
-- **文件**: `agentgraph/context_compression.py` (修改)
+- **文件**: `agent/compression.py` (修改)
 - **参考**: Claude Code 5-layer 压缩串行 pipeline
 - **内容**:
   - 添加 `compress_pipeline(messages, config)` 统一入口
@@ -246,7 +246,7 @@
 - **测试**: 构造 50K token messages, 验证 pipeline 各层触发
 
 ### 3.2 — Predictive autocompact
-- **文件**: `agentgraph/context_compression.py` (修改)
+- **文件**: `agent/compression.py` (修改)
 - **参考**: Claude Code predictive autocompact — 预估本轮增长, 提前压缩
 - **内容**:
   - 在 LLM 调用前: `predicted_tokens = current_tokens + expected_growth`
@@ -255,7 +255,7 @@
 - **测试**: 模拟快速增长的对话, 验证提前触发 compact
 
 ### 3.3 — Compact boundary 机制
-- **文件**: `agentgraph/context_compression.py` (修改)
+- **文件**: `agent/compression.py` (修改)
 - **参考**: Claude Code `SystemCompactBoundaryMessage`
 - **内容**:
   - 每次 compact 后插入 `{"role": "system", "content": "[Compacted at ...]"}`
@@ -264,7 +264,7 @@
 - **测试**: compact 后验证 boundary message 存在
 
 ### 3.4 — Transcript 备份
-- **文件**: `agentgraph/react_loop.py` (修改)
+- **文件**: `agent/loop.py` (修改)
 - **参考**: Claude Code full transcript save before compaction
 - **内容**:
   - L3 compact 前自动保存完整 messages 到 `run_dir/transcripts/`
@@ -273,7 +273,7 @@
 - **测试**: 触发 compact, 验证 transcript 文件存在
 
 ### 3.5 — Tool pair integrity fix
-- **文件**: `agentgraph/context_compression.py` (修改 `_fix_tool_pairs`)
+- **文件**: `agent/compression.py` (修改 `_fix_tool_pairs`)
 - **参考**: Claude Code fix tool_call/tool_result pairing after compact
 - **内容**:
   - 增强现有 `_fix_tool_pairs()`: 确保每个 tool_result 有对应 tool_call
@@ -282,7 +282,7 @@
 - **测试**: 构造 orphaned messages, 验证清理正确
 
 ### 3.6 — 压缩事件通知前端
-- **文件**: `agentgraph/react_loop.py` (修改)
+- **文件**: `agent/loop.py` (修改)
 - **参考**: Claude Code compact boundary + UI notification
 - **内容**:
   - 添加 SSE event `compact_boundary` 通知前端
@@ -314,7 +314,7 @@
 - **测试**: 创建 5 条记忆, 验证 MEMORY.md 正确生成
 
 ### 4.3 — 记忆自动召回注入
-- **文件**: `agentgraph/react_loop.py` (修改 `_build_default_system_prompt()`)
+- **文件**: `agent/loop.py` (修改 `_build_default_system_prompt()`)
 - **参考**: Claude Code Sonnet side query for relevant memories (≤5)
 - **内容**:
   - 从用户消息提取关键词
@@ -334,7 +334,7 @@
 - **测试**: 创建同名记忆两次, 验证第二次是更新而非重复
 
 ### 4.5 — Context 级记忆文件 (CLAUDE.md 模式)
-- **文件**: `agentgraph/context_builder.py` (新建)
+- **文件**: `agent/context_builder.py` (新建)
 - **参考**: Claude Code CLAUDE.md loading (6 级优先级)
 - **内容**:
   - 加载顺序: managed > user > project > local
@@ -344,7 +344,7 @@
 - **测试**: 项目根已有 CLAUDE.md, 验证被加载
 
 ### 4.6 — 记忆文件 MCP 工具 (remember/recall/forget)
-- **文件**: `agentgraph/tools/memory_tools.py` (新建)
+- **文件**: `agent/tools/memory_tools.py` (新建)
 - **参考**: Claude Code memory management via tools
 - **内容**:
   - `RememberTool`: 创建/更新记忆 (name, content, type)
@@ -354,7 +354,7 @@
 - **测试**: Agent 对话中说 "记住: AAPL 的 PE 通常在 25-30 之间", 验证记忆被创建
 
 ### 4.7 — Session Memory (自动对话笔记)
-- **文件**: `agentgraph/session_memory.py` (新建)
+- **文件**: `agent/session_memory.py` (新建)
 - **参考**: Claude Code SessionMemory — forked subagent writes notes
 - **内容**:
   - 每轮对话后, 用 LLM 生成简要笔记 (forked subagent)
@@ -363,7 +363,7 @@
 - **测试**: 完成一轮对话, 验证 session_notes.md 有内容
 
 ### 4.8 — 记忆漂移防御
-- **文件**: `agentgraph/react_loop.py` (修改)
+- **文件**: `agent/loop.py` (修改)
 - **参考**: Claude Code `TRUSTING_RECALL_SECTION` — 告诉 AI 验证记忆
 - **内容**:
   - 在注入记忆时附带提示: "Memory claims may be outdated — verify against current data before recommending"
@@ -384,7 +384,7 @@
 - **测试**: 创建 test skill with `triggers: ["测试"]`, 发送 "测试一下", 验证 skill 被自动注入
 
 ### 5.2 — Skill 执行模式分离 (inline vs fork)
-- **文件**: `agentgraph/react_loop.py` (修改)
+- **文件**: `agent/loop.py` (修改)
 - **参考**: Claude Code `context: inline | fork`
 - **内容**:
   - `context: inline` (默认): skill prompt 注入主会话 UserMessage
@@ -393,7 +393,7 @@
 - **测试**: 创建 fork mode skill, 验证子 agent 独立运行
 
 ### 5.3 — Skill 工具白名单
-- **文件**: `skills/loader.py` + `agentgraph/react_loop.py` (修改)
+- **文件**: `skills/loader.py` + `agent/loop.py` (修改)
 - **参考**: Claude Code `allowed-tools` in SKILL.md
 - **内容**:
   - SKILL.md frontmatter 已有 `tools:` 字段
@@ -421,7 +421,7 @@
 - **测试**: load_skill with arguments, 验证占位符被替换
 
 ### 5.6 — 技能推荐 (end-of-response)
-- **文件**: `agentgraph/react_loop.py` (修改 system prompt)
+- **文件**: `agent/loop.py` (修改 system prompt)
 - **参考**: Claude Code skill suggestion hints
 - **内容**:
   - System prompt 添加: "分析完成后建议 1-3 个相关技能供用户探索"
@@ -434,7 +434,7 @@
 ## Phase 6: System Prompt 优化 (P1, 5 条)
 
 ### 6.1 — 分块 System Prompt (string[] 风格)
-- **文件**: `agentgraph/react_loop.py` (修改 `_build_default_system_prompt()`)
+- **文件**: `agent/loop.py` (修改 `_build_default_system_prompt()`)
 - **参考**: Claude Code SystemPrompt as string[] for per-chunk caching
 - **内容**:
   - 将 system prompt 拆分为逻辑块: intro + tools + skills + guidelines + memory
@@ -444,7 +444,7 @@
 - **测试**: 验证生成的 system prompt 分块正确
 
 ### 6.2 — 静态/动态 content 分离
-- **文件**: `agentgraph/react_loop.py` (修改)
+- **文件**: `agent/loop.py` (修改)
 - **参考**: Claude Code `SYSTEM_PROMPT_DYNAMIC_BOUNDARY`
 - **内容**:
   - 静态块 (不变): intro, guidelines, how-to-work
@@ -454,7 +454,7 @@
 - **测试**: 验证动态块随不同轮次变化, 静态块不变
 
 ### 6.3 — Context Injection 位置优化
-- **文件**: `agentgraph/react_loop.py` (修改)
+- **文件**: `agent/loop.py` (修改)
 - **参考**: Claude Code system context → system prompt tail, user context → first user message
 - **内容**:
   - System context (git status, 环境信息) → system prompt 尾部
@@ -463,7 +463,7 @@
 - **测试**: 验证 CLAUDE.md 内容出现在 user message 而非 system prompt
 
 ### 6.4 — Token budget 意识注入
-- **文件**: `agentgraph/react_loop.py` (修改 system prompt)
+- **文件**: `agent/loop.py` (修改 system prompt)
 - **参考**: Claude Code token budget awareness
 - **内容**:
   - 在 system prompt 中提示当前 context window 大小
@@ -472,7 +472,7 @@
 - **测试**: 验证 tools list 按 category 和 frequency 排序
 
 ### 6.5 — Needle-in-haystack 保护
-- **文件**: `agentgraph/react_loop.py` (修改)
+- **文件**: `agent/loop.py` (修改)
 - **参考**: Claude Code tail protection after compact
 - **内容**:
   - 每次 LLM 调用前, 确保关键数据 (ticker, date, position) 在最后 2 条消息中
@@ -485,7 +485,7 @@
 ## Phase 7: 会话管理增强 (P1, 4 条)
 
 ### 7.1 — JSONL transcript 格式
-- **文件**: `agentgraph/trace.py` (修改) + `server/routes/agent.py` (修改)
+- **文件**: `agent/trace.py` (修改) + `server/routes/agent.py` (修改)
 - **参考**: Claude Code JSONL one-json-per-line transcript
 - **内容**:
   - 每条消息/事件独立一行 JSON
@@ -514,7 +514,7 @@
 - **测试**: 发送 5 条不同消息, 验证 history.jsonl 记录完整
 
 ### 7.4 — Fork session 支持
-- **文件**: `agentgraph/react_loop.py` (新增 `run_forked_agent()`)
+- **文件**: `agent/loop.py` (新增 `run_forked_agent()`)
 - **参考**: Claude Code `runForkedAgent()` — 隔离子 agent, 共享 prompt cache
 - **内容**:
   - `run_forked_agent(instruction, max_turns=5, tools=None) -> str`

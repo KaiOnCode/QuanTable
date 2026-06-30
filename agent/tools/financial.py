@@ -249,7 +249,7 @@ class RunAnalysisTool(BaseTool):
     def execute(self, ticker: str = "", date: str = "") -> str:
         emit_progress("analyzing", message=f"Running full analysis on {ticker}...")
         import time as _time
-        from agentgraph.orchestrator import IntelliFin_Assistant
+        from quick_ask.orchestrator import IntelliFin_Assistant
         assistant = IntelliFin_Assistant()
         from datetime import datetime, timezone
         d = date or datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00Z")

@@ -12,13 +12,13 @@ os.environ["LANGCHAIN_API_KEY"] = os.getenv("LANGCHAIN_API_KEY","")
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import ToolNode
 from langgraph.graph import StateGraph,START,END
-from agents.utils.agent_tools import *
-from agentgraph.state import AgentState
-from agents.market_analyst import market_analyst_agent
-from agents.news_analyst import news_analyst_agent
-from agents.fundamentals_analyst import fundamentals_analyst_agent
-from agents.risk_analyst import risk_analyst_agent
-from agents.PM import PM_agent
+from quick_ask.agents.utils.agent_tools import *
+from quick_ask.state import AgentState
+from quick_ask.agents.market_analyst import market_analyst_agent
+from quick_ask.agents.news_analyst import news_analyst_agent
+from quick_ask.agents.fundamentals_analyst import fundamentals_analyst_agent
+from quick_ask.agents.risk_analyst import risk_analyst_agent
+from quick_ask.agents.PM import PM_agent
 from langgraph.checkpoint.memory import MemorySaver
 
 logger = logging.getLogger(__name__)
