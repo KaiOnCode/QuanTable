@@ -33,7 +33,7 @@ from .compression import (
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MAX_ITERATIONS = 5
+DEFAULT_MAX_ITERATIONS = 25
 DEFAULT_TIMEOUT = 600  # 10 minutes
 
 
@@ -225,8 +225,12 @@ class AgentLoop:
         iteration = 0
         previous_summary = ""
 
+        # Tracker for quality evaluation
+        from agent.tracker import TaskTracker
+        tracker = TaskTracker()
+
         # ── Run the ReAct loop ──
-        gen = self._query_loop(messages, tools, registry, memory, sid, run_dir, started, previous_summary)
+        gen = self._query_loop(messages, tools, registry, memory, perms, tracker, sid, run_dir, started, previous_summary)
         try:
             while True:
                 event_type, payload = next(gen)
@@ -234,7 +238,7 @@ class AgentLoop:
         except StopIteration as e:
             return e.value
 
-    def _query_loop(self, messages, tools, registry, memory, sid, run_dir, started, previous_summary):
+    def _query_loop(self, messages, tools, registry, memory, perms, tracker, sid, run_dir, started, previous_summary):
         """ReAct loop with 5-phase structure per iteration.
 
         Phases (inspired by Claude Code queryLoop):
@@ -247,61 +251,61 @@ class AgentLoop:
         iteration = 0
 
         while True:
-            # ── Pre-loop termination checks ──
-            is_term, reason = self._check_termination(
-                messages, "", iteration, started, force_check=True)
-            if is_term:
-                if reason != TerminalReason.COMPLETED:
-                    yield ("error", {"message": f"Terminated: {reason.value}"})
+            # ── Safety net: max_iterations (Claude Code: maxTurns) ──
+            if iteration >= self.config.max_iterations:
+                yield ("error", {"message": f"Max iterations ({self.config.max_iterations})"})
+                break
+
+            # ── Timeout check ──
+            if time.time() - started > self.config.timeout_seconds:
+                yield ("error", {"message": f"Timeout after {self.config.timeout_seconds}s"})
                 break
 
             iteration += 1
-
-            # Wrap-up at 70%, force no-tools at last iteration
-            wrap_at = int(self.config.max_iterations * 0.7)
-            if iteration == wrap_at:
-                messages.append({
-                    "role": "user",
-                    "content": "Stop calling tools. Answer based on the data you have now."
-                })
-            force_answer = iteration >= self.config.max_iterations
-            active_tools = [] if force_answer else tools
 
             # ── Phase 1: preprocess ──
             messages, previous_summary = self._preprocess_messages(
                 messages, previous_summary, run_dir)
 
-            # ── Phase 2: call model ──
+            # ── Phase 2: call model (always with tools — model decides) ──
             content, tool_calls = yield from self._call_model_streaming(
-                messages, active_tools, iteration)
+                messages, tools, iteration)
 
             if content is None:  # LLM error
                 yield ("error", {"message": "LLM call failed"})
                 break
 
-            # ── Phase 3+4+5: execute tools, inject attachments, check termination ──
+            # ── Model didn't call tools → needsFollowUp = false → check if done ──
             if not tool_calls:
                 messages.append({"role": "assistant", "content": str(content) if content else ""})
-                is_term, reason = self._check_termination(
-                    messages, str(content), iteration, started)
-                if is_term:
-                    yield ("answer", {"text": str(content)})
+                if self._check_termination(str(content)):
+                    validated = self._validate_output(str(content), messages)
+                    yield ("answer", {"text": validated})
                     break
-                continue  # empty content → continuation prompt was added
+                # Empty output → continue
+                self._continue_prompt(messages)
+                continue
 
-            # Cross-iteration dedup: reject calls already made
+            # ── needsFollowUp = true: model called tools, continue loop ──
+
+            # Cross-iteration dedup: reject calls already made.
+            # Key on tool name + ticker/query only (ignore days/limit params)
             deduped_calls = []
             for tc in tool_calls:
-                key = f"{tc['name']}:{json.dumps(tc.get('args',{}), sort_keys=True)}"
+                args = tc.get("args") or {}
+                # Dedup key: name + primary identifier (ticker or query)
+                primary = args.get("ticker") or args.get("query") or args.get("name") or args.get("url") or ""
+                key = f"{tc['name']}:{primary}"
                 if key in memory.called_keys:
-                    continue  # silently skip, already have this data
+                    continue
                 memory.called_keys.add(key)
                 deduped_calls.append(tc)
             tool_calls = deduped_calls
 
             if not tool_calls:
                 messages.append({"role": "assistant", "content": str(content) if content else ""})
-                yield ("answer", {"text": str(content)})
+                validated = self._validate_output(str(content), messages)
+                yield ("answer", {"text": validated})
                 break
 
             # Build assistant message with ALL tool_calls
@@ -316,7 +320,21 @@ class AgentLoop:
                 ],
             })
 
+            # ── Consecutive failure tracking (Claude Code circuit breaker) ──
+            # If any tool+ticker has failed 2+ times, inject stop instruction
+            failed = getattr(memory, 'consecutive_failures', {})
+            for tc in tool_calls:
+                key = f"{tc['name']}:{tc.get('args',{}).get('ticker','') or tc.get('args',{}).get('query','')}"
+                if failed.get(key, 0) >= 2:
+                    messages.append({
+                        "role": "user",
+                        "content": f"Tool {tc['name']} has failed {failed[key]} times already. "
+                                   "STOP retrying. Answer with what data you have, or say it's unavailable."
+                    })
+                    break  # inject only once
+
             # Permission check before execution
+            from agent.tools.permissions import PermissionDecision
             allowed_calls = []
             for tc in tool_calls:
                 tool = registry.get(tc["name"])
@@ -354,6 +372,17 @@ class AgentLoop:
                     pass
                 messages.append(tool_msg)
                 memory.increment(tc["name"])
+
+                # Track consecutive failures for circuit breaker
+                try:
+                    parsed = json.loads(result)
+                    if parsed.get("status") == "error":
+                        key = f"{tc['name']}:{tc.get('args',{}).get('ticker','') or tc.get('args',{}).get('query','')}"
+                        if not hasattr(memory, 'consecutive_failures'):
+                            memory.consecutive_failures = {}
+                        memory.consecutive_failures[key] = memory.consecutive_failures.get(key, 0) + 1
+                except Exception:
+                    pass
 
             # ── Phase 4: inject attachments (placeholder) ──
             messages = self._inject_attachments(messages)
@@ -527,29 +556,17 @@ class AgentLoop:
 
     # ── Phase 5: check termination ──────────────────────────────
 
-    def _check_termination(self, messages, content, iteration, started,
-                           force_check: bool = False):
-        """Central termination check — returns (is_terminal, reason).
+    def _check_termination(self, content: str) -> bool:
+        """Check if model's text response is a valid answer.
 
-        Called before each iteration (force_check=True) and after
-        each LLM response (force_check=False).
-
-        Implements the 10 terminal reasons from Claude Code query.ts.
+        Primary stop: needsFollowUp (model didn't call tools).
+        This is a post-hoc check on the TEXT output only.
         """
-        # Pre-loop checks (force_check mode)
-        if force_check:
-            if iteration >= self.config.max_iterations:
-                return True, TerminalReason.MAX_TURNS
-            if time.time() - started > self.config.timeout_seconds:
-                return True, TerminalReason.PROMPT_TOO_LONG
-            return False, TerminalReason.COMPLETED
+        return bool(content and str(content).strip())
 
-        # Post-response checks
-        if not content or not str(content).strip():
-            messages.append({"role": "user", "content": "Please continue."})
-            return False, TerminalReason.COMPLETED
-
-        return True, TerminalReason.COMPLETED
+    def _continue_prompt(self, messages):
+        """Inject continuation prompt when model produces empty output."""
+        messages.append({"role": "user", "content": "Please continue."})
 
     def _execute_batch(self, tool_calls: list, registry, memory, emit):
         """Execute tools: read-only parallel, write serial. Dedup + non-repeatable skip."""
@@ -668,6 +685,17 @@ class AgentLoop:
                 else:
                     final_results.append('{"status":"error","error":"No result"}')
         return final_results
+
+    def _validate_output(self, content: str, messages: list) -> str:
+        """Validate agent output against tool results. Appends warning if needed."""
+        try:
+            from agent.validator import validate_answer
+            warning = validate_answer(content, messages)
+            if warning:
+                return content + warning
+        except Exception:
+            pass
+        return content
 
     def _build_default_system_prompt(self, registry, user_message: str = "") -> str:
         """Build system prompt. Delegates to agent/prompts.py."""
