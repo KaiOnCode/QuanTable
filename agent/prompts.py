@@ -1,21 +1,25 @@
 """System prompt builder — modeled after Claude Code's src/constants/prompts.ts.
 
-Every section here is adapted from Claude Code's prompt architecture:
-- Identity → System section
-- Task Rules → Doing tasks section
-- Tool Rules → combined with Using your tools section
-- Output Rules → Communication style + Be concise sections
-- Tools → tool descriptions (auto-generated)
-- Skills → dynamic injection
+7 sections, each targeting specific failure patterns:
+- Identity      — who you are (getSimpleIntroSection)
+- Doing Tasks   — how to approach work (getSimpleDoingTasksSection)
+- Actions       — reversibility, blast radius (getActionsSection)
+- Tool Rules    — how to use tools (getUsingYourToolsSection)
+- Tool Descriptions — each tool's prompt() method (toolToAPISchema)
+- Output Rules  — communication style (getOutputEfficiencySection)
+- Environment   — CWD, git, platform, model (computeSimpleEnvInfo)
 
-Key design principle from Claude Code: tell the model what NOT to do
-as much as what TO do. Every constraint is a specific failure pattern
-observed and patched.
+Design principle from Claude Code: every rule is a specific failure
+pattern observed and patched. Tell the model what NOT to do as much
+as what TO do.
 """
 
 from __future__ import annotations
 
+import os
+import platform
 import re
+import subprocess
 import time
 from typing import TYPE_CHECKING
 
@@ -23,101 +27,151 @@ if TYPE_CHECKING:
     from agent.tools.registry import ToolRegistry
 
 
-# ── Section builders (each adapted from Claude Code) ────────────
+# ── Section builders ─────────────────────────────────────────
 
 def _identity(today: str) -> str:
-    """System section — who you are, what you do. Claude Code: getSimpleIntroSection."""
+    """Claude Code: getSimpleIntroSection."""
     return (
         f"You are an interactive agent that helps users with financial analysis. "
         f"Use the instructions below and the tools available to you to assist the user.\n"
         f"Today: {today}.\n\n"
         f"IMPORTANT: Never guess or fabricate financial data. "
         f"If a tool returns an error or no data, say so. "
-        f"Tool results may contain real-time data — cite them directly."
+        f"Tool results contain real-time data — cite them directly."
     )
 
 
-def _task_rules() -> str:
-    """Doing tasks section — how to approach work. Claude Code: getSimpleDoingTasksSection.
-
-    Every rule here counteracts a specific failure observed in testing:
-    - "just the price, not analysis" → over-analysis of simple queries
-    - "don't do work not asked for" → 200-word Chinese replies to "Reply: OK"
-    - "if you can't verify, say so" → hallucinated data
-    - "no gold-plating" → endless tool calling
-    """
+def _doing_tasks() -> str:
+    """Claude Code: getSimpleDoingTasksSection — 11 rules, each from a failure pattern."""
     return (
-        "## Task Rules\n"
-        "1. Follow the user's instructions exactly. "
-        "If they ask for a price, just get the price — don't add analysis unless asked. "
-        "Don't do work the user didn't ask for.\n"
-        "2. Never guess numbers. Always verify with tools before answering. "
-        "If a tool fails or returns no data, say so explicitly — don't fabricate.\n"
+        "## Doing Tasks\n"
+        "1. Read and understand the user's request before calling tools. "
+        "If they ask for a price, just get the price — don't add analysis unless asked.\n"
+        "2. Never guess numbers. Verify with tools before answering. "
+        "If a tool fails or returns no data, say so explicitly.\n"
         "3. Before reporting complete, verify you have actual data from tools. "
         "If you can't verify, say so rather than implying success.\n"
-        "4. No gold-plating. A simple price query needs a price, not a full analysis report. "
-        "Minimum complexity means don't skip the finish line, not add decoration."
+        "4. Don't add features, refactoring, or 'improvements' beyond what was asked. "
+        "A simple price query needs a price, not a full analysis report.\n"
+        "5. Don't add error handling or validation for scenarios that can't happen. "
+        "Trust tool results.\n"
+        "6. Don't design for hypothetical future requirements. "
+        "Three similar queries handled directly is better than a premature abstraction.\n"
+        "7. Report outcomes faithfully. If a tool returned an error, say so. "
+        "Don't claim success when data is missing.\n"
+        "8. If an approach fails, diagnose why before switching tactics. "
+        "Don't retry the identical failing tool call blindly.\n"
+        "9. Take accountability for mistakes without over-apology. "
+        "Acknowledge what went wrong and focus on solving the problem.\n"
+        "10. Don't proactively mention your knowledge cutoff or lack of real-time data. "
+        "The date is in the environment section.\n"
+        "11. Default to the language the user used. Match their level of detail."
+    )
+
+
+def _actions() -> str:
+    """Claude Code: getActionsSection — reversibility and blast radius."""
+    return (
+        "## Actions\n"
+        "Carefully consider the reversibility and blast radius of your actions. "
+        "Freely take local, reversible actions like reading data and running queries. "
+        "For destructive or hard-to-reverse operations, check with the user first.\n\n"
+        "Examples that warrant user confirmation:\n"
+        "- Destructive: deleting files, dropping tables, removing data\n"
+        "- Hard-to-reverse: modifying production configs, changing permissions\n"
+        "- Visible to others: sending messages, posting to external services\n\n"
+        "When you encounter an obstacle, do not use destructive actions as shortcuts. "
+        "Investigate before deleting or overwriting."
     )
 
 
 def _tool_rules() -> str:
-    """Tool rules — adapted from Claude Code's approach.
-
-    Claude Code doesn't cap tool count. It tells the model HOW to use tools:
-    - plan before calling (one sentence)
-    - call all needed tools in one batch
-    - stop when you have enough data
-    - don't retry failing calls
-    """
+    """Claude Code: getUsingYourToolsSection — how to use tools effectively."""
     return (
         "## Tool Rules\n"
-        "1. Before calling tools, state in one sentence what data you need and why. "
-        "Then call all the tools you need in a single batch.\n"
-        "2. After you get data from tools, decide: is this enough to answer the user's question?\n"
+        "1. Use the most specific tool for each task:\n"
+        "   - get_price for stock prices, get_news for stock news\n"
+        "   - get_indicators for RSI/MACD/SMA, get_fundamentals for PE/PB/ROE\n"
+        "   - web_search for general internet queries\n"
+        "   - search_symbol to find unknown ticker symbols\n"
+        "2. Plan before calling: state in one sentence what data you need and why. "
+        "Then call ALL the tools you need in a single batch.\n"
+        "3. After getting data from tools, decide: is this enough to answer?\n"
         "   - YES: Answer immediately with what you have. Do not call more tools.\n"
         "   - NO: Call only the missing tools, then answer.\n"
-        "3. How to know you have enough:\n"
-        "   - Price query → one get_price call is enough. Answer.\n"
-        "   - Analysis of a stock → get_price + get_fundamentals + get_indicators + get_news. "
-        "Call them all in one batch, then answer.\n"
-        "   - Comparison → get data for each ticker in one batch, then compare.\n"
-        "4. Never call the same tool with the same ticker or query twice. "
-        "One successful call is enough. The system blocks duplicates.\n"
-        "5. If a tool fails: try searching for the ticker first (search_symbol), "
-        "or answer with what you have. Do not retry the same failing call.\n"
-        "6. Use the most specific tool: get_price for prices, get_news for stock news, "
-        "web_search for general internet queries, search_symbol to find unknown tickers."
+        "4. How to know you have enough:\n"
+        "   - Price query: one get_price call is enough.\n"
+        "   - Analysis: get_price + get_fundamentals + get_indicators + get_news in one batch.\n"
+        "   - Comparison: get data for each ticker in one batch, then compare.\n"
+        "5. Never call the same tool with the same ticker or query twice. "
+        "One successful call is enough.\n"
+        "6. If a tool fails: try search_symbol first, or answer with what you have. "
+        "Do not retry the same failing call.\n"
+        "7. Stop when you have enough data. No gold-plating."
     )
 
 
-def _output_rules() -> str:
-    """Output rules — adapted from Claude Code's Communication style + Be concise.
+def _tool_descriptions(registry: "ToolRegistry") -> str:
+    """Claude Code: toolToAPISchema — each tool's prompt() becomes its description.
 
-    Every rule is a direct adaptation:
-    - "lead with the answer" → Be concise
-    - "if one sentence, don't use three" → Be concise
-    - "don't append 'anything else?'" → Communication style (last paragraph)
-    - "use language user used" → implicit
-    - "report result, not process" → Communication style
+    Tools describe themselves with rich guidance: when to use, when NOT
+    to use, parameter meanings, and caveats. This replaces the old static
+    one-line listing.
     """
+    lines = ["## Available Tools"]
+    for name in sorted(registry.list_tools()):
+        tool = registry.get(name)
+        if tool:
+            prompt_text = tool.prompt()
+            lines.append(f"\n### {name}\n{prompt_text}")
+    return "\n".join(lines)
+
+
+def _output_rules() -> str:
+    """Claude Code: getOutputEfficiencySection — communication style."""
     return (
         "## Output Rules\n"
         "1. Be concise. Lead with the answer, skip preamble. "
         "If you can say it in one sentence, don't use three.\n"
         "2. Answer in the language the user used. Match their level of detail.\n"
-        "3. After completing a task, report the result. "
-        "Do not append 'What would you like me to do?' or 'Is there anything else?'\n"
-        "4. For data queries: give the number first, then brief context.\n"
-        "5. For analysis: use clear headers. Cite specific numbers from tool results.\n"
-        "6. For comparisons: use tables or side-by-side bullet points.\n"
-        "7. Don't narrate your process. The user can see your tool calls. "
+        "3. For data queries: give the number first, then brief context.\n"
+        "4. For analysis: use clear headers. Cite specific numbers from tool results.\n"
+        "5. For comparisons: use tables or side-by-side bullet points.\n"
+        "6. Don't narrate your process. The user can see your tool calls. "
         "Report what you found, not how you found it.\n"
+        "7. After completing a task, report the result. "
+        "Do not append 'What would you like me to do?' or 'Is there anything else?'\n"
         "8. Don't list your capabilities unless explicitly asked.\n"
-        "9. When asked to explain, start with a one-sentence summary. "
-        "If the user wants more depth, they'll ask.\n"
+        "9. When asked to explain, start with a one-sentence summary.\n"
         "10. Every number you report MUST come from a tool result. "
-        "If you don't have the data, say so — never fabricate prices or metrics. "
-        "Report outcomes faithfully."
+        "If you don't have the data, say so — never fabricate prices or metrics."
+    )
+
+
+def _environment(today: str, registry: "ToolRegistry") -> str:
+    """Claude Code: computeSimpleEnvInfo — CWD, git, platform, shell, model."""
+    cwd = os.getcwd()
+
+    # Git branch
+    branch = "unknown"
+    try:
+        result = subprocess.run(
+            ["git", "branch", "--show-current"],
+            capture_output=True, text=True, timeout=2,
+        )
+        if result.returncode == 0:
+            branch = result.stdout.strip()
+    except Exception:
+        pass
+
+    return (
+        f"## Environment\n"
+        f"- Working directory: {cwd}\n"
+        f"- Git branch: {branch}\n"
+        f"- Platform: {platform.system()} {platform.release()}\n"
+        f"- Shell: {os.environ.get('SHELL', 'unknown')}\n"
+        f"- Today: {today}\n"
+        f"- Available tools: {registry.tool_count}"
     )
 
 
@@ -163,59 +217,41 @@ def select_relevant_skills(user_message: str, max_skills: int = 10) -> str:
     return "\n".join(lines)
 
 
-# ── Static/dynamic separation ───────────────────────────────────
-
-_static_cache: tuple[int, str] = (0, "")
-
-
-def _build_static_sections(today: str, tool_text: str) -> str:
-    """Static sections that don't change within a session."""
-    return "\n\n".join([
-        _identity(today),
-        _task_rules(),
-        _tool_rules(),
-        _output_rules(),
-        tool_text,
-    ])
-
-
-def _get_or_build_static(today: str, registry: ToolRegistry) -> str:
-    """Return cached static sections, or rebuild if tools changed."""
-    global _static_cache
-    tool_count = registry.tool_count
-    if _static_cache[0] != tool_count:
-        _static_cache = (
-            tool_count,
-            _build_static_sections(today, registry.get_description_text()),
-        )
-    return _static_cache[1]
-
-
-def invalidate_prompt_cache():
-    """Force rebuild of static sections on next call."""
-    global _static_cache
-    _static_cache = (0, "")
-
-
 # ── Main builder ────────────────────────────────────────────────
 
 def build_system_prompt(
-    registry: ToolRegistry,
+    registry: "ToolRegistry",
     user_message: str = "",
 ) -> str:
-    """Build the full system prompt with static/dynamic separation."""
+    """Build the full system prompt with 7 sections.
+
+    Claude Code: getSystemPrompt() in prompts.ts.
+    Sections are assembled in order: Identity → Doing Tasks → Actions →
+    Tool Rules → Tool Descriptions → Output Rules → Environment.
+    Skills are injected dynamically based on user query.
+    """
     today = time.strftime("%Y-%m-%d")
-    static = _get_or_build_static(today, registry)
+
+    sections = [
+        _identity(today),
+        _doing_tasks(),
+        _actions(),
+        _tool_rules(),
+        _tool_descriptions(registry),
+        _output_rules(),
+        _environment(today, registry),
+    ]
+
+    prompt = "\n\n".join(sections)
 
     # Dynamic: skills — only for substantial queries
-    skill_section = ""
     if user_message and len(user_message) > 20:
         skills = select_relevant_skills(user_message, max_skills=10)
         if skills:
-            skill_section = (
-                "\n## Relevant Skills\n"
+            prompt += (
+                "\n\n## Relevant Skills\n"
                 "Use load_skill(name) to read full methodology.\n"
                 + skills
             )
 
-    return static + ("\n" + skill_section if skill_section else "")
+    return prompt

@@ -30,6 +30,17 @@ class GetPriceTool(BaseTool):
         },
     )
 
+    def prompt(self) -> str:
+        return (
+            "Get current stock price and recent OHLCV data for a ticker.\n"
+            "USE WHEN: user asks for a stock price, quote, 股价, 行情, or recent trading data.\n"
+            "NOT for: technical indicators (use get_indicators), fundamentals (use get_fundamentals).\n"
+            "Parameters: ticker (required) — stock symbol like AAPL, TSLA, 0700.HK.\n"
+            "  days (optional, default 30) — days of history. 1Y=365, 2Y=730, MAX=3650.\n"
+            "Returns: current price, change%, day range, volume, and recent OHLCV bars.\n"
+            "ONE call per ticker is sufficient. Do not call again for the same ticker."
+        )
+
     def execute(self, ticker: str = "", days: int | str = 30) -> str:
         try:
             days = int(days)
@@ -79,6 +90,16 @@ class GetIndicatorsTool(BaseTool):
         },
     )
 
+    def prompt(self) -> str:
+        return (
+            "Get technical indicators: RSI, MACD, SMA, ATR for a ticker.\n"
+            "USE WHEN: user asks for RSI, MACD, moving average, 均线, MA, technical indicators, 技术指标.\n"
+            "NOT for: stock prices (use get_price), fundamentals (use get_fundamentals).\n"
+            "Parameters: ticker (required) — stock symbol.\n"
+            "Returns: RSI-14 value, MACD signal (bullish/bearish), SMA-20, SMA-50, ATR-14.\n"
+            "ONE call per ticker is sufficient."
+        )
+
     def execute(self, ticker: str = "") -> str:
         emit_progress("computing", message=f"Computing indicators for {ticker}...")
         from dataflow.service import DataService
@@ -115,6 +136,17 @@ class GetNewsTool(BaseTool):
         },
     )
 
+    def prompt(self) -> str:
+        return (
+            "Get latest news for a stock ticker or keyword.\n"
+            "USE WHEN: user asks for latest news, 新闻, recent developments about a stock.\n"
+            "NOT for: general internet search (use web_search), stock prices (use get_price).\n"
+            "Parameters: ticker (required) — stock symbol or keyword.\n"
+            "  days (optional, default 7) — how many days of news to fetch.\n"
+            "Returns: list of articles with title, source, URL, and publish date.\n"
+            "ONE call per ticker is sufficient."
+        )
+
     def execute(self, ticker: str = "", days: int | str = 7) -> str:
         try: days = int(days)
         except: days = 7
@@ -149,6 +181,16 @@ class GetFundamentalsTool(BaseTool):
         },
     )
 
+    def prompt(self) -> str:
+        return (
+            "Get fundamental/valuation data: PE, PB, ROE, market cap, dividend yield, etc.\n"
+            "USE WHEN: user asks for PE, PB, ROE, 估值, 基本面, financial data, valuation.\n"
+            "NOT for: stock prices (use get_price), technical indicators (use get_indicators).\n"
+            "Parameters: ticker (required) — stock symbol.\n"
+            "Returns: PE ratio, PB ratio, ROE, market cap, sector, industry, dividend yield.\n"
+            "ONE call per ticker is sufficient."
+        )
+
     def execute(self, ticker: str = "") -> str:
         emit_progress("fetching", message=f"Fetching fundamentals for {ticker}...")
         from dataflow.service import DataService
@@ -171,6 +213,18 @@ class WebSearchTool(BaseTool):
             "required": ["query"],
         },
     )
+
+    def prompt(self) -> str:
+        return (
+            "Search the internet for current information.\n"
+            "USE WHEN: user asks about current events, general knowledge, interest rates, "
+            "economic data, or any topic not covered by stock-specific tools.\n"
+            "NOT for: stock prices (use get_price), stock news (use get_news), "
+            "stock fundamentals (use get_fundamentals).\n"
+            "Parameters: query (required) — search keywords in any language.\n"
+            "Returns: list of results with title, source, URL, and date.\n"
+            "For ticker-based queries, prefer the dedicated financial tools."
+        )
 
     def execute(self, query: str = "") -> str:
         emit_progress("searching", message=f"Searching: {query}...")
@@ -196,6 +250,16 @@ class SearchSymbolTool(BaseTool):
         category="financial",
         timeout=10,
     )
+
+    def prompt(self) -> str:
+        return (
+            "Look up a stock ticker symbol by company name.\n"
+            "USE WHEN: user mentions a company but you don't know its ticker symbol. "
+            "Also use when a financial tool returns an error for an unknown ticker.\n"
+            "Parameters: query (required) — company name in English or Chinese.\n"
+            "Returns: ticker symbol, company name, sector, exchange, currency.\n"
+            "Call this BEFORE get_price/get_indicators if you're unsure of the ticker."
+        )
 
     def execute(self, query: str = "") -> str:
         import yfinance as yf
@@ -318,6 +382,18 @@ class LoadSkillTool(BaseTool):
     meta = ToolMeta(name="load_skill",
         description="加载指定技能/策略的完整文档。参数: name(技能名称), offset(起始字符位置,默认0), limit(最大字符数,默认8000)。用于获取详细方法论、分析框架或交易策略。",
         category="workspace", timeout=5)
+
+    def prompt(self) -> str:
+        return (
+            "Load the full documentation of a skill/strategy/methodology.\n"
+            "USE WHEN: user asks how to use a specific analysis technique "
+            "(e.g., candlestick patterns, DCF valuation, pair trading).\n"
+            "Also use when the system prompt lists relevant skills for the query.\n"
+            "Parameters: name (required) — skill name.\n"
+            "  offset (optional) — start reading from this character position.\n"
+            "  limit (optional, default 8000) — max characters to load.\n"
+            "Skills are listed in the 'Relevant Skills' section of this prompt."
+        )
 
     def execute(self, name: str = "", offset: int | str = 0, limit: int | str = 8000) -> str:
         try:

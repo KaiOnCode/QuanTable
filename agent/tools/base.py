@@ -72,6 +72,19 @@ class BaseTool(ABC):
         """Execute the tool. Must return a JSON string."""
         ...
 
+    def prompt(self) -> str:
+        """Generate the tool's description for the LLM system prompt.
+
+        Claude Code pattern: each tool has a prompt() method that returns
+        detailed usage guidance (when to use, when NOT to use, parameter
+        meanings, caveats). This replaces the static one-line description
+        with rich, tool-specific instructions.
+
+        Subclasses override to provide tool-specific guidance.
+        Default returns meta.description.
+        """
+        return self.meta.description
+
     def validate_params(self, params: dict) -> dict | None:
         """Validate parameters against input_schema. Returns error dict or None."""
         schema = self.meta.input_schema

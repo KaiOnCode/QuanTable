@@ -7,6 +7,38 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 
 
+class TerminalReason(Enum):
+    """Why the agent loop terminated.
+
+    Inspired by Claude Code query.ts Terminal type — 10 terminal conditions
+    checked at multiple points in the loop. Each reason maps to
+    a specific exit path with different recovery behavior.
+    """
+    # Normal exits
+    COMPLETED = "completed"
+    MAX_TURNS = "max_turns"
+    MAX_BUDGET_USD = "max_budget_usd"
+    # User interrupt exits
+    ABORTED_STREAMING = "aborted_streaming"
+    ABORTED_TOOLS = "aborted_tools"
+    # Recovery-failure exits
+    PROMPT_TOO_LONG = "prompt_too_long"
+    # Hook-prevented exits
+    STOP_HOOK_PREVENTED = "stop_hook_prevented"
+    HOOK_STOPPED = "hook_stopped"
+    # Error exits
+    MODEL_ERROR = "model_error"
+    BLOCKING_LIMIT = "blocking_limit"
+
+    @property
+    def is_user_initiated(self) -> bool:
+        return self in (TerminalReason.ABORTED_STREAMING, TerminalReason.ABORTED_TOOLS)
+
+    @property
+    def is_recoverable(self) -> bool:
+        return self not in (TerminalReason.MODEL_ERROR, TerminalReason.BLOCKING_LIMIT)
+
+
 class TransitionType(Enum):
     """Why the agent loop continued to the next iteration.
     Inspired by Claude Code query.ts transition field —

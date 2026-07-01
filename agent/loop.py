@@ -30,68 +30,16 @@ from .compression import (
     llm_compress, apply_tool_result_budget,
     TOKEN_THRESHOLD, TOKEN_WARN,
 )
+from .recovery import (
+    RecoveryState, classify_error, evaluate_termination, execute_recovery,
+)
+from .state import TerminalReason, TransitionType
+from .tools.executor import StreamingToolExecutor
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_ITERATIONS = 25
 DEFAULT_TIMEOUT = 600  # 10 minutes
-
-
-class TerminalReason(Enum):
-    """Why the agent loop terminated.
-
-    Inspired by Claude Code query.ts — 10 terminal conditions
-    checked at multiple points in the loop. Each reason maps to
-    a specific exit path with different recovery behavior.
-    """
-    # Normal exits
-    COMPLETED = "completed"
-    # → Model responded without tool_use, stop hooks passed, token budget OK
-
-    # Limit exits
-    MAX_TURNS = "max_turns"
-    # → turnCount exceeded maxTurns limit
-
-    MAX_BUDGET_USD = "max_budget_usd"
-    # → Cumulative API cost exceeded dollar budget
-
-    # User interrupt exits
-    ABORTED_STREAMING = "aborted_streaming"
-    # → User interrupted during model streaming (Ctrl+C / Stop button)
-
-    ABORTED_TOOLS = "aborted_tools"
-    # → User interrupted during tool execution
-
-    # Recovery-failure exits
-    PROMPT_TOO_LONG = "prompt_too_long"
-    # → 413 error and all recovery paths (collapse drain, reactive compact) failed
-
-    # Hook-prevented exits
-    STOP_HOOK_PREVENTED = "stop_hook_prevented"
-    # → A stop hook returned preventContinuation: true
-
-    HOOK_STOPPED = "hook_stopped"
-    # → A hook during tool execution returned shouldPreventContinuation
-
-    # Error exits
-    MODEL_ERROR = "model_error"
-    # → Unrecoverable API error (rate limit, auth failure)
-
-    BLOCKING_LIMIT = "blocking_limit"
-    # → Token count exceeded hard blocking limit (non-auto-compact mode)
-
-    @property
-    def is_user_initiated(self) -> bool:
-        """Did the user cause this termination?"""
-        return self in (TerminalReason.ABORTED_STREAMING, TerminalReason.ABORTED_TOOLS)
-
-    @property
-    def is_recoverable(self) -> bool:
-        """Can this termination be recovered from (e.g., via resume)?"""
-        return self not in (
-            TerminalReason.MODEL_ERROR,
-            TerminalReason.BLOCKING_LIMIT,
-        )
 
 
 @dataclass
@@ -210,13 +158,15 @@ class AgentLoop:
         sys_prompt = system_prompt or self._build_default_system_prompt(registry, user_message)
         messages = [{"role": "system", "content": sys_prompt}]
 
-        # Inject user context as first user message (Claude Code pattern)
-        user_context = self._build_user_context(registry)
-        if user_context:
-            messages.append({
-                "role": "user",
-                "content": f"<system-reminder>\n{user_context}\n</system-reminder>"
-            })
+        # Inject user context as first user message only on session start
+        # (Claude Code pattern: system-reminder injected once per session, not per turn)
+        if not history:
+            user_context = self._build_user_context(registry)
+            if user_context:
+                messages.append({
+                    "role": "user",
+                    "content": f"<system-reminder>\n{user_context}\n</system-reminder>"
+                })
 
         if history:
             messages.extend(history)
@@ -249,6 +199,7 @@ class AgentLoop:
         5. check_terminate — decide whether to stop or continue
         """
         iteration = 0
+        recovery = RecoveryState()
 
         while True:
             # ── Safety net: max_iterations (Claude Code: maxTurns) ──
@@ -267,23 +218,66 @@ class AgentLoop:
             messages, previous_summary = self._preprocess_messages(
                 messages, previous_summary, run_dir)
 
-            # ── Phase 2: call model (always with tools — model decides) ──
-            content, tool_calls = yield from self._call_model_streaming(
-                messages, tools, iteration)
+            # ── Phase 2: call model with streaming tool execution ──
+            # Claude Code pattern: StreamingToolExecutor starts tools during streaming.
+            tool_events = []
+            executor = StreamingToolExecutor(
+                registry,
+                lambda t, p: tool_events.append((t, p)),
+            )
 
-            if content is None:  # LLM error
-                yield ("error", {"message": "LLM call failed"})
+            # Use for loop instead of yield from so we can poll executor
+            gen = self._call_model_streaming(
+                messages, tools, iteration, executor=executor)
+            content = ""
+            tool_calls = []
+            last_error = None
+            try:
+                while True:
+                    event_type, payload = next(gen)
+                    yield (event_type, payload)
+                    if event_type == "error":
+                        last_error = payload.get("message", "")
+                    # Poll completed results during streaming
+                    for idx, result in executor.get_completed_results().items():
+                        yield ("tool_result_early", {
+                            "index": idx, "preview": result[:200],
+                        })
+            except StopIteration as e:
+                content, tool_calls, last_error = e.value
+
+            # Phase 2.5: error classification + recovery decision
+            error_type = classify_error(content or "", last_error)
+            should_stop, reason, recovery_action = evaluate_termination(
+                content or "", tool_calls, error_type, recovery)
+
+            if recovery_action:
+                executor.abort_all()
+                executor.shutdown()
+                messages, should_retry, new_max_tokens = execute_recovery(
+                    recovery_action, messages, recovery,
+                    max_tokens=self.config.max_tokens, run_dir=run_dir)
+                if new_max_tokens:
+                    self.config.max_tokens = new_max_tokens
+                if should_retry:
+                    continue
+                # Recovery exhausted — should_stop will be True, fall through
+
+            if should_stop:
+                executor.abort_all()
+                executor.shutdown()
+                if content:
+                    messages.append({"role": "assistant", "content": str(content)})
+                    validated = self._validate_output(str(content), messages)
+                    yield ("answer", {"text": validated, "terminal_reason": reason})
+                else:
+                    yield ("answer", {"text": reason or "completed",
+                                      "terminal_reason": reason or "completed"})
                 break
 
-            # ── Model didn't call tools → needsFollowUp = false → check if done ──
+            # ── Model didn't call tools → needsFollowUp = false, loop back ──
             if not tool_calls:
-                messages.append({"role": "assistant", "content": str(content) if content else ""})
-                if self._check_termination(str(content)):
-                    validated = self._validate_output(str(content), messages)
-                    yield ("answer", {"text": validated})
-                    break
-                # Empty output → continue
-                self._continue_prompt(messages)
+                executor.shutdown()
                 continue
 
             # ── needsFollowUp = true: model called tools, continue loop ──
@@ -349,17 +343,18 @@ class AgentLoop:
             if not tool_calls:
                 continue
 
-            # Execute tools with StreamingToolExecutor (read parallel, write serial)
-            from agent.tools.executor import StreamingToolExecutor
-            tool_events = []
-            executor = StreamingToolExecutor(registry,
-                lambda t, p: tool_events.append((t, p)))
-            for i, tc in enumerate(tool_calls):
-                executor.submit(i, tc)
-            results = executor.collect_all_results()
+            # ── Phase 3: collect remaining tool results ──
+            # Tools were submitted during streaming; wait for unfinished ones.
+            # get_remaining_results() is abort-aware — if recovery signaled abort,
+            # in-flight tools get synthetic error results.
+            results_dict = executor.get_remaining_results()
             executor.shutdown()
+            # Emit any tool events collected during streaming
             for ev in tool_events:
                 yield ev
+
+            # Map results back to tool_calls (results_dict is keyed by original index)
+            results = [results_dict[i] for i in sorted(results_dict.keys())]
 
             for tc, result in zip(tool_calls, results):
                 tool_msg = {"role": "tool", "tool_call_id": tc["id"],
@@ -405,9 +400,6 @@ class AgentLoop:
 
         L0 → L1 → L2 → L3 (if needed) + needle-in-haystack protection.
         """
-        # Needle-in-haystack: ensure last user msg contains key context
-        messages = self._needle_protection(messages)
-
         # L0: tool result budget (every iteration)
         messages = apply_tool_result_budget(messages)
 
@@ -429,48 +421,16 @@ class AgentLoop:
 
         return messages, previous_summary
 
-    def _needle_protection(self, messages):
-        """Ensure critical data isn't lost in context.
-
-        If the conversation is long (>10 msg), inject a brief reminder
-        of the original user query near the end of context.
-        """
-        if len(messages) < 12:
-            return messages
-
-        # Find the first user message (original query)
-        first_user = next((m for m in messages if m.get("role") == "user"), None)
-        if not first_user:
-            return messages
-
-        # Check if last 3 messages already reference the topic
-        last_three = " ".join(
-            str(m.get("content", ""))[:200] for m in messages[-3:]
-        ).lower()
-
-        original = str(first_user.get("content", ""))[:100]
-        # Simple check: if original query keywords absent from recent context
-        keywords = [w for w in original.lower().split() if len(w) > 3]
-        missing = [kw for kw in keywords[:5] if kw not in last_three]
-
-        if missing:
-            messages.append({
-                "role": "user",
-                "content": (
-                    f"[Context reminder: the original request was about: "
-                    f"\"{original}\". Use the data you already have.]"
-                ),
-            })
-
-        return messages
-
     # ── Phase 2: call model ────────────────────────────────────
 
-    def _call_model_streaming(self, messages, tools, iteration):
+    def _call_model_streaming(self, messages, tools, iteration, executor=None):
         """Phase 2: Stream LLM response, accumulate text + tool calls.
 
-        Yields thinking_start, thinking_delta events.
-        Returns (content, tool_calls) tuple, or (None, []) on error.
+        If executor is provided, tool calls are submitted for execution
+        AS they arrive in the stream (Claude Code StreamingToolExecutor pattern).
+
+        Yields thinking_start, thinking_delta, tool_use_end, error events.
+        Returns (content, tool_calls, error_text) tuple.
         """
         yield ("thinking_start", {"iteration": iteration})
 
@@ -486,54 +446,89 @@ class AgentLoop:
             )
         except Exception as exc:
             yield ("error", {"message": f"LLM call failed: {exc}"})
-            return None, []
+            return None, [], str(exc)
 
         content = ""
         tool_call_buffers: dict[int, dict] = {}
+        tool_calls_submitted = 0
 
-        for chunk in stream:
-            delta = chunk.choices[0].delta if chunk.choices else None
-            if delta is None:
-                continue
+        def _try_parse_args(args_str: str) -> dict | None:
+            """Try to parse incrementally accumulated JSON args.
+            Returns None if args aren't complete yet (DeepSeek sends
+            tool_use arguments as incremental JSON fragments)."""
+            if not args_str.strip():
+                return None
+            try:
+                return json.loads(args_str)
+            except json.JSONDecodeError:
+                return None
 
-            if delta.content:
-                content += delta.content
-                yield ("thinking_delta", {"text": delta.content, "iteration": iteration})
+        try:
+            for chunk in stream:
+                delta = chunk.choices[0].delta if chunk.choices else None
+                if delta is None:
+                    continue
 
-            if delta.tool_calls:
-                for tc_delta in delta.tool_calls:
-                    idx = tc_delta.index
-                    if idx not in tool_call_buffers:
-                        tool_call_buffers[idx] = {"id": "", "name": "", "args_str": ""}
-                    buf = tool_call_buffers[idx]
-                    if tc_delta.id:
-                        buf["id"] = tc_delta.id
-                    if tc_delta.function:
-                        if tc_delta.function.name:
-                            buf["name"] = tc_delta.function.name
-                        if tc_delta.function.arguments:
-                            buf["args_str"] += tc_delta.function.arguments
+                if delta.content:
+                    content += delta.content
+                    yield ("thinking_delta", {"text": delta.content, "iteration": iteration})
 
+                if delta.tool_calls:
+                    for tc_delta in delta.tool_calls:
+                        idx = tc_delta.index
+                        if idx not in tool_call_buffers:
+                            tool_call_buffers[idx] = {"id": "", "name": "", "args_str": ""}
+                        buf = tool_call_buffers[idx]
+                        if tc_delta.id:
+                            buf["id"] = tc_delta.id
+                        if tc_delta.function:
+                            if tc_delta.function.name:
+                                buf["name"] = tc_delta.function.name
+                            if tc_delta.function.arguments:
+                                buf["args_str"] += tc_delta.function.arguments
+                                # Try parse — if complete JSON, start tool NOW
+                                args = _try_parse_args(buf["args_str"])
+                                if args is not None and "parsed" not in buf:
+                                    buf["parsed"] = True
+                                    tc = {
+                                        "name": buf["name"],
+                                        "args": args,
+                                        "id": buf["id"] or f"call_{idx}",
+                                    }
+                                    if executor:
+                                        executor.submit(idx, tc)
+                                    tool_calls_submitted += 1
+                                    yield ("tool_use_end", {
+                                        "index": idx,
+                                        "tool_call": tc,
+                                    })
+        except Exception as exc:
+            yield ("error", {"message": f"Stream interrupted: {exc}"})
+            return None, [], str(exc)
+
+        # Assemble tool_calls list (including any that weren't submitted during streaming)
         tool_calls = []
         for idx in sorted(tool_call_buffers.keys()):
             buf = tool_call_buffers[idx]
-            args = {}
-            if buf["args_str"].strip():
-                try:
-                    args = json.loads(buf["args_str"])
-                except Exception:
-                    pass
-            tool_calls.append({
-                "name": buf["name"], "args": args,
-                "id": buf["id"] or f"call_{idx}",
-            })
+            if buf["name"]:
+                args = {}
+                if buf["args_str"].strip():
+                    args = _try_parse_args(buf["args_str"]) or {}
+                tc = {"name": buf["name"], "args": args,
+                       "id": buf["id"] or f"call_{idx}"}
+                # Submit any tool_use that wasn't parsed during streaming
+                # (e.g., DeepSeek sent complete args in a single non-streaming chunk)
+                if executor and "parsed" not in buf:
+                    executor.submit(idx, tc)
+                    tool_calls_submitted += 1
+                tool_calls.append(tc)
 
         yield ("thinking_end", {
             "text": str(content)[:2000] if content else "",
             "tool_calls": [{"name": tc["name"], "args": tc["args"]} for tc in tool_calls],
         })
 
-        return content, tool_calls
+        return content, tool_calls, None
 
     # ── Phase 3 helper: filter tools ────────────────────────────
 
@@ -553,20 +548,6 @@ class AgentLoop:
         Placeholder for Phase 4 memory system.
         """
         return messages
-
-    # ── Phase 5: check termination ──────────────────────────────
-
-    def _check_termination(self, content: str) -> bool:
-        """Check if model's text response is a valid answer.
-
-        Primary stop: needsFollowUp (model didn't call tools).
-        This is a post-hoc check on the TEXT output only.
-        """
-        return bool(content and str(content).strip())
-
-    def _continue_prompt(self, messages):
-        """Inject continuation prompt when model produces empty output."""
-        messages.append({"role": "user", "content": "Please continue."})
 
     def _execute_batch(self, tool_calls: list, registry, memory, emit):
         """Execute tools: read-only parallel, write serial. Dedup + non-repeatable skip."""
