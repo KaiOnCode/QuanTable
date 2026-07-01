@@ -33,7 +33,7 @@ from .compression import (
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MAX_ITERATIONS = 8
+DEFAULT_MAX_ITERATIONS = 5
 DEFAULT_TIMEOUT = 600  # 10 minutes
 
 
@@ -99,6 +99,7 @@ class AgentConfig:
     max_iterations: int = DEFAULT_MAX_ITERATIONS
     timeout_seconds: int = DEFAULT_TIMEOUT
     include_shell_tools: bool = False
+    permission_mode: str = "default"  # default | plan | accept_edits | bypass
     model: str = ""
     temperature: float = 0.0
     max_tokens: int = 4096
@@ -111,6 +112,7 @@ class WorkspaceMemory:
     session_id: str = ""
     run_dir: Path | None = None
     counters: dict[str, int] = field(default_factory=dict)
+    called_keys: set[str] = field(default_factory=set)  # cross-iteration dedup
     artifacts: list[str] = field(default_factory=list)
 
     def increment(self, tool_name: str):
@@ -187,6 +189,13 @@ class AgentLoop:
         sid = session_id or str(uuid.uuid4())
         memory = WorkspaceMemory(session_id=sid, run_dir=run_dir)
         registry = self._get_registry()
+
+        # Permission manager
+        from agent.tools.permissions import PermissionManager, PermissionMode, PermissionDecision
+        mode_map = {"default": PermissionMode.DEFAULT, "plan": PermissionMode.PLAN,
+                    "accept_edits": PermissionMode.ACCEPT_EDITS, "bypass": PermissionMode.BYPASS}
+        perms = PermissionManager(mode_map.get(self.config.permission_mode, PermissionMode.DEFAULT))
+
         started = time.time()
 
         def _emit(event_type: str, payload: dict | None = None):
@@ -200,6 +209,15 @@ class AgentLoop:
         tools = registry.get_definitions()
         sys_prompt = system_prompt or self._build_default_system_prompt(registry, user_message)
         messages = [{"role": "system", "content": sys_prompt}]
+
+        # Inject user context as first user message (Claude Code pattern)
+        user_context = self._build_user_context(registry)
+        if user_context:
+            messages.append({
+                "role": "user",
+                "content": f"<system-reminder>\n{user_context}\n</system-reminder>"
+            })
+
         if history:
             messages.extend(history)
         messages.append({"role": "user", "content": user_message})
@@ -271,6 +289,21 @@ class AgentLoop:
                     break
                 continue  # empty content → continuation prompt was added
 
+            # Cross-iteration dedup: reject calls already made
+            deduped_calls = []
+            for tc in tool_calls:
+                key = f"{tc['name']}:{json.dumps(tc.get('args',{}), sort_keys=True)}"
+                if key in memory.called_keys:
+                    continue  # silently skip, already have this data
+                memory.called_keys.add(key)
+                deduped_calls.append(tc)
+            tool_calls = deduped_calls
+
+            if not tool_calls:
+                messages.append({"role": "assistant", "content": str(content) if content else ""})
+                yield ("answer", {"text": str(content)})
+                break
+
             # Build assistant message with ALL tool_calls
             messages.append({
                 "role": "assistant",
@@ -283,11 +316,30 @@ class AgentLoop:
                 ],
             })
 
-            # Execute ALL tools — let tools themselves validate params
-            # and return errors if needed. The LLM learns from tool results.
+            # Permission check before execution
+            allowed_calls = []
+            for tc in tool_calls:
+                tool = registry.get(tc["name"])
+                decision = perms.check(tool, tc.get("args", {})) if tool else PermissionDecision.DENY
+                if decision == PermissionDecision.DENY:
+                    yield ("tool_error", {"tool": tc["name"],
+                        "error": f"Permission denied (mode: {perms.mode.value})"})
+                else:
+                    allowed_calls.append(tc)
+            tool_calls = allowed_calls
+
+            if not tool_calls:
+                continue
+
+            # Execute tools with StreamingToolExecutor (read parallel, write serial)
+            from agent.tools.executor import StreamingToolExecutor
             tool_events = []
-            results = self._execute_batch(tool_calls, registry, memory,
-                                          lambda t, p: tool_events.append((t, p)))
+            executor = StreamingToolExecutor(registry,
+                lambda t, p: tool_events.append((t, p)))
+            for i, tc in enumerate(tool_calls):
+                executor.submit(i, tc)
+            results = executor.collect_all_results()
+            executor.shutdown()
             for ev in tool_events:
                 yield ev
 
@@ -322,8 +374,11 @@ class AgentLoop:
     def _preprocess_messages(self, messages, previous_summary, run_dir):
         """Phase 1: Serial compression pipeline before each LLM call.
 
-        L0 → L1 → L2 → L3 (if needed)
+        L0 → L1 → L2 → L3 (if needed) + needle-in-haystack protection.
         """
+        # Needle-in-haystack: ensure last user msg contains key context
+        messages = self._needle_protection(messages)
+
         # L0: tool result budget (every iteration)
         messages = apply_tool_result_budget(messages)
 
@@ -344,6 +399,41 @@ class AgentLoop:
             return messages, new_summary
 
         return messages, previous_summary
+
+    def _needle_protection(self, messages):
+        """Ensure critical data isn't lost in context.
+
+        If the conversation is long (>10 msg), inject a brief reminder
+        of the original user query near the end of context.
+        """
+        if len(messages) < 12:
+            return messages
+
+        # Find the first user message (original query)
+        first_user = next((m for m in messages if m.get("role") == "user"), None)
+        if not first_user:
+            return messages
+
+        # Check if last 3 messages already reference the topic
+        last_three = " ".join(
+            str(m.get("content", ""))[:200] for m in messages[-3:]
+        ).lower()
+
+        original = str(first_user.get("content", ""))[:100]
+        # Simple check: if original query keywords absent from recent context
+        keywords = [w for w in original.lower().split() if len(w) > 3]
+        missing = [kw for kw in keywords[:5] if kw not in last_three]
+
+        if missing:
+            messages.append({
+                "role": "user",
+                "content": (
+                    f"[Context reminder: the original request was about: "
+                    f"\"{original}\". Use the data you already have.]"
+                ),
+            })
+
+        return messages
 
     # ── Phase 2: call model ────────────────────────────────────
 
@@ -580,87 +670,26 @@ class AgentLoop:
         return final_results
 
     def _build_default_system_prompt(self, registry, user_message: str = "") -> str:
-        """Build default system prompt with tool descriptions + skills."""
+        """Build system prompt. Delegates to agent/prompts.py."""
+        from agent.prompts import build_system_prompt
+        return build_system_prompt(registry, user_message)
+
+    def _build_user_context(self, registry) -> str:
+        """Build user context injected as first user message.
+
+        Modeled after Claude Code's <system-reminder> pattern.
+        Contains: available data summary, usage tips.
+        """
         today = time.strftime("%Y-%m-%d")
-        tool_names = registry.get_compact_text()
-
-        # Load skills for injection — only if user message is substantial
-        skill_text = ""
-        skill_header = ""
-        if user_message and len(user_message) > 20:
-            skill_text = self._select_relevant_skills(user_message, max_skills=10)
-            skill_header = "\n## Relevant Skills\n" + skill_text
-
-        return f"""You are a concise interactive agent. Follow instructions exactly. Never add "What would you like me to do?" or similar offers. Answer briefly.
-
-Today: {today}.
-
-Tools: {tool_names}
-{skill_header}
-Work: Call tools to get data, then answer immediately. After a tool succeeds, use its result — don't call it again. After a tool fails, try an alternative or answer with what you have. Stop calling tools once you have enough information."""
-
-    def _select_relevant_skills(self, user_message: str, max_skills: int = 20) -> str:
-        """Select top N skills relevant to user's query using keyword matching."""
-        import re
-        from skills.loader import get_loader
-
-        loader = get_loader()
-        loader.discover()
-
-        if not loader.skills:
-            return "No skills available."
-
-        # Extract keywords (Chinese 2+ chars, English 3+ chars)
-        keywords = set(re.findall(r'[\u4e00-\u9fff]{2,}', user_message.lower()))
-        keywords |= set(re.findall(r'[a-z]{3,}', user_message.lower()))
-
-        # Score each skill
-        scored = []
-        for skill in loader.skills.values():
-            text = f"{skill.name} {skill.description} {skill.category}".lower()
-            score = sum(1 for kw in keywords if kw in text)
-            scored.append((score, skill))
-
-        scored.sort(key=lambda x: (-x[0], x[1].name))
-        selected = scored[:max_skills]
-
-        lines = []
-        for score, skill in selected:
-            marker = "**" if score > 0 else ""
-            lines.append(f"- {marker}{skill.name}{marker} [{skill.category}]: {skill.description[:120]}")
-
-        remaining = len(loader.skills) - len(selected)
-        if remaining > 0:
-            lines.append(f"\n(+{remaining} more skills. Use list_skills to browse all, search_skills(keyword) to find specific ones.)")
-
-        return "\n".join(lines)
-
-    def _list_all_skills_compact(self) -> str:
-        """List all skills grouped by category in compact format."""
-        from skills.loader import get_loader
-
-        loader = get_loader()
-        loader.discover()
-
-        if not loader.skills:
-            return "No skills available."
-
-        cats: dict[str, list[str]] = {}
-        for s in loader.skills.values():
-            cats.setdefault(s.category, []).append(s.name)
-
-        lines = []
-        for cat in sorted(cats):
-            names = sorted(cats[cat])
-            lines.append(f"\n### {cat} ({len(names)})")
-            for n in names:
-                sk = loader.skills[n]
-                builtin_tag = "" if sk.is_builtin else " [user]"
-                lines.append(f"- {n}{builtin_tag}: {sk.description[:120]}")
-
-        if len(loader.skills) > 50:
-            lines.append("\nTip: Use search_skills(query) to find skills by keyword, or list_skills to browse by category.")
-
+        lines = [
+            f"Current date: {today}",
+            f"Available tools: {registry.tool_count}",
+            "Key tools: get_price(stock prices), get_indicators(RSI,MACD,SMA), "
+            "get_news(stock news), get_fundamentals(PE,PB,ROE), "
+            "web_search(internet search), search_symbol(find ticker)",
+            "Tip: call multiple read tools in one batch for efficiency.",
+            "Tip: after getting data, answer immediately — don't keep searching.",
+        ]
         return "\n".join(lines)
 
 

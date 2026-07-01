@@ -8,6 +8,7 @@ Design borrowed from Vibe-Trading's ToolRegistry pattern.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -74,6 +75,18 @@ class ToolRegistry:
             cats.setdefault(meta.category, []).append(name)
         return cats
 
+    def get_tools_by_category(self, category: str) -> list[str]:
+        """Get tool names filtered by category."""
+        return [n for n, m in self._meta.items() if m.category == category]
+
+    def get_readonly_tools(self) -> list[str]:
+        """Get names of all read-only tools (safe to parallelize)."""
+        return [n for n, m in self._meta.items() if m.is_readonly]
+
+    def get_write_tools(self) -> list[str]:
+        """Get names of all write tools (must run serially)."""
+        return [n for n, m in self._meta.items() if not m.is_readonly]
+
     def get_definitions(self) -> list[dict]:
         """Return OpenAI-compatible tool definitions for all registered tools."""
         defs = []
@@ -106,6 +119,12 @@ class ToolRegistry:
         tool = self._tools.get(name)
         if not tool:
             return '{"status":"error","error":"tool_not_found"}'
+
+        # Validate params against input_schema
+        if tool.meta.input_schema:
+            err = tool.validate_params(params)
+            if err:
+                return json.dumps(err, ensure_ascii=False)
 
         # Cooldown check
         if tool.meta.cooldown_seconds > 0:

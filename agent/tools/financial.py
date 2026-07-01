@@ -17,10 +17,17 @@ logger = logging.getLogger(__name__)
 class GetPriceTool(BaseTool):
     meta = ToolMeta(
         name="get_price",
-        description="获取股票历史价格数据(OHLCV)。参数: ticker(股票代码,必填), days(天数,默认30,1Y=365,2Y=730,5Y=1825,MAX=3650)。返回每日开盘/最高/最低/收盘/成交量。支持最多10年数据。",
+        description="USE WHEN: user asks for stock price, quote, OHLCV, 股价, 行情. 获取股票历史价格数据。参数: ticker(股票代码,必填), days(天数,默认30,1Y=365,2Y=730,5Y=1825,MAX=3650)。返回每日开盘/最高/最低/收盘/成交量。",
         category="financial",
         timeout=20,
         repeatable=False,
+        input_schema={
+            "properties": {
+                "ticker": {"type": "string", "description": "Stock ticker symbol (e.g., AAPL, NVDA, 600519)"},
+                "days": {"type": "integer", "description": "Number of days of history (default 30, max 3650)"},
+            },
+            "required": ["ticker"],
+        },
     )
 
     def execute(self, ticker: str = "", days: int | str = 30) -> str:
@@ -62,10 +69,14 @@ class GetPriceTool(BaseTool):
 class GetIndicatorsTool(BaseTool):
     meta = ToolMeta(
         name="get_indicators",
-        description="获取技术指标：RSI(相对强弱)、MACD(异同移动平均线)、SMA(简单移动平均线/均线/MA)、ATR(真实波幅)。参数: ticker(股票代码,必填)。返回当前值和多空信号。如需均线数据用此工具。",
+        description="USE WHEN: user asks for RSI, MACD, moving average, 均线, technical indicators. 获取技术指标：RSI(相对强弱)、MACD、SMA(简单移动平均线/均线/MA)、ATR(真实波幅)。参数: ticker(股票代码,必填)。返回当前值和多空信号。",
         category="financial",
         timeout=15,
         repeatable=False,
+        input_schema={
+            "properties": {"ticker": {"type": "string", "description": "Stock ticker (required)"}},
+            "required": ["ticker"],
+        },
     )
 
     def execute(self, ticker: str = "") -> str:
@@ -92,9 +103,16 @@ class GetIndicatorsTool(BaseTool):
 class GetNewsTool(BaseTool):
     meta = ToolMeta(
         name="get_news",
-        description="获取股票或关键词的最新新闻。参数: ticker(股票代码或关键词), days(天数,默认7)。返回新闻列表。",
+        description="USE WHEN: user asks for latest news about a stock or topic. 获取股票或关键词的最新新闻。参数: ticker(股票代码或关键词), days(天数,默认7)。返回新闻列表。",
         category="financial",
         timeout=20,
+        input_schema={
+            "properties": {
+                "ticker": {"type": "string", "description": "Stock ticker or keyword (required)"},
+                "days": {"type": "integer", "description": "Days of news to fetch (default 7)"},
+            },
+            "required": ["ticker"],
+        },
     )
 
     def execute(self, ticker: str = "", days: int | str = 7) -> str:
@@ -122,9 +140,13 @@ class GetNewsTool(BaseTool):
 class GetFundamentalsTool(BaseTool):
     meta = ToolMeta(
         name="get_fundamentals",
-        description="获取股票基本面数据(PE/PB/ROE/市值等)。参数: ticker(股票代码)。",
+        description="USE WHEN: user asks for PE, PB, ROE, financial data, valuation, fundamentals. 获取股票基本面数据(PE/PB/ROE/市值等)。参数: ticker(股票代码)。",
         category="financial",
         timeout=20,
+        input_schema={
+            "properties": {"ticker": {"type": "string", "description": "Stock ticker (required)"}},
+            "required": ["ticker"],
+        },
     )
 
     def execute(self, ticker: str = "") -> str:
@@ -141,9 +163,13 @@ class GetFundamentalsTool(BaseTool):
 class WebSearchTool(BaseTool):
     meta = ToolMeta(
         name="web_search",
-        description="搜索互联网获取最新信息。参数: query(搜索关键词)。返回搜索结果列表。",
+        description="USE WHEN: user asks about current events, general knowledge, non-stock topics, interest rates, economic data. 搜索互联网获取最新信息。参数: query(搜索关键词,必填)。返回搜索结果列表。",
         category="data",
         timeout=15,
+        input_schema={
+            "properties": {"query": {"type": "string", "description": "Search query (required)"}},
+            "required": ["query"],
+        },
     )
 
     def execute(self, query: str = "") -> str:
@@ -166,7 +192,7 @@ class WebSearchTool(BaseTool):
 class SearchSymbolTool(BaseTool):
     meta = ToolMeta(
         name="search_symbol",
-        description="搜索股票代码或公司名称。参数: query(搜索词,支持中英文)。返回匹配的股票列表。",
+        description="USE WHEN: user mentions a company name (not ticker), needs to find stock code, 搜索股票代码. 搜索股票代码或公司名称。参数: query(搜索词,支持中英文)。返回匹配的股票列表。",
         category="financial",
         timeout=10,
     )
