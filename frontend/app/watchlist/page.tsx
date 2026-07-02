@@ -1,14 +1,20 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Shell } from "@/components/layout/shell";
 import {
   Card, CardContent, CardHeader, CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -22,19 +28,28 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { formatCurrency, formatPercent } from "@/lib/utils";
 import { watchlistApi } from "@/lib/api/watchlist";
 import { api } from "@/lib/api/client";
-import { Plus, MoreHorizontal, Trash2, Loader2, TrendingUp, TrendingDown, Minus, Pencil, Check, X } from "lucide-react";
-import type { Watchlist } from "@/lib/types/models";
+import { Plus, MoreHorizontal, Trash2, Loader2, TrendingUp, TrendingDown, Minus, Pencil, Check, X, Bell } from "lucide-react";
+import type { AlertType, Watchlist } from "@/lib/types/models";
+
+const CHANNEL_OPTIONS = [
+  { value: "telegram", label: "Telegram" },
+  { value: "email", label: "Email" },
+  { value: "wechat", label: "WeChat" },
+  { value: "whatsapp", label: "WhatsApp" },
+];
 
 function TickerRow({
   ticker,
   meta,
   isNew,
   onRemove,
+  onCreateAlert,
 }: {
   ticker: string;
   meta?: { name?: string; short_name?: string; currency?: string; country?: string; exchange?: string };
   isNew?: boolean;
   onRemove: () => void;
+  onCreateAlert: () => void;
 }) {
   const currency = meta?.currency || "USD";
   const companyName = meta?.name || meta?.short_name || "";
@@ -121,6 +136,9 @@ function TickerRow({
             </div>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={onCreateAlert}>
+              <Bell className="mr-2 h-4 w-4" /> Set Alert
+            </DropdownMenuItem>
             <DropdownMenuItem className="text-destructive" onClick={onRemove}>
               <Trash2 className="mr-2 h-4 w-4" /> Remove
             </DropdownMenuItem>
@@ -143,6 +161,11 @@ export default function WatchlistPage() {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const [alertDialogOpen, setAlertDialogOpen] = useState(false);
+  const [alertTicker, setAlertTicker] = useState("");
+  const [alertType, setAlertType] = useState<AlertType>("price_above");
+  const [alertThreshold, setAlertThreshold] = useState("");
+  const [alertChannels, setAlertChannels] = useState<string[]>(["telegram"]);
 
   const { data, isLoading } = useQuery({
     queryKey: ["watchlists"],
@@ -220,6 +243,83 @@ export default function WatchlistPage() {
       setRenamingId(null);
     },
   });
+
+  const createAlertMutation = useMutation({
+    mutationFn: ({
+      wid,
+      ticker,
+      type,
+      threshold,
+      channels,
+    }: {
+      wid: string;
+      ticker: string;
+      type: AlertType;
+      threshold: string;
+      channels: string[];
+    }) =>
+      watchlistApi.createAlert(wid, {
+        ticker,
+        type,
+        threshold_value: Number(threshold),
+        notification_channels: channels,
+      }),
+    onSuccess: (alert) => {
+      queryClient.invalidateQueries({ queryKey: ["watchlists"] });
+      setAlertDialogOpen(false);
+      setAlertTicker("");
+      setAlertThreshold("");
+      toast.success("Watchlist alert created", {
+        description: `${alert.ticker} ${alert.type.replace("_", " ")} ${alert.threshold_value}`,
+      });
+    },
+    onError: (error: Error) => {
+      toast.error("Failed to create alert", { description: error.message });
+    },
+  });
+
+  const checkAlertsMutation = useMutation({
+    mutationFn: () => watchlistApi.checkAlerts(),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["watchlists"] });
+      toast.success("Alert check completed", {
+        description: `${result.triggered_count} alert(s) triggered.`,
+      });
+    },
+    onError: (error: Error) => {
+      toast.error("Failed to check alerts", { description: error.message });
+    },
+  });
+
+  const openAlertDialog = (ticker: string) => {
+    setAlertTicker(ticker);
+    setAlertType("price_above");
+    setAlertThreshold("");
+    setAlertChannels(["telegram"]);
+    setAlertDialogOpen(true);
+  };
+
+  const toggleAlertChannel = (channel: string, checked: boolean) => {
+    setAlertChannels((current) => {
+      if (checked) {
+        return current.includes(channel) ? current : [...current, channel];
+      }
+      return current.filter((item) => item !== channel);
+    });
+  };
+
+  const saveAlert = () => {
+    if (!active || !alertTicker || !alertThreshold || alertChannels.length === 0) {
+      return;
+    }
+    createAlertMutation.mutate({
+      wid: active.id,
+      ticker: alertTicker,
+      type: alertType,
+      threshold: alertThreshold,
+      channels: alertChannels,
+    });
+  };
 
   return (
     <Shell>
@@ -311,6 +411,15 @@ export default function WatchlistPage() {
                     <Button
                       variant="outline"
                       size="sm"
+                      disabled={checkAlertsMutation.isPending}
+                      onClick={() => checkAlertsMutation.mutate()}
+                    >
+                      <Bell className="mr-2 h-3 w-3" />
+                      {checkAlertsMutation.isPending ? "Checking" : "Check Alerts"}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
                       onClick={() => {
                         if (confirm(`Delete "${active.name}"?`)) {
                           deleteMutation.mutate(active.id);
@@ -347,6 +456,7 @@ export default function WatchlistPage() {
                             meta={meta[t]}
                             isNew={!!pendingTickers[t]}
                             onRemove={() => removeTickerMutation.mutate({ wid: active.id, ticker: t })}
+                            onCreateAlert={() => openAlertDialog(t)}
                           />
                         ))}
                       </TableBody>
@@ -407,6 +517,62 @@ export default function WatchlistPage() {
               disabled={createMutation.isPending}
             >
               Create
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={alertDialogOpen} onOpenChange={setAlertDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create Alert for {alertTicker}</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4">
+            <div className="space-y-2">
+              <Label>Condition</Label>
+              <Select value={alertType} onValueChange={(value) => setAlertType(value as AlertType)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="price_above">Price above</SelectItem>
+                  <SelectItem value="price_below">Price below</SelectItem>
+                  <SelectItem value="rsi_above">RSI above</SelectItem>
+                  <SelectItem value="rsi_below">RSI below</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Threshold</Label>
+              <Input
+                type="number"
+                value={alertThreshold}
+                onChange={(event) => setAlertThreshold(event.target.value)}
+                placeholder={alertType.startsWith("price") ? "Target price" : "Target RSI"}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Channels</Label>
+              <div className="grid grid-cols-2 gap-3 rounded-md border p-3">
+                {CHANNEL_OPTIONS.map((channel) => (
+                  <label key={channel.value} className="flex items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={alertChannels.includes(channel.value)}
+                      onCheckedChange={(checked) =>
+                        toggleAlertChannel(channel.value, Boolean(checked))
+                      }
+                    />
+                    <span>{channel.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAlertDialogOpen(false)}>Cancel</Button>
+            <Button
+              onClick={saveAlert}
+              disabled={!alertThreshold || alertChannels.length === 0 || createAlertMutation.isPending}
+            >
+              {createAlertMutation.isPending ? "Saving" : "Save Alert"}
             </Button>
           </DialogFooter>
         </DialogContent>

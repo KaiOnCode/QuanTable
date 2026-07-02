@@ -158,6 +158,7 @@ async def analyze(request: AnalyzeRequest):
                         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
                     },
                 )
+                await _notify_analysis_failed(request, session_id, str(payload))
                 return
 
             # msg_type == "event": {node_name: {key: value, ...}}
@@ -316,6 +317,7 @@ async def analyze(request: AnalyzeRequest):
 
         # ── Persist to history ──
         _save_session_json(session_id, request.ticker, request.mode, result_payload)
+        await _notify_analysis_completed(request, result_payload)
 
     return StreamingResponse(
         event_stream(),
@@ -359,6 +361,98 @@ def _parse_pm_report(report: str, action: str) -> tuple[str, float, str]:
         timeframe = tf_match.group(1)
 
     return direction, confidence, timeframe
+
+
+def _analysis_priority(action: str, confidence: float) -> str:
+    if action.upper() in {"BUY", "SELL"} or confidence >= 0.7:
+        return "high"
+    return "normal"
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+async def _notify_analysis_completed(
+    request: AnalyzeRequest,
+    result: dict[str, Any],
+) -> None:
+    """Publish an analysis-complete notification without mutating domain state."""
+    action = str(result.get("action", "HOLD")).upper()
+    confidence = _safe_float(result.get("confidence"))
+    priority = _analysis_priority(action, confidence)
+    report = str(result.get("report", ""))
+    summary = _extract_oneliner(report) or report.replace("\n", " ")[:160]
+    message = (
+        f"Ticker: {request.ticker.upper()}\n"
+        f"Strategy: {request.strategy_id}\n"
+        f"Account: {request.account_id}\n"
+        f"Session: {result.get('session_id', '')}\n"
+        f"Decision: {result.get('decision_id', '')}\n"
+        f"Action: {action}\n"
+        f"Direction: {result.get('direction', 'Neutral')}\n"
+        f"Confidence: {confidence:.2f}\n"
+        f"Target Position: {_safe_float(result.get('target_position_pct')):.2f}%\n"
+        f"Approval: {result.get('approval_status') or 'not_required'}\n"
+        f"Summary: {summary}"
+    )
+    try:
+        from notification import build_manager
+        from server.routes.settings import _load_settings
+
+        results = await build_manager(_load_settings()).send(
+            message=message,
+            title=f"Analysis Complete: {request.ticker.upper()} {action}",
+            priority=priority,
+        )
+        logger.info(
+            "analysis_notification_done ticker=%s session_id=%s results=%s",
+            request.ticker,
+            result.get("session_id"),
+            {
+                name: {"ok": channel_result.ok, "message": channel_result.message}
+                for name, channel_result in results.items()
+            },
+        )
+    except Exception:
+        logger.exception(
+            "analysis_notification_failed ticker=%s session_id=%s",
+            request.ticker,
+            result.get("session_id"),
+        )
+
+
+async def _notify_analysis_failed(
+    request: AnalyzeRequest,
+    session_id: str,
+    error: str,
+) -> None:
+    """Publish an analysis-failed notification without mutating domain state."""
+    message = (
+        f"Ticker: {request.ticker.upper()}\n"
+        f"Strategy: {request.strategy_id}\n"
+        f"Account: {request.account_id}\n"
+        f"Session: {session_id}\n"
+        f"Error: {error[:500]}"
+    )
+    try:
+        from notification import build_manager
+        from server.routes.settings import _load_settings
+
+        await build_manager(_load_settings()).send(
+            message=message,
+            title=f"Analysis Failed: {request.ticker.upper()}",
+            priority="high",
+        )
+    except Exception:
+        logger.exception(
+            "analysis_failure_notification_failed ticker=%s session_id=%s",
+            request.ticker,
+            session_id,
+        )
 
 
 # ── History endpoints ──────────────────────────────────────

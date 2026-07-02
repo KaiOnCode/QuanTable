@@ -62,8 +62,13 @@ def test_analyze_creates_pending_approval_without_hitl_executor(
         del args, kwargs
         raise AssertionError("HITL executor must not run during pending approval")
 
+    async def noop_notify(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+
     monkeypatch.setattr(quick_ask.orchestrator, "IntelliFin_Assistant", FakeAssistant)
     monkeypatch.setattr(analyze, "get_store", lambda: store, raising=False)
+    monkeypatch.setattr(analyze, "_notify_analysis_completed", noop_notify)
+    monkeypatch.setattr(analyze, "_notify_analysis_failed", noop_notify)
     monkeypatch.setattr("dataflow.service.DataService", FakeDataService)
     monkeypatch.setattr(
         hitl.executor.HITLExecutor,

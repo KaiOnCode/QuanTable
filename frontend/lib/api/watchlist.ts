@@ -48,4 +48,11 @@ export const watchlistApi = {
   ): Promise<Alert> {
     return api.post(`/watchlists/${watchlistId}/alerts`, data);
   },
+
+  checkAlerts(data?: {
+    snapshots?: Record<string, Record<string, unknown>>;
+    channels?: string[];
+  }): Promise<{ triggered_count: number; triggered: unknown[] }> {
+    return api.post("/watchlists/check-alerts", data);
+  },
 };

@@ -96,6 +96,11 @@ def test_approval_api_uses_pydantic_schema_and_updates_store(
     )
     monkeypatch.setattr(approvals, "get_store", lambda: store)
 
+    async def noop_notify(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+
+    monkeypatch.setattr(approvals, "_notify_approval_state_changed", noop_notify)
+
     app = FastAPI()
     app.include_router(approvals.router, prefix="/api")
     client = TestClient(app)

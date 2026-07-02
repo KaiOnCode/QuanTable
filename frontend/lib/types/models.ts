@@ -262,6 +262,7 @@ export type AlertType = "price_above" | "price_below" | "rsi_above" | "rsi_below
 export interface Alert {
   id: string; watchlist_id: string | null; ticker: string; type: AlertType;
   threshold_value: number | string | null; message: string;
+  notification_channels?: string[] | null;
   is_triggered: boolean; triggered_at: string | null; created_at: string;
 }
 
@@ -285,9 +286,12 @@ export interface SystemEvent {
 export interface SystemConfig {
   llm_api_key: string; llm_base_url: string; llm_model: string;
   deep_think_model: string; email_smtp_host: string; email_smtp_port: number;
-  email_recipients: string[]; telegram_bot_token: string; telegram_chat_ids: string[];
-  wechat_webhook_url: string; feishu_webhook_url: string;
-  discord_webhook_url: string; slack_bot_token: string; slack_channel_id: string;
+  email_username: string; email_password: string; email_sender: string;
+  email_use_tls: boolean; email_recipients: string[];
+  telegram_bot_token: string; telegram_chat_ids: string[];
+  wechat_webhook_url: string;
+  whatsapp_access_token: string; whatsapp_phone_number_id: string;
+  whatsapp_recipients: string[];
   data_cache_ttl_minutes: number; news_fetch_interval_minutes: number;
   max_concurrent_analyses: number; memory_enabled: boolean;
   memory_retention_days: number; weekly_reflection_day: string;
@@ -341,7 +345,7 @@ export interface ApiError {
 export interface ApprovalActionRequest { reviewer: string; notes?: string; modified_action?: string; modified_target_position_pct?: number; }
 export interface WatchlistCreateRequest { name: string; tickers: string[]; }
 export interface AddTickerRequest { ticker: string; }
-export interface CreateAlertRequest { ticker: string; type: AlertType; threshold_value: number | string; }
+export interface CreateAlertRequest { ticker: string; type: AlertType; threshold_value: number | string; notification_channels?: string[] | null; }
 export interface ScannerRuleRequest { conditions: ScanCondition[]; universe?: string; }
 export interface ScannerAgentRequest { query: string; universe?: string; }
 export interface ScannerBeliefRequest { belief_id: string; universe?: string; }

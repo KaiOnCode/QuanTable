@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -53,7 +53,7 @@ class ApprovalModifyRequest(ApprovalActionRequest):
 
 
 @router.post("/approvals/{approval_id}/approve")
-def approve_approval(
+async def approve_approval(
     approval_id: str,
     body: ApprovalActionRequest,
     strategy_id: str = Query(default="default"),
@@ -84,11 +84,12 @@ def approve_approval(
     )
 
     logger.info("Approval %s approved by %s", approval_id, req.reviewer)
+    await _notify_approval_state_changed(row, "approved", strategy_id, req.reviewer)
     return {"status": "approved", "approval_id": approval_id}
 
 
 @router.post("/approvals/{approval_id}/reject")
-def reject_approval(
+async def reject_approval(
     approval_id: str,
     body: ApprovalActionRequest,
     strategy_id: str = Query(default="default"),
@@ -119,11 +120,12 @@ def reject_approval(
     )
 
     logger.info("Approval %s rejected by %s", approval_id, req.reviewer)
+    await _notify_approval_state_changed(row, "rejected", strategy_id, req.reviewer)
     return {"status": "rejected", "approval_id": approval_id}
 
 
 @router.post("/approvals/{approval_id}/modify")
-def modify_approval(
+async def modify_approval(
     approval_id: str,
     body: ApprovalModifyRequest,
     strategy_id: str = Query(default="default"),
@@ -163,6 +165,16 @@ def modify_approval(
         req.reviewer,
         req.modified_action,
         req.modified_target_position_pct,
+    )
+    await _notify_approval_state_changed(
+        row,
+        "modified",
+        strategy_id,
+        req.reviewer,
+        {
+            "modified_action": req.modified_action,
+            "modified_target_position_pct": req.modified_target_position_pct,
+        },
     )
     return {
         "status": "modified",
@@ -220,3 +232,44 @@ def _parse_dt(value: str | None):
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except Exception:
         return None
+
+
+async def _notify_approval_state_changed(
+    row: dict[str, Any],
+    status: str,
+    strategy_id: str,
+    reviewer: str,
+    details: dict[str, Any] | None = None,
+) -> None:
+    """Publish approval lifecycle changes without executing broker orders."""
+    message_lines = [
+        f"Approval: {row.get('id', '')}",
+        f"Status: {status}",
+        f"Strategy: {row.get('strategy_id') or strategy_id}",
+        f"Account: {row.get('account_id', '')}",
+        f"Session: {row.get('session_id', '')}",
+        f"Decision: {row.get('decision_id', '')}",
+        f"Ticker: {row.get('ticker', '')}",
+        f"Original Action: {row.get('original_action', '')}",
+        f"Original Target: {row.get('original_target_position_pct', 0)}%",
+        f"Reviewer: {reviewer}",
+    ]
+    if details:
+        for key, value in details.items():
+            message_lines.append(f"{key}: {value}")
+
+    try:
+        from notification import build_manager
+        from server.routes.settings import _load_settings
+
+        await build_manager(_load_settings()).send(
+            message="\n".join(message_lines),
+            title=f"Approval {status.title()}: {row.get('ticker', '')}",
+            priority="high" if status in {"approved", "modified"} else "normal",
+        )
+    except Exception:
+        logger.exception(
+            "approval_notification_failed approval_id=%s status=%s",
+            row.get("id"),
+            status,
+        )
