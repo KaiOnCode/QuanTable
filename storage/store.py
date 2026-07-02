@@ -15,7 +15,6 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 DEFAULT_DATA_DIR = Path("data")
 
@@ -143,29 +142,45 @@ class ContextStore:
             (session_id, ticker, status, _now()),
         )
 
-    def complete_session(self, strategy_id: str, session_id: str, status: str = "completed") -> None:
+    def complete_session(
+        self, strategy_id: str, session_id: str, status: str = "completed"
+    ) -> None:
         self._strategy_db(strategy_id).execute(
             "UPDATE sessions SET status = ?, completed_at = ? WHERE id = ?",
             (status, _now(), session_id),
         )
 
     def record_report(
-        self, strategy_id: str, session_id: str, agent_name: str,
-        report_type: str, content: str, metadata: dict | None = None,
+        self,
+        strategy_id: str,
+        session_id: str,
+        agent_name: str,
+        report_type: str,
+        content: str,
+        metadata: dict | None = None,
     ) -> str:
         import uuid
+
         self._init_strategy_db(strategy_id)
         rid = str(uuid.uuid4())
         self._strategy_db(strategy_id).execute(
             """INSERT INTO agent_reports (id, session_id, agent_name, report_type, content, metadata_json, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (rid, session_id, agent_name, report_type, content,
-             json.dumps(metadata or {}, ensure_ascii=False), _now()),
+            (
+                rid,
+                session_id,
+                agent_name,
+                report_type,
+                content,
+                json.dumps(metadata or {}, ensure_ascii=False),
+                _now(),
+            ),
         )
         return rid
 
     def record_decision(self, strategy_id: str, decision: dict) -> str:
         import uuid
+
         self._init_strategy_db(strategy_id)
         did = decision.get("id") or str(uuid.uuid4())
         self._strategy_db(strategy_id).execute(
@@ -188,24 +203,39 @@ class ContextStore:
         return did
 
     def record_event(
-        self, strategy_id: str, session_id: str, event_type: str,
-        actor: str = "", payload: dict | None = None,
+        self,
+        strategy_id: str,
+        session_id: str,
+        event_type: str,
+        actor: str = "",
+        payload: dict | None = None,
     ) -> None:
         import uuid
+
         self._init_strategy_db(strategy_id)
         self._strategy_db(strategy_id).execute(
             "INSERT INTO events (id, session_id, event_type, actor, payload_json, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
-            (str(uuid.uuid4()), session_id, event_type, actor,
-             json.dumps(payload or {}, ensure_ascii=False), _now()),
+            (
+                str(uuid.uuid4()),
+                session_id,
+                event_type,
+                actor,
+                json.dumps(payload or {}, ensure_ascii=False),
+                _now(),
+            ),
         )
 
     # ── Queries ─────────────────────────────────────────────
 
     def get_sessions(self, strategy_id: str, limit: int = 20) -> list[dict]:
         self._init_strategy_db(strategy_id)
-        rows = self._strategy_db(strategy_id).execute(
-            "SELECT * FROM sessions ORDER BY started_at DESC LIMIT ?", (limit,)
-        ).fetchall()
+        rows = (
+            self._strategy_db(strategy_id)
+            .execute(
+                "SELECT * FROM sessions ORDER BY started_at DESC LIMIT ?", (limit,)
+            )
+            .fetchall()
+        )
         return [dict(r) for r in rows]
 
     def get_decisions(
@@ -213,30 +243,46 @@ class ContextStore:
     ) -> list[dict]:
         self._init_strategy_db(strategy_id)
         if ticker:
-            rows = self._strategy_db(strategy_id).execute(
-                "SELECT * FROM decisions WHERE ticker = ? ORDER BY created_at DESC LIMIT ?",
-                (ticker, limit),
-            ).fetchall()
+            rows = (
+                self._strategy_db(strategy_id)
+                .execute(
+                    "SELECT * FROM decisions WHERE ticker = ? ORDER BY created_at DESC LIMIT ?",
+                    (ticker, limit),
+                )
+                .fetchall()
+            )
         else:
-            rows = self._strategy_db(strategy_id).execute(
-                "SELECT * FROM decisions ORDER BY created_at DESC LIMIT ?", (limit,)
-            ).fetchall()
+            rows = (
+                self._strategy_db(strategy_id)
+                .execute(
+                    "SELECT * FROM decisions ORDER BY created_at DESC LIMIT ?", (limit,)
+                )
+                .fetchall()
+            )
         return [dict(r) for r in rows]
 
     def get_events(self, strategy_id: str, session_id: str) -> list[dict]:
         self._init_strategy_db(strategy_id)
-        rows = self._strategy_db(strategy_id).execute(
-            "SELECT * FROM events WHERE session_id = ? ORDER BY timestamp ASC",
-            (session_id,),
-        ).fetchall()
+        rows = (
+            self._strategy_db(strategy_id)
+            .execute(
+                "SELECT * FROM events WHERE session_id = ? ORDER BY timestamp ASC",
+                (session_id,),
+            )
+            .fetchall()
+        )
         return [dict(r) for r in rows]
 
     def get_reports(self, strategy_id: str, session_id: str) -> list[dict]:
         self._init_strategy_db(strategy_id)
-        rows = self._strategy_db(strategy_id).execute(
-            "SELECT * FROM agent_reports WHERE session_id = ? ORDER BY created_at ASC",
-            (session_id,),
-        ).fetchall()
+        rows = (
+            self._strategy_db(strategy_id)
+            .execute(
+                "SELECT * FROM agent_reports WHERE session_id = ? ORDER BY created_at ASC",
+                (session_id,),
+            )
+            .fetchall()
+        )
         return [dict(r) for r in rows]
 
     # ── Storage management ──────────────────────────────────
@@ -267,7 +313,7 @@ class ContextStore:
 _store: ContextStore | None = None
 
 
-def get_store(data_dir: str = DEFAULT_DATA_DIR) -> ContextStore:
+def get_store(data_dir: str | Path = DEFAULT_DATA_DIR) -> ContextStore:
     global _store
     if _store is None:
         _store = ContextStore(data_dir)

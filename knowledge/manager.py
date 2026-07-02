@@ -34,19 +34,19 @@ class KnowledgeManager:
         self, title: str, content: str, confidence: float = 1.0, source: str = ""
     ) -> None:
         """Add a verified rule (must follow)."""
-        entry = _format_entry("Rule", title, content, confidence, source)
+        entry = _format_entry("rule", title, content, confidence, source)
         _append_to_file(self.kb_dir / "rules.md", entry)
 
     def add_finding(
         self, title: str, content: str, confidence: float = 0.5, source: str = ""
     ) -> None:
         """Add an empirical finding (reference)."""
-        entry = _format_entry("Finding", title, content, confidence, source)
+        entry = _format_entry("finding", title, content, confidence, source)
         _append_to_file(self.kb_dir / "findings.md", entry)
 
     def add_failure(self, title: str, content: str, source: str = "") -> None:
         """Record a falsified approach (avoid repeating)."""
-        entry = _format_entry("Failure", title, content, 0.0, source)
+        entry = _format_entry("failure", title, content, 0.0, source)
         _append_to_file(self.kb_dir / "failures.md", entry)
 
     # ── read API ───────────────────────────────────────────────
@@ -89,6 +89,7 @@ class KnowledgeManager:
 
 
 # ── internal helpers ──────────────────────────────────────────
+
 
 def _format_entry(
     kind: KnowledgeType,

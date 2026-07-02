@@ -61,7 +61,9 @@ def pre_trade_check(
             blocking.append("5 consecutive losses — strategy may be broken")
 
     # 4. Recent similar-ticker losses
-    ticker_memories = memory_store.recall(ticker=ticker, strategy_id=strategy_id, limit=5)
+    ticker_memories = memory_store.recall(
+        ticker=ticker, strategy_id=strategy_id, limit=5
+    )
     recent_losses = [m for m in ticker_memories if m.outcome_quality < 0]
     if len(recent_losses) >= 3:
         warnings.append(

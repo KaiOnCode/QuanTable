@@ -9,20 +9,24 @@ Implements the periodic fetching described in docs/architecture.md §10.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
-
-from dataflow.cache import invalidate_cache, cache_key
+from apscheduler.triggers.interval import IntervalTrigger
 
 logger = logging.getLogger(__name__)
 
 # Default watch list for periodic data collection
 DEFAULT_WATCH_TICKERS = [
-    "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA",
-    "SPY", "QQQ",
+    "AAPL",
+    "MSFT",
+    "NVDA",
+    "GOOGL",
+    "AMZN",
+    "META",
+    "TSLA",
+    "SPY",
+    "QQQ",
 ]
 
 DEFAULT_SCHEDULES = {
@@ -58,14 +62,15 @@ class DataCollector:
         if self._running:
             return
 
-        self._scheduler = BackgroundScheduler(
+        scheduler = BackgroundScheduler(
             timezone="UTC",
             job_defaults={"misfire_grace_time": 300, "coalesce": True},
         )
+        self._scheduler = scheduler
 
         # Price refresh
         price_interval = self.schedules["price_cache"]["interval_minutes"]
-        self._scheduler.add_job(
+        scheduler.add_job(
             self._refresh_prices,
             IntervalTrigger(minutes=price_interval),
             id="refresh_prices",
@@ -75,7 +80,7 @@ class DataCollector:
 
         # News cache refresh
         news_interval = self.schedules["news_cache"]["interval_minutes"]
-        self._scheduler.add_job(
+        scheduler.add_job(
             self._refresh_news,
             IntervalTrigger(minutes=news_interval),
             id="refresh_news",
@@ -85,7 +90,7 @@ class DataCollector:
 
         # Sentiment refresh
         sent_interval = self.schedules["sentiment_cache"]["interval_minutes"]
-        self._scheduler.add_job(
+        scheduler.add_job(
             self._refresh_sentiment,
             IntervalTrigger(minutes=sent_interval),
             id="refresh_sentiment",
@@ -94,7 +99,7 @@ class DataCollector:
         )
 
         # Macro calendar refresh (daily at 8:00 UTC)
-        self._scheduler.add_job(
+        scheduler.add_job(
             self._refresh_macro,
             CronTrigger(hour=8, minute=0),
             id="refresh_macro",
@@ -102,7 +107,7 @@ class DataCollector:
             replace_existing=True,
         )
 
-        self._scheduler.start()
+        scheduler.start()
         self._running = True
         logger.info(
             "DataCollector started — %d tickers, price every %dm, news every %dm",
@@ -124,6 +129,7 @@ class DataCollector:
         """Fetch latest prices for stale tickers first, then all watched."""
         from dataflow.service import DataService
         from dataflow.store import MarketDataStore
+
         svc = DataService()
         store = MarketDataStore()
 
@@ -140,11 +146,17 @@ class DataCollector:
             except Exception as exc:
                 store.mark_error(ticker, "ohlcv", str(exc))
                 logger.debug("price refresh failed for %s: %s", ticker, exc)
-        logger.debug("price refresh: %d/%d tickers updated (%d stale)", count, len(prioritized), len(stale))
+        logger.debug(
+            "price refresh: %d/%d tickers updated (%d stale)",
+            count,
+            len(prioritized),
+            len(stale),
+        )
 
     def _refresh_news(self) -> None:
         """Fetch and store news for watched tickers."""
         from dataflow.service import DataService
+
         svc = DataService()
         count = 0
         for ticker in self.tickers:
@@ -154,11 +166,14 @@ class DataCollector:
                     count += 1
             except Exception:
                 pass
-        logger.debug("news refresh: %d/%d tickers with new articles", count, len(self.tickers))
+        logger.debug(
+            "news refresh: %d/%d tickers with new articles", count, len(self.tickers)
+        )
 
     def _refresh_sentiment(self) -> None:
         """Pre-compute sentiment for watched tickers."""
         from dataflow.providers.sentiment import df_get_sentiment
+
         count = 0
         for ticker in self.tickers:
             try:
@@ -172,6 +187,7 @@ class DataCollector:
     def _refresh_macro(self) -> None:
         """Refresh macro calendar cache."""
         from dataflow.service import DataService
+
         svc = DataService()
         try:
             svc.df_get_macro_calendar(window_days=14)

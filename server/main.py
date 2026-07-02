@@ -39,6 +39,7 @@ async def lifespan(app: FastAPI):
     if os.getenv("START_COLLECTOR", "").lower() == "true":
         try:
             from scheduler import DataCollector
+
             app.state.collector = DataCollector()
             app.state.collector.start()
             logger.info("DataCollector started")
@@ -78,7 +79,7 @@ app.add_middleware(
 
 # ── Register routes ────────────────────────────────────────
 
-from server.routes import analyze, strategies, memory, settings, health
+from server.routes import analyze, health, memory, settings, strategies  # noqa: E402
 
 app.include_router(analyze.router, prefix="/api")
 app.include_router(strategies.router, prefix="/api")

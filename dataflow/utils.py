@@ -67,4 +67,5 @@ def truncate_text(text: str, max_chars: int = 500) -> str:
 def now_iso() -> str:
     """Return current UTC timestamp as ISO 8601 string."""
     from datetime import datetime, timezone
+
     return datetime.now(timezone.utc).isoformat()

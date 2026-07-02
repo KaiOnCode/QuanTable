@@ -29,15 +29,17 @@ class MemoryRecord(BaseModel):
     ticker: str
 
     # OWM 5-factor inputs
-    outcome_quality: float = 0.0   # -1.0 to 1.0
-    confidence: float = 0.5        # 0.0 to 1.0
+    outcome_quality: float = 0.0  # -1.0 to 1.0
+    confidence: float = 0.5  # 0.0 to 1.0
 
     # Content layers
-    episodic: str = ""             # Story of what happened
-    semantic: str = ""             # Rule or lesson learned
-    procedural: str = ""           # Pattern or trigger conditions
-    affective: str = ""            # Emotional/market state context
-    trade_record: dict = Field(default_factory=dict)  # {action, price, qty, pnl_pct, ...}
+    episodic: str = ""  # Story of what happened
+    semantic: str = ""  # Rule or lesson learned
+    procedural: str = ""  # Pattern or trigger conditions
+    affective: str = ""  # Emotional/market state context
+    trade_record: dict = Field(
+        default_factory=dict
+    )  # {action, price, qty, pnl_pct, ...}
 
     # Computed on store
     owm_score: float = 0.0

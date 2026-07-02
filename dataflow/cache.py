@@ -26,6 +26,7 @@ def _sha256_path(cache_path: Path) -> Path:
 def _hashes_equal(a: str, b: str) -> bool:
     """Constant-time comparison of two hex digests."""
     import hmac
+
     return hmac.compare_digest(a.strip().lower(), b.strip().lower())
 
 

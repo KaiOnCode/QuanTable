@@ -13,7 +13,7 @@ import time
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -26,9 +26,7 @@ class AnalyzeRequest(BaseModel):
     ticker: str = Field(..., description="Stock ticker symbol, e.g. AAPL")
     date: str | None = Field(None, description="ISO 8601 date for historical analysis")
     current_position_pct: float = Field(0.0, ge=-100.0, le=100.0)
-    mode: str = Field(
-        "standard", pattern="^(fast|standard|deep)$"
-    )
+    mode: str = Field("standard", pattern="^(fast|standard|deep)$")
     active_agents: list[str] | None = None
     beliefs: list[str] = []
     debate_rounds: int = Field(2, ge=0, le=5)
@@ -51,17 +49,19 @@ async def analyze(request: AnalyzeRequest):
         started_at = time.time()
 
         # Emit initial progress
-        yield _sse_event("progress", {
-            "agent": "system",
-            "status": "started",
-            "session_id": session_id,
-            "ticker": request.ticker,
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        })
+        yield _sse_event(
+            "progress",
+            {
+                "agent": "system",
+                "status": "started",
+                "session_id": session_id,
+                "ticker": request.ticker,
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            },
+        )
 
         try:
             # Import orchestrator (lazy to avoid blocking startup)
-            from agentgraph.orchestrator import IntelliFin_Assistant
 
             # Run in thread pool (orchestrator is synchronous)
             loop = asyncio.get_event_loop()
@@ -88,49 +88,61 @@ async def analyze(request: AnalyzeRequest):
             }
             for agent_name, report in agent_reports.items():
                 status = "completed" if report else "error"
-                yield _sse_event("progress", {
-                    "agent": agent_name,
-                    "status": status,
-                    "duration_ms": 0,
-                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                })
+                yield _sse_event(
+                    "progress",
+                    {
+                        "agent": agent_name,
+                        "status": status,
+                        "duration_ms": 0,
+                        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    },
+                )
 
             # Emit debate records if present
             debate_history = result.get("debate_history", [])
             for d in debate_history:
-                yield _sse_event("debate", {
-                    "type": "investment",
-                    "round": d.get("round", 1),
-                    "bull_claim": d.get("bull_claim", ""),
-                    "bear_claim": d.get("bear_claim", ""),
-                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                })
+                yield _sse_event(
+                    "debate",
+                    {
+                        "type": "investment",
+                        "round": d.get("round", 1),
+                        "bull_claim": d.get("bull_claim", ""),
+                        "bear_claim": d.get("bear_claim", ""),
+                        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    },
+                )
 
             risk_debate = result.get("risk_debate_history", [])
             for d in risk_debate:
-                yield _sse_event("debate", {
-                    "type": "risk",
-                    "round": d.get("round", 1),
-                    "aggressive": d.get("aggressive", ""),
-                    "safe": d.get("safe", ""),
-                    "neutral": d.get("neutral", ""),
-                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                })
+                yield _sse_event(
+                    "debate",
+                    {
+                        "type": "risk",
+                        "round": d.get("round", 1),
+                        "aggressive": d.get("aggressive", ""),
+                        "safe": d.get("safe", ""),
+                        "neutral": d.get("neutral", ""),
+                        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    },
+                )
 
             # Emit final result
 
             elapsed = round(time.time() - started_at, 2)
-            yield _sse_event("result", {
-                "session_id": session_id,
-                "action": result.get("Action", "HOLD"),
-                "direction": direction,
-                "confidence": confidence,
-                "timeframe": timeframe,
-                "report": pm_report,
-                "target_position_pct": float(result.get("Target_position_pct", 0)),
-                "debate_records": debate_history,
-                "elapsed_s": elapsed,
-            })
+            yield _sse_event(
+                "result",
+                {
+                    "session_id": session_id,
+                    "action": result.get("Action", "HOLD"),
+                    "direction": direction,
+                    "confidence": confidence,
+                    "timeframe": timeframe,
+                    "report": pm_report,
+                    "target_position_pct": float(result.get("Target_position_pct", 0)),
+                    "debate_records": debate_history,
+                    "elapsed_s": elapsed,
+                },
+            )
 
         except Exception as exc:
             err_msg = str(exc)
@@ -139,24 +151,30 @@ async def analyze(request: AnalyzeRequest):
             if "Invalid json output:" in err_msg and "方向:" in err_msg:
                 report_text = err_msg.split("Invalid json output:", 1)[1].strip()
                 direction, confidence, timeframe = _parse_pm_report(report_text, "HOLD")
-                yield _sse_event("result", {
-                    "session_id": session_id,
-                    "action": "HOLD",
-                    "direction": direction,
-                    "confidence": confidence,
-                    "timeframe": timeframe,
-                    "report": report_text[:2000],
-                    "target_position_pct": 0,
-                    "debate_records": [],
-                    "elapsed_s": round(time.time() - started_at, 2),
-                })
+                yield _sse_event(
+                    "result",
+                    {
+                        "session_id": session_id,
+                        "action": "HOLD",
+                        "direction": direction,
+                        "confidence": confidence,
+                        "timeframe": timeframe,
+                        "report": report_text[:2000],
+                        "target_position_pct": 0,
+                        "debate_records": [],
+                        "elapsed_s": round(time.time() - started_at, 2),
+                    },
+                )
             else:
                 logger.exception("Analysis failed for %s", request.ticker)
-                yield _sse_event("error", {
-                    "agent": "orchestrator",
-                    "error": err_msg[:500],
-                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                })
+                yield _sse_event(
+                    "error",
+                    {
+                        "agent": "orchestrator",
+                        "error": err_msg[:500],
+                        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    },
+                )
 
     return StreamingResponse(
         event_stream(),
@@ -184,7 +202,9 @@ def _parse_pm_report(report: str, action: str) -> tuple[str, float, str]:
     # Try to extract confidence from report text
     confidence = 0.5  # default
     # Look for patterns like "置信度: 0.70" or "confidence: 0.65"
-    conf_match = re.search(r"(?:置信度|confidence)[:\s]*([0-9]*\.?[0-9]+)", report, re.IGNORECASE)
+    conf_match = re.search(
+        r"(?:置信度|confidence)[:\s]*([0-9]*\.?[0-9]+)", report, re.IGNORECASE
+    )
     if conf_match:
         try:
             confidence = float(conf_match.group(1))
@@ -210,6 +230,7 @@ def _run_analysis(
 
     import logging
     from datetime import datetime, timezone
+
     _log = logging.getLogger("analyze")
 
     from agentgraph.orchestrator import IntelliFin_Assistant
@@ -224,6 +245,7 @@ def _run_analysis(
     # Record session start
     try:
         from storage import get_store
+
         store = get_store()
         store.record_session("default", session_id, ticker)
     except Exception:
@@ -231,12 +253,16 @@ def _run_analysis(
 
     # Run the pipeline
     result = assistant.run(ticker, date=date, current_position_pct=position_pct)
-    _log.info("Pipeline complete. PM_report: %d chars, Action: %s",
-              len(result.get("PM_report", "")), result.get("Action", "N/A"))
+    _log.info(
+        "Pipeline complete. PM_report: %d chars, Action: %s",
+        len(result.get("PM_report", "")),
+        result.get("Action", "N/A"),
+    )
 
     # Record decision
     try:
         from storage import get_store
+
         store = get_store()
 
         # Record agent reports
@@ -244,20 +270,26 @@ def _run_analysis(
             report_key = f"{agent}_report"
             if result.get(report_key):
                 store.record_report(
-                    "default", session_id, agent,
-                    report_key, str(result[report_key]),
+                    "default",
+                    session_id,
+                    agent,
+                    report_key,
+                    str(result[report_key]),
                 )
 
         # Record final decision
-        store.record_decision("default", {
-            "session_id": session_id,
-            "ticker": ticker,
-            "action": result.get("Action", "HOLD"),
-            "direction": result.get("direction", "Neutral"),
-            "confidence": result.get("confidence", 0.0),
-            "target_position_pct": result.get("Target_position_pct", 0.0),
-            "report": result.get("PM_report", ""),
-        })
+        store.record_decision(
+            "default",
+            {
+                "session_id": session_id,
+                "ticker": ticker,
+                "action": result.get("Action", "HOLD"),
+                "direction": result.get("direction", "Neutral"),
+                "confidence": result.get("confidence", 0.0),
+                "target_position_pct": result.get("Target_position_pct", 0.0),
+                "report": result.get("PM_report", ""),
+            },
+        )
 
         # Record memory
         try:

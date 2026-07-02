@@ -49,7 +49,9 @@ def df_get_sentiment(
         from dataflow.providers.news_google import get_company_news
 
         articles = retry(
-            lambda: get_company_news(ticker, days=window_days, lang=lang, end_date=end_date),
+            lambda: get_company_news(
+                ticker, days=window_days, lang=lang, end_date=end_date
+            ),
             tries=2,
             base_delay=0.5,
         )
@@ -72,14 +74,40 @@ def df_get_sentiment(
 
     # Simple keyword-based sentiment scoring (production would use NLP/LLM)
     bullish_words = [
-        "beat", "raise", "upgrade", "growth", "strong", "positive",
-        "buy", "outperform", "opportunity", "expansion", "record",
-        "surge", "jump", "rally", "boost", "accelerate",
+        "beat",
+        "raise",
+        "upgrade",
+        "growth",
+        "strong",
+        "positive",
+        "buy",
+        "outperform",
+        "opportunity",
+        "expansion",
+        "record",
+        "surge",
+        "jump",
+        "rally",
+        "boost",
+        "accelerate",
     ]
     bearish_words = [
-        "miss", "cut", "downgrade", "decline", "weak", "negative",
-        "sell", "underperform", "risk", "layoff", "loss",
-        "drop", "fall", "plunge", "slowdown", "warning",
+        "miss",
+        "cut",
+        "downgrade",
+        "decline",
+        "weak",
+        "negative",
+        "sell",
+        "underperform",
+        "risk",
+        "layoff",
+        "loss",
+        "drop",
+        "fall",
+        "plunge",
+        "slowdown",
+        "warning",
     ]
 
     scores: list[float] = []
@@ -109,7 +137,9 @@ def df_get_sentiment(
     # Aggregate
     avg_score = sum(scores) / len(scores) if scores else 0.0
     # Confidence based on article count and score consistency
-    score_variance = sum((s - avg_score) ** 2 for s in scores) / len(scores) if scores else 1.0
+    score_variance = (
+        sum((s - avg_score) ** 2 for s in scores) / len(scores) if scores else 1.0
+    )
     confidence = min(1.0, len(articles) / 10.0 * (1.0 - min(score_variance, 0.5)))
 
     top_keywords = sorted(all_keywords.items(), key=lambda x: x[1], reverse=True)[:10]

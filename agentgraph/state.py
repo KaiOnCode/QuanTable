@@ -1,4 +1,4 @@
-from typing import Annotated, List, Optional
+from typing import Annotated, List, NotRequired, Optional
 
 from langchain_core.messages import BaseMessage
 from langgraph.graph import MessagesState, add_messages
@@ -17,6 +17,7 @@ class AgentState(MessagesState):
     # ========== 输入参数 ==========
     ticker: Annotated[str, "股票代码，例如 AAPL, TSM"]
     date: Annotated[str, "日期，例如 2024-01-15T00:00:00Z"]
+    as_of: NotRequired[Annotated[Optional[str], "无前视执行边界时间戳"]]
     current_position_pct: Annotated[
         float, "当前持仓百分比，例如 20意为20%，范围为 0~100"
     ]
@@ -56,6 +57,32 @@ class AgentState(MessagesState):
         Optional[float],
         "PM Agent的最终裁决目标持仓百分比，例如 50意为50%，范围为 0~100",
     ] = ""
+
+    # ========== 新增：执行层字段 (Gap C 核心) ==========
+    execution_report: Annotated[Optional[str], "本轮执行报告（JSON序列化）"]
+    execution_enabled: Annotated[bool, "是否启用自动执行"]
+
+    # ========== 新增：会话追踪 (Gap A 预留) ==========
+    strategy_id: NotRequired[Annotated[Optional[str], "策略ID，用于策略级归属"]]
+    account_id: NotRequired[Annotated[Optional[str], "账户ID，用于隔离交易账户"]]
+    session_id: Annotated[Optional[str], "会话ID，用于持久化追踪"]
+    decision_id: NotRequired[Annotated[Optional[str], "PM决策ID，由上游生成"]]
+
+    # ========== Gap B 预留：HITL 审批 ==========
+    approval_status: NotRequired[
+        Annotated[
+            Optional[str],
+            "审批状态: auto_approved/pending/approved/rejected/timed_out/modified",
+        ]
+    ]
+    approval_id: NotRequired[Annotated[Optional[str], "审批快照ID"]]
+    approval_reason: NotRequired[Annotated[Optional[str], "审批原因"]]
+    reviewer: NotRequired[Annotated[Optional[str], "审批人"]]
+    reviewer_notes: NotRequired[Annotated[Optional[str], "审批备注"]]
+    modified_target_pct: NotRequired[Annotated[Optional[float], "审批修改后的目标仓位"]]
+
+    # ========== Gap E 预留：决策流审计（注释形式） ==========
+    # execution_events: Annotated[Optional[str], "执行层事件列表（JSON序列化）"] = ""
 
     # ========== 可选：流程控制标记 ==========
     # 用于标记各阶段完成状态（可选，LangGraph会自动管理依赖）

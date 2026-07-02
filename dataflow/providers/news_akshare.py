@@ -53,13 +53,15 @@ def get_company_news_akshare(
             else:
                 published_at = ""
 
-            articles.append({
-                "title": str(row.get("新闻标题", "")),
-                "summary": str(row.get("新闻内容", ""))[:500],
-                "source": str(row.get("文章来源", "东方财富")),
-                "url": str(row.get("新闻链接", "")),
-                "published_at": published_at,
-            })
+            articles.append(
+                {
+                    "title": str(row.get("新闻标题", "")),
+                    "summary": str(row.get("新闻内容", ""))[:500],
+                    "source": str(row.get("文章来源", "东方财富")),
+                    "url": str(row.get("新闻链接", "")),
+                    "published_at": published_at,
+                }
+            )
         except Exception:
             continue
 

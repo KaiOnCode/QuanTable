@@ -244,9 +244,7 @@ def generate_pdf_report(
     _add_section(pdf, font_name, "最终投资决策", pm_report)
     _add_section(pdf, font_name, "市场分析报告", result.get("market_report"))
     _add_section(pdf, font_name, "新闻分析报告", result.get("news_report"))
-    _add_section(
-        pdf, font_name, "基本面分析报告", result.get("fundamental_report")
-    )
+    _add_section(pdf, font_name, "基本面分析报告", result.get("fundamental_report"))
     _add_section(pdf, font_name, "风险分析报告", result.get("risk_report"))
     _add_section(
         pdf,

@@ -23,6 +23,7 @@ async def list_memories(
     """List memories for a strategy, ordered by OWM score."""
     try:
         from memory.store import MemoryStore
+
         store = MemoryStore("data/memory.db")
         memories = store.recall(
             ticker=ticker,
@@ -43,6 +44,7 @@ async def get_memory(strategy_id: str, memory_id: str):
     """Get a single memory record (all 5 layers)."""
     try:
         from memory.store import MemoryStore
+
         store = MemoryStore("data/memory.db")
         record = store.get(memory_id)
         if record is None:

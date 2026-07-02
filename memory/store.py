@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timezone
 from pathlib import Path
 
-from memory.models import MemoryRecord, MemoryLayer
+from memory.models import MemoryRecord
 from memory.owm import compute_owm_score, compute_recency, compute_context_similarity
 
 
@@ -94,8 +93,7 @@ class MemoryStore:
 
         with self._conn() as db:
             rows = db.execute(
-                f"SELECT * FROM memories WHERE {where} "
-                f"ORDER BY owm_score DESC LIMIT ?",
+                f"SELECT * FROM memories WHERE {where} ORDER BY owm_score DESC LIMIT ?",
                 (*params, limit),
             ).fetchall()
 
@@ -196,8 +194,7 @@ class MemoryStore:
                 "ON memories(strategy_id)"
             )
             db.execute(
-                "CREATE INDEX IF NOT EXISTS idx_memories_ticker "
-                "ON memories(ticker)"
+                "CREATE INDEX IF NOT EXISTS idx_memories_ticker ON memories(ticker)"
             )
             db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_memories_owm "
@@ -207,10 +204,20 @@ class MemoryStore:
     @staticmethod
     def _row_to_record(row: tuple) -> MemoryRecord:
         cols = [
-            "id", "strategy_id", "session_id", "ticker",
-            "outcome_quality", "confidence", "owm_score",
-            "episodic", "semantic", "procedural", "affective",
-            "trade_record_json", "tags_json", "created_at",
+            "id",
+            "strategy_id",
+            "session_id",
+            "ticker",
+            "outcome_quality",
+            "confidence",
+            "owm_score",
+            "episodic",
+            "semantic",
+            "procedural",
+            "affective",
+            "trade_record_json",
+            "tags_json",
+            "created_at",
         ]
         d = dict(zip(cols, row))
         return MemoryRecord(

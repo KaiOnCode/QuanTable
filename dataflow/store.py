@@ -18,7 +18,6 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Any
 
 DEFAULT_DB_PATH = Path("data/market_data.db")
 
@@ -327,7 +326,9 @@ class MarketDataStore:
         window_days: int = 7,
     ) -> list[dict]:
         """Get recent news for a ticker."""
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=window_days)).strftime("%Y-%m-%d")
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=window_days)).strftime(
+            "%Y-%m-%d"
+        )
         with self._conn() as db:
             rows = db.execute(
                 """SELECT * FROM news
@@ -339,9 +340,7 @@ class MarketDataStore:
 
     # ── Freshness ───────────────────────────────────────────
 
-    def _touch_freshness(
-        self, ticker: str, data_type: str, success: bool
-    ) -> None:
+    def _touch_freshness(self, ticker: str, data_type: str, success: bool) -> None:
         now = _now()
         with self._conn() as db:
             if success:
@@ -377,9 +376,7 @@ class MarketDataStore:
                 (ticker.upper(), data_type, now, error_msg),
             )
 
-    def get_stale_tickers(
-        self, data_type: str, max_age_hours: int = 24
-    ) -> list[str]:
+    def get_stale_tickers(self, data_type: str, max_age_hours: int = 24) -> list[str]:
         """Return tickers whose data is older than max_age_hours.
         Used by the DataCollector to prioritize refreshes."""
         cutoff = (
@@ -413,9 +410,9 @@ class MarketDataStore:
             "news_articles": news_count,
             "latest_ohlcv_date": latest_bar,
             "db_path": str(self.db_path),
-            "db_size_mb": round(
-                self.db_path.stat().st_size / (1024 * 1024), 2
-            ) if self.db_path.exists() else 0,
+            "db_size_mb": round(self.db_path.stat().st_size / (1024 * 1024), 2)
+            if self.db_path.exists()
+            else 0,
         }
 
     # ── Internal ────────────────────────────────────────────

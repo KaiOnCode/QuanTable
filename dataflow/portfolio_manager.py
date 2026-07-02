@@ -1,6 +1,9 @@
 # dataflow/portfolio_manager.py
 from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import TYPE_CHECKING, Any, Dict
+
+if TYPE_CHECKING:
+    from broker.gateway import BrokerGateway
 
 
 class PortfolioManager:
@@ -85,6 +88,26 @@ class PortfolioManager:
         print(
             f"[PortfolioManager] Position updated for {ticker}: {self._positions.get(ticker)}"
         )
+
+    def sync_from_broker(self, broker: "BrokerGateway"):
+        """
+        从 broker 的公共账户/持仓接口刷新当前状态。
+        """
+        account = broker.get_account()
+        next_positions: Dict[str, Dict[str, Any]] = {}
+
+        for position in broker.get_positions():
+            position_value = (
+                position.shares * position.avg_cost + position.unrealized_pnl
+            )
+            qty_pct = position_value / account.equity if account.equity != 0 else 0.0
+            next_positions[position.ticker] = {
+                "side": position.side.lower(),
+                "qty_pct": qty_pct,
+                "avg_cost": position.avg_cost,
+            }
+
+        self._positions = next_positions
 
     def update_risk_limits(self, max_pos_pct: float, max_drawdown_pct: float):
         """

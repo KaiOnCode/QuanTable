@@ -81,17 +81,23 @@ class ToolRegistry:
         """
         tool = self._tools.get(name)
         if tool is None:
-            return json.dumps({
-                "status": "error",
-                "error": f"tool '{name}' not found",
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": f"tool '{name}' not found",
+                },
+                ensure_ascii=False,
+            )
         try:
             return tool.execute(**params)
         except Exception as exc:
-            return json.dumps({
-                "status": "error",
-                "error": f"tool '{name}' failed: {exc}",
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": f"tool '{name}' failed: {exc}",
+                },
+                ensure_ascii=False,
+            )
 
     def __len__(self) -> int:
         return len(self._tools)

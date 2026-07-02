@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class MCPServerConfig:
     """Configuration for an external MCP server."""
+
     name: str
     command: str = ""
     args: list[str] = field(default_factory=list)
@@ -100,7 +101,9 @@ class MCPClientManager:
                 tools = self._discover_from_server(name, config)
                 all_tools.extend(tools)
             except Exception as exc:
-                logger.warning("Failed to discover tools from MCP server '%s': %s", name, exc)
+                logger.warning(
+                    "Failed to discover tools from MCP server '%s': %s", name, exc
+                )
         return all_tools
 
     def _discover_from_server(
@@ -120,7 +123,8 @@ class MCPClientManager:
         logger.info(
             "MCP server '%s' configured (transport=%s) — "
             "full discovery requires fastmcp library",
-            server_name, config.transport,
+            server_name,
+            config.transport,
         )
         return []
 
@@ -128,16 +132,22 @@ class MCPClientManager:
         """Execute an external MCP tool. Returns JSON string."""
         info = self._tools.get(tool_name)
         if info is None:
-            return json.dumps({
-                "status": "error",
-                "error": f"MCP tool '{tool_name}' not found",
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": f"MCP tool '{tool_name}' not found",
+                },
+                ensure_ascii=False,
+            )
 
         # Stub: actual execution requires fastmcp adapter
-        return json.dumps({
-            "status": "error",
-            "error": f"MCP tool execution requires fastmcp library (tool: {tool_name})",
-        }, ensure_ascii=False)
+        return json.dumps(
+            {
+                "status": "error",
+                "error": f"MCP tool execution requires fastmcp library (tool: {tool_name})",
+            },
+            ensure_ascii=False,
+        )
 
 
 # Singleton
