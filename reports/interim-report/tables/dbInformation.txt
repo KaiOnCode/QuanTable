@@ -1,0 +1,50 @@
+Bash(DB="/Users/a14550/Documents/Prog2026/COMP7705/Version2026/COMP7705-Agent-Quant/d
+      ata"
+
+      echo "=== market_data.db ==="
+      echo -n "OHLCV: "; sqlite3 "$DB/market_data.db" "SELECT COUNT(*) FROM ohlcv"
+      echo -n "Fundamentals: "; sqlite3 "$DB/market_data.db" "SELECT COUNT(*) FROM
+      fundamentals"
+      echo -n "News: "; sqlite3 "$DB/market_data.db" "SELECT COUNT(*) FROM news"
+      echo -n "Ticker meta: "; sqlite3 "$DB/market_data.db" "SELECT COUNT(*) FROM
+      ticker_meta"
+      echo ""
+      echo "=== system.db ==="
+      echo -n "Strategies: "; sqlite3 "$DB/system.db" "SELECT COUNT(*) FROM strategies"
+      echo -n "Watchlists: "; sqlite3 "$DB/system.db" "SELECT COUNT(*) FROM watchlists"
+      echo -n "Monitor tasks: "; sqlite3 "$DB/system.db" "SELECT COUNT(*) FROM
+      monitor_tasks"
+      echo ""
+      echo "=== insights.db ==="
+      echo -n "Monitoring reports: "; sqlite3 "$DB/insights.db" "SELECT COUNT(*) FROM
+      monitoring_reports"
+      echo ""
+      echo "=== memory.db ==="
+      echo -n "Memories: "; sqlite3 "$DB/memory.db" "SELECT COUNT(*) FROM memories"
+      echo ""
+      echo "=== default.db ==="
+      echo -n "Sessions: "; sqlite3 "$DB/default.db" "SELECT COUNT(*) FROM sessions"
+      echo -n "Decisions: "; sqlite3 "$DB/default.db" "SELECT COUNT(*) FROM decisions"
+      echo -n "Agent reports: "; sqlite3 "$DB/default.db" "SELECT COUNT(*) FROM
+      agent_reports")
+  ⎿  === market_data.db ===
+     OHLCV: 7532
+     Fundamentals: 58
+     News: 136
+     Ticker meta: 24
+
+     === system.db ===
+     Strategies: 3
+     Watchlists: 3
+     Monitor tasks: 4
+
+     === insights.db ===
+     Monitoring reports: 7
+
+     === memory.db ===
+     Memories: 14
+
+     === default.db ===
+     Sessions: 13
+     Decisions: 5
+     Agent reports: 36

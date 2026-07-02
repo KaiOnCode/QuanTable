@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 """
-IntelliFin Assistant - CLI 入口
+IntelliFin Assistant - CLI 入口 (LEGACY)
 股票分析多智能体系统的命令行界面
+
+⚠️  DEPRECATED: 此文件是早期开发阶段的 CLI 入口。
+    所有分析功能现在通过 FastAPI 服务器调用:
+      uv run uvicorn server.main:app --reload   → POST /api/analyze (SSE)
+      cd frontend && npm run dev                 → Quick Ask 页面
+
+    保留此文件仅用于本地快速测试: uv run python app.py AAPL
 """
 
 import argparse

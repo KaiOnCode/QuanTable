@@ -223,11 +223,13 @@ frontend/.next/
 properties.env
 
 # Runtime data
+data/history/
 data/*.db
 data/*.db-journal
 data/*.db-shm
 data/*.db-wal
 *.db-journal
+data/agent-runs/
 
 # Vibe-Trading reference (local only — key files extracted to skills/ and mcp/)
 skills/Vibe-Trading/
@@ -236,3 +238,9 @@ skills/Vibe-Trading/
 .idea/
 *.swp
 *.swo
+
+# Draft
+userDraft.md
+
+# Research
+docs/research/

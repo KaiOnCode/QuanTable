@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Shell } from "@/components/layout/shell";
 import {
   Card,
@@ -37,6 +38,8 @@ import {
 import { EmptyState } from "@/components/shared/empty-state";
 import { StatusBadge } from "@/components/shared/badges";
 import { formatPercent, formatDate } from "@/lib/utils";
+import { strategiesApi } from "@/lib/api/strategies";
+import type { StrategyConfig } from "@/lib/types/models";
 import {
   Plus,
   Search,
@@ -48,55 +51,35 @@ import {
   Trash2,
   TrendingUp,
   ArrowUpRight,
+  Loader2,
 } from "lucide-react";
 import Link from "next/link";
 
-// Mock data for UI development (backend not running)
-const MOCK_STRATEGIES = [
-  {
-    id: "1",
-    name: "Tech Momentum",
-    description: "Momentum-based strategy focused on tech stocks",
-    type: "agent" as const,
-    status: "active" as const,
-    tickers: ["AAPL", "MSFT", "NVDA"],
-    created_at: "2026-05-01T09:00:00Z",
-    updated_at: "2026-05-28T06:00:00Z",
-  },
-  {
-    id: "2",
-    name: "Value Hunter",
-    description: "Deep value with PE/PB filters",
-    type: "quant" as const,
-    status: "active" as const,
-    tickers: ["BRK.B", "JPM", "XOM"],
-    created_at: "2026-04-15T09:00:00Z",
-    updated_at: "2026-05-27T06:00:00Z",
-  },
-  {
-    id: "3",
-    name: "HITL Safe Harbor",
-    description: "Conservative strategy with human oversight",
-    type: "hitl" as const,
-    status: "draft" as const,
-    tickers: ["SPY", "BND", "GLD"],
-    created_at: "2026-05-20T09:00:00Z",
-    updated_at: "2026-05-25T06:00:00Z",
-  },
-];
-
 export default function StrategiesPage() {
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
 
-  const strategies = MOCK_STRATEGIES;
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ["strategies", typeFilter, statusFilter],
+    queryFn: () =>
+      strategiesApi.list({
+        type: typeFilter !== "all" ? typeFilter : undefined,
+        status: statusFilter !== "all" ? statusFilter : undefined,
+      }),
+  });
+
+  const strategies = data?.items ?? [];
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => strategiesApi.delete(id, true),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["strategies"] }),
+  });
 
   const filtered = strategies.filter((s) => {
     if (search && !s.name.toLowerCase().includes(search.toLowerCase()))
       return false;
-    if (typeFilter !== "all" && s.type !== typeFilter) return false;
-    if (statusFilter !== "all" && s.status !== statusFilter) return false;
     return true;
   });
 
@@ -153,12 +136,22 @@ export default function StrategiesPage() {
                   <SelectItem value="stopped">Stopped</SelectItem>
                 </SelectContent>
               </Select>
+              {isLoading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
             </div>
           </CardContent>
         </Card>
 
-        {/* Table */}
-        {filtered.length === 0 ? (
+        {/* Error state */}
+        {isError && (
+          <Card className="border-destructive">
+            <CardContent className="pt-6 text-sm text-destructive">
+              Failed to load strategies: {error?.message ?? "Unknown error"}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Empty state */}
+        {!isLoading && !isError && filtered.length === 0 ? (
           <Card>
             <CardContent className="pt-8">
               <EmptyState
@@ -181,7 +174,10 @@ export default function StrategiesPage() {
               />
             </CardContent>
           </Card>
-        ) : (
+        ) : null}
+
+        {/* Table */}
+        {!isLoading && !isError && filtered.length > 0 ? (
           <Card>
             <Table>
               <TableHeader>
@@ -190,7 +186,6 @@ export default function StrategiesPage() {
                   <TableHead>Type</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Tickers</TableHead>
-                  <TableHead>Return</TableHead>
                   <TableHead>Created</TableHead>
                   <TableHead className="w-12" />
                 </TableRow>
@@ -215,11 +210,11 @@ export default function StrategiesPage() {
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <StatusBadge status={s.status} />
+                      <StatusBadge status={s.status ?? "draft"} />
                     </TableCell>
                     <TableCell>
                       <div className="flex gap-1 flex-wrap">
-                        {s.tickers.map((t) => (
+                        {(s.tickers ?? []).map((t) => (
                           <Badge
                             key={t}
                             variant="secondary"
@@ -229,9 +224,6 @@ export default function StrategiesPage() {
                           </Badge>
                         ))}
                       </div>
-                    </TableCell>
-                    <TableCell className="font-mono text-sm">
-                      <span className="text-green-500">+0.00%</span>
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {formatDate(s.created_at)}
@@ -262,7 +254,14 @@ export default function StrategiesPage() {
                             Clone
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
-                          <DropdownMenuItem className="text-destructive">
+                          <DropdownMenuItem
+                            className="text-destructive"
+                            onClick={() => {
+                              if (confirm(`Delete "${s.name}"?`)) {
+                                deleteMutation.mutate(s.id);
+                              }
+                            }}
+                          >
                             <Trash2 className="mr-2 h-4 w-4" />
                             Delete
                           </DropdownMenuItem>
@@ -274,7 +273,7 @@ export default function StrategiesPage() {
               </TableBody>
             </Table>
           </Card>
-        )}
+        ) : null}
       </div>
     </Shell>
   );

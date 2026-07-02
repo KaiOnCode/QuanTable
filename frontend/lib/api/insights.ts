@@ -1,12 +1,12 @@
 import { api } from "./client";
-import type { DailyInsight, InsightFeedback } from "@/lib/types/models";
+import type { DailyBrief, InsightFeedback } from "@/lib/types/models";
 
 export const insightsApi = {
   list(params?: {
     from?: string;
     to?: string;
     type?: string;
-  }): Promise<{ insights: DailyInsight[] }> {
+  }): Promise<{ insights: DailyBrief[] }> {
     const sp = new URLSearchParams();
     if (params?.from) sp.set("from", params.from);
     if (params?.to) sp.set("to", params.to);
@@ -14,7 +14,7 @@ export const insightsApi = {
     return api.get(`/insights?${sp.toString()}`);
   },
 
-  get(insightId: string): Promise<DailyInsight> {
+  get(insightId: string): Promise<DailyBrief> {
     return api.get(`/insights/${insightId}`);
   },
 

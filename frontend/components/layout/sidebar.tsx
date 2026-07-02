@@ -18,6 +18,7 @@ import {
   Star,
   Shield,
   FileText,
+  Eye,
   Settings,
   ChevronLeft,
   ChevronRight,
@@ -26,7 +27,8 @@ import { useState } from "react";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/quick-ask", label: "Quick Ask", icon: Zap },
+  { href: "/agent", label: "Agent", icon: Zap },
+  { href: "/quick-ask", label: "Quick Ask", icon: TrendingUp },
   { href: "/strategies", label: "Strategies", icon: TrendingUp },
   { href: "/backtest", label: "Backtest", icon: LineChart },
   { href: "/memory-lab", label: "Memory Lab", icon: Brain },
@@ -34,6 +36,7 @@ const navItems = [
   { href: "/approvals", label: "Approvals", icon: CheckSquare },
   { href: "/scanner", label: "Scanner", icon: Search },
   { href: "/watchlist", label: "Watchlist", icon: Star },
+  { href: "/monitor", label: "Monitor", icon: Eye },
   { href: "/risk", label: "Risk", icon: Shield },
   { href: "/reports", label: "Reports", icon: FileText },
   { href: "/settings", label: "Settings", icon: Settings },

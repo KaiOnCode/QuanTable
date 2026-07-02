@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+@plugin "@tailwindcss/typography";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -126,5 +127,40 @@
   }
   html {
     @apply font-sans;
+  }
+
+  /* Scrollbar: vertical blends into dark background, horizontal hidden */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 0;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--muted);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--muted-foreground);
+  }
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  /* Firefox */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--muted) transparent;
+  }
+}
+
+@layer components {
+  /* base-ui ScrollArea: darken custom thumb, hide horizontal scrollbar */
+  [data-slot="scroll-area-thumb"] {
+    background: var(--muted) !important;
+  }
+  [data-slot="scroll-area-scrollbar"][data-orientation="horizontal"] {
+    display: none !important;
   }
 }

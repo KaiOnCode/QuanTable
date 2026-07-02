@@ -11,7 +11,6 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
   Select,
@@ -20,9 +19,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { EmptyState } from "@/components/shared/empty-state";
+import {
+  Accordion,
+  AccordionItem,
+  AccordionTrigger,
+  AccordionContent,
+} from "@/components/ui/accordion";
 import { ActionBadge, DirectionBadge } from "@/components/shared/badges";
 import {
   Zap,
@@ -31,11 +34,13 @@ import {
   CheckCircle2,
   Clock,
   AlertCircle,
-  MessageSquare,
   TrendingUp,
   Shield,
 } from "lucide-react";
+import { Markdown } from "@/components/markdown";
 import { createSSEStream } from "@/lib/api/client";
+import { HistoryPanel } from "@/components/quick-ask/history-panel";
+import { TickerPreview } from "@/components/quick-ask/ticker-preview";
 import type {
   SSEProgressEvent,
   SSEDebateEvent,
@@ -76,6 +81,135 @@ const STAGE_LABELS: Record<number, string> = {
   5: "Final Decision",
 };
 
+function parseReport(report: string): { direction?: string; timeframe?: string; confidence?: string; oneliner?: string; body: string } {
+  const lines = report.split("\n");
+  const result: any = {};
+  let bodyStart = 0;
+  for (let i = 0; i < Math.min(lines.length, 8); i++) {
+    const line = lines[i].trim();
+    const m = line.match(/^(方向|时间范围|置信度|一句话结论)[：:]\s*(.+)/);
+    if (m) {
+      const keyMap: Record<string, string> = { "方向": "direction", "时间范围": "timeframe", "置信度": "confidence", "一句话结论": "oneliner" };
+      result[keyMap[m[1]] || m[1]] = m[2];
+      bodyStart = i + 1;
+    } else if (line === "" && bodyStart > 0) {
+      bodyStart = i + 1;
+      break;
+    }
+  }
+  result.body = lines.slice(bodyStart).join("\n").trim();
+  return result;
+}
+
+function ReportCard({ result }: { result: SSEResultEvent }) {
+  const [showFull, setShowFull] = useState(false);
+  const parsed = result.report ? parseReport(result.report) : null;
+  const oneliner = parsed?.oneliner || "";
+  const bodyText = parsed?.body || result.report || "";
+  const confidence = result.confidence;
+  const confidencePct = Math.round(confidence * 100);
+  const barColor = confidencePct >= 70 ? "bg-green-500" : confidencePct >= 40 ? "bg-yellow-500" : "bg-red-500";
+  const news = result.news_articles || [];
+
+  return (
+    <div className="space-y-4">
+      {/* Decision Summary Card */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Analysis Result</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Badge Row */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <ActionBadge action={result.action} />
+            <DirectionBadge direction={result.direction} />
+            {result.timeframe && <Badge variant="outline">{result.timeframe}</Badge>}
+          </div>
+
+          {/* Confidence Bar */}
+          <div className="space-y-1">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-muted-foreground">Confidence</span>
+              <span className="font-mono font-bold">{confidencePct}%</span>
+            </div>
+            <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+              <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${confidencePct}%` }} />
+            </div>
+          </div>
+
+          {/* One-liner */}
+          {oneliner && (
+            <div className="p-3 rounded-lg bg-primary/5 border border-primary/10">
+              <p className="text-sm font-medium">{oneliner}</p>
+            </div>
+          )}
+
+          {/* Expandable full report */}
+          {bodyText && bodyText !== oneliner && (
+            <div>
+              <Button variant="ghost" size="sm" onClick={() => setShowFull(!showFull)}>
+                {showFull ? "Hide Full Report" : "Show Full Report"}
+              </Button>
+              {showFull && (
+                <div className="mt-2 p-4 rounded-lg bg-muted/30 text-sm leading-relaxed max-h-96 overflow-y-auto prose prose-sm dark:prose-invert max-w-none">
+                  <Markdown>{bodyText}</Markdown>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Per-agent reports */}
+          {result.agent_reports && Object.keys(result.agent_reports).length > 0 && (
+            <Accordion>
+              {Object.entries(result.agent_reports).map(([agent, report]) => (
+                <AccordionItem key={agent} value={agent}>
+                  <AccordionTrigger>
+                    <span className="text-xs font-mono text-muted-foreground mr-2">
+                      {agent.replace(/_/g, " ")}
+                    </span>
+                  </AccordionTrigger>
+                  <AccordionContent>
+                    <div className="p-3 rounded-lg bg-muted/20 text-xs leading-relaxed max-h-64 overflow-y-auto prose prose-sm dark:prose-invert max-w-none">
+                      <Markdown>{report}</Markdown>
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
+              ))}
+            </Accordion>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* News Sources */}
+      {news.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">News Sources ({news.length})</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {news.map((a, i) => (
+                <div key={i} className="flex items-start gap-2 text-sm">
+                  <span className="text-muted-foreground shrink-0 mt-0.5">{i + 1}.</span>
+                  <div className="min-w-0">
+                    <a href={a.url} target="_blank" rel="noopener noreferrer"
+                       className="text-primary hover:underline truncate block">
+                      {a.title}
+                    </a>
+                    <div className="text-xs text-muted-foreground">
+                      {a.source}{a.published_at ? ` · ${a.published_at.slice(0, 10)}` : ""}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
 export default function QuickAskPage() {
   const [ticker, setTicker] = useState("");
   const [mode, setMode] = useState<"fast" | "standard" | "deep">("standard");
@@ -86,6 +220,9 @@ export default function QuickAskPage() {
   const [result, setResult] = useState<SSEResultEvent | null>(null);
   const [debates, setDebates] = useState<SSEDebateEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [streamedReports, setStreamedReports] = useState<Map<string, string>>(
+    new Map()
+  );
   const [abortController, setAbortController] =
     useState<AbortController | null>(null);
 
@@ -96,6 +233,7 @@ export default function QuickAskPage() {
     setResult(null);
     setDebates([]);
     setError(null);
+    setStreamedReports(new Map());
 
     // Immediately mark PM as "started" so user sees feedback
     const initialStatuses = new Map<string, AgentStatus>();
@@ -130,6 +268,13 @@ export default function QuickAskPage() {
             });
             return next;
           });
+          if (event.report) {
+            setStreamedReports((prev) => {
+              const next = new Map(prev);
+              next.set(event.agent, event.report!);
+              return next;
+            });
+          }
         },
         onDebate: (event: SSEDebateEvent) => {
           setDebates((prev) => [...prev, event]);
@@ -172,6 +317,9 @@ export default function QuickAskPage() {
             <CardTitle className="flex items-center gap-2">
               <Zap className="h-5 w-5" />
               Quick Ask
+              <div className="ml-auto">
+                <HistoryPanel />
+              </div>
             </CardTitle>
             <CardDescription>
               Enter a ticker symbol to get AI-powered investment analysis
@@ -226,6 +374,11 @@ export default function QuickAskPage() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Ticker Data Preview */}
+        {ticker.trim() && (
+          <TickerPreview ticker={ticker.toUpperCase()} />
+        )}
 
         {/* Analysis Progress */}
         {analyzing && (
@@ -298,6 +451,33 @@ export default function QuickAskPage() {
           </Card>
         )}
 
+        {/* Live agent reports — appearing one by one during analysis */}
+        {analyzing && streamedReports.size > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm">Agent Reports</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Accordion>
+                {Array.from(streamedReports.entries()).map(([agent, report]) => (
+                  <AccordionItem key={agent} value={agent}>
+                    <AccordionTrigger>
+                      <span className="text-xs font-mono text-muted-foreground">
+                        {agent.replace(/_/g, " ")}
+                      </span>
+                    </AccordionTrigger>
+                    <AccordionContent>
+                      <div className="p-3 rounded-lg bg-muted/20 text-xs leading-relaxed max-h-64 overflow-y-auto prose prose-sm dark:prose-invert max-w-none">
+                        <Markdown>{report}</Markdown>
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
+                ))}
+              </Accordion>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Error */}
         {error && (
           <Card className="border-destructive">
@@ -321,34 +501,7 @@ export default function QuickAskPage() {
         {/* Result */}
         {result && (
           <div className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Decision</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-center gap-4 mb-4">
-                  <ActionBadge action={result.action} />
-                  <DirectionBadge direction={result.direction} />
-                  <Badge variant="outline" className="text-sm font-mono">
-                    Confidence: {(result.confidence * 100).toFixed(0)}%
-                  </Badge>
-                  {result.timeframe && (
-                    <Badge variant="outline" className="text-sm">
-                      {result.timeframe}
-                    </Badge>
-                  )}
-                </div>
-                {result.report && (
-                  <div className="prose prose-sm dark:prose-invert max-w-none mt-4 p-4 rounded-lg bg-muted/30">
-                    <div
-                      dangerouslySetInnerHTML={{
-                        __html: result.report.replace(/\n/g, "<br/>"),
-                      }}
-                    />
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+            <ReportCard result={result} />
 
             {/* Debate Records */}
             {debates.length > 0 && (

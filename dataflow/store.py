@@ -19,7 +19,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-DEFAULT_DB_PATH = Path("data/market_data.db")
+DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "market_data.db"
 
 
 def _now() -> str:
@@ -38,7 +38,7 @@ class MarketDataStore:
     """
 
     def __init__(self, db_path: str | Path = DEFAULT_DB_PATH):
-        self.db_path = Path(db_path)
+        self.db_path = Path(db_path).resolve()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
@@ -66,7 +66,8 @@ class MarketDataStore:
                     as_of_date TEXT NOT NULL,
                     pe REAL, pb REAL, ps REAL, eps REAL,
                     market_cap REAL,
-                    gross_margin REAL, op_margin REAL,
+                    gross_margin REAL, op_margin REAL, profit_margin REAL,
+                    roe REAL, dividend_yield REAL,
                     revenue_growth REAL, eps_growth REAL,
                     raw_json TEXT DEFAULT '{}',
                     source TEXT DEFAULT 'yfinance',
@@ -74,7 +75,15 @@ class MarketDataStore:
                     PRIMARY KEY (ticker, as_of_date)
                 );
                 CREATE INDEX IF NOT EXISTS idx_fund_ticker ON fundamentals(ticker);
-
+                """)
+            # Migrations: add columns that may not exist in older DBs
+            # Must run outside executescript — if column already exists, silently skip
+            for col in ("roe", "dividend_yield", "profit_margin"):
+                try:
+                    db.execute(f"ALTER TABLE fundamentals ADD COLUMN {col} REAL")
+                except Exception:
+                    pass  # column already exists
+            db.executescript("""
                 -- News articles
                 CREATE TABLE IF NOT EXISTS news (
                     id TEXT PRIMARY KEY,
@@ -113,6 +122,20 @@ class MarketDataStore:
                     error_count INTEGER DEFAULT 0,
                     last_error TEXT,
                     PRIMARY KEY (ticker, data_type)
+                );
+
+                -- Ticker metadata from YFinance info (one-time fetch, immutable)
+                CREATE TABLE IF NOT EXISTS ticker_meta (
+                    ticker TEXT PRIMARY KEY,
+                    name TEXT DEFAULT '',
+                    short_name TEXT DEFAULT '',
+                    sector TEXT DEFAULT '',
+                    industry TEXT DEFAULT '',
+                    market TEXT DEFAULT '',
+                    exchange TEXT DEFAULT '',
+                    currency TEXT DEFAULT '',
+                    country TEXT DEFAULT '',
+                    fetched_at TEXT NOT NULL
                 );
             """)
 
@@ -198,9 +221,11 @@ class MarketDataStore:
             db.execute(
                 """INSERT OR REPLACE INTO fundamentals
                    (ticker, as_of_date, pe, pb, ps, eps, market_cap,
-                    gross_margin, op_margin, revenue_growth, eps_growth,
+                    gross_margin, op_margin, profit_margin,
+                    roe, dividend_yield,
+                    revenue_growth, eps_growth,
                     raw_json, source, fetched_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     ticker.upper(),
                     as_of_date[:10],
@@ -211,6 +236,9 @@ class MarketDataStore:
                     ttm.get("market_cap"),
                     ttm.get("gross_margin"),
                     ttm.get("op_margin"),
+                    ttm.get("profit_margin"),
+                    ttm.get("roe"),
+                    ttm.get("dividend_yield"),
                     growth.get("rev_yoy"),
                     growth.get("eps_yoy"),
                     json.dumps(data, ensure_ascii=False),
@@ -414,6 +442,52 @@ class MarketDataStore:
             if self.db_path.exists()
             else 0,
         }
+
+    # ── Ticker Metadata ──────────────────────────────────────
+
+    def upsert_ticker_meta(self, ticker: str, **fields: str) -> None:
+        """Store metadata for a ticker. Accepts: name, short_name, sector,
+        industry, market, exchange, currency, country. One-time fetch."""
+        now = _now()
+        cols = [
+            "ticker",
+            "name",
+            "short_name",
+            "sector",
+            "industry",
+            "market",
+            "exchange",
+            "currency",
+            "country",
+            "fetched_at",
+        ]
+        vals = [ticker.upper()] + [fields.get(c, "") for c in cols[1:-1]] + [now]
+        with self._conn() as db:
+            db.execute(
+                f"INSERT OR REPLACE INTO ticker_meta ({', '.join(cols)}) "
+                f"VALUES ({', '.join('?' for _ in cols)})",
+                vals,
+            )
+
+    def get_ticker_meta(self, ticker: str) -> dict | None:
+        """Get metadata for a ticker."""
+        with self._conn() as db:
+            row = db.execute(
+                "SELECT * FROM ticker_meta WHERE ticker = ?", (ticker.upper(),)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def get_ticker_meta_batch(self, tickers: list[str]) -> dict[str, dict]:
+        """Get metadata for multiple tickers at once."""
+        if not tickers:
+            return {}
+        placeholders = ",".join("?" for _ in tickers)
+        with self._conn() as db:
+            rows = db.execute(
+                f"SELECT * FROM ticker_meta WHERE ticker IN ({placeholders})",
+                [t.upper() for t in tickers],
+            ).fetchall()
+        return {r["ticker"]: dict(r) for r in rows}
 
     # ── Internal ────────────────────────────────────────────
 

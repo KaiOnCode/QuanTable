@@ -26,6 +26,7 @@ export type AnalyzeRequest = {
 export type SSEProgressEvent = {
   agent: string;
   status: AgentRunStatus;
+  report?: string;
   duration_ms?: number;
   tool?: string;
   error?: string;
@@ -52,8 +53,10 @@ export type SSEResultEvent = {
   confidence: number;
   timeframe?: string;
   report?: string;
+  agent_reports?: Record<string, string>;
   target_position_pct?: number;
   debate_records?: SSEDebateEvent[];
+  news_articles?: { title: string; source: string; url: string; published_at: string }[];
   elapsed_s?: number;
 };
 
@@ -193,10 +196,13 @@ export interface Conversation {
   tags: string[]; is_saved: boolean; description: string;
 }
 
-export interface DailyInsight {
+export interface DailyBrief {
   id: string; type: "morning_brief" | "midday_update" | "event_alert";
-  title: string; content: string; summary: string; tickers_covered: string[];
-  key_events: string[]; generated_at: string; sent_via: string[];
+  title: string; summary: string; content: string;
+  key_events: string[]; tickers_covered: string[];
+  market_data?: Record<string, Record<string, { name: string; price: number | null; change_pct: number | null; currency: string }>>;
+  news_count?: number; elapsed_s?: number;
+  generated_at: string;
 }
 
 export interface InsightFeedback {
@@ -320,3 +326,39 @@ export interface HealthResponse { status: string; uptime_seconds: number; versio
 export type CreateStrategyRequest = Omit<StrategyConfig, "id" | "created_at" | "updated_at" | "status"> & { status?: StrategyStatus; };
 export type UpdateStrategyRequest = Partial<CreateStrategyRequest>;
 export interface Hypothesis { id: string; strategy_id: string; status: string; claim: string; acceptance_criteria: string; evidence: { session_id: string; result: string; note: string; timestamp: string }[]; open_items: string[]; budget_rounds: number; completed_rounds: number; created_at: string; resolved_at: string | null; }
+
+// ── MonitorTask types ─────────────────────────────────────
+export type MonitorMode = "keyword" | "ticker" | "domain";
+export interface MonitorTargets { keywords?: string[]; tickers?: string[]; domain_prompt?: string; }
+export interface MonitorSchedule { frequency: string; time?: string; days?: string[]; }
+export interface MonitorAgentConfig { enabled: boolean; auto_discover?: boolean; }
+export interface MonitorOutput { format?: string; language?: string; }
+
+export interface MonitorTask {
+  id: string; name: string; description: string; mode: MonitorMode;
+  targets: MonitorTargets; sources: string[]; schedule: MonitorSchedule;
+  agent: MonitorAgentConfig; output: MonitorOutput;
+  cron_expression?: string;
+  expanded_keywords?: string[];
+  expanded_tickers?: string[];
+  report_language?: string;
+  status: string; created_at: string; updated_at: string; last_run_at: string | null;
+}
+
+export interface MonitoringReport {
+  id: string; monitor_id: string; session_id: string;
+  title?: string; summary: string; key_findings: string[]; sentiment: string;
+  related_tickers: string[]; alerts: { level: string; message: string }[];
+  raw_data: Record<string, unknown>; generated_at: string;
+  report_type?: string; content_text?: string; content?: string;
+}
+
+export interface MonitorNewsItem {
+  id: string; monitor_id: string;
+  title: string; summary: string; url: string;
+  source_name: string; published_at: string | null;
+  relevance_score: number; fetched_at: string;
+}
+
+export type CreateMonitorRequest = Omit<MonitorTask, "id" | "created_at" | "updated_at" | "last_run_at"> & { status?: string; expand_keywords?: boolean; };
+export type UpdateMonitorRequest = Partial<CreateMonitorRequest>;

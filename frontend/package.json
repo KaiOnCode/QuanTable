@@ -4,13 +4,14 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "node scripts/next-build.cjs",
     "start": "next start",
     "lint": "eslint"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",
     "@hookform/resolvers": "^5.4.0",
+    "@tailwindcss/typography": "^0.5.20",
     "@tanstack/react-query": "^5.100.14",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -24,8 +25,10 @@
     "react-day-picker": "^10.0.1",
     "react-dom": "19.2.4",
     "react-hook-form": "^7.76.1",
+    "react-markdown": "^10.1.0",
     "react-resizable-panels": "^4.11.2",
     "recharts": "^3.8.1",
+    "remark-gfm": "^4.0.1",
     "shadcn": "^4.8.1",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.6.0",

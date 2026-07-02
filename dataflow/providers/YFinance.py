@@ -8,6 +8,15 @@ import pandas_ta as ta
 import yfinance as yf
 
 
+def _to_float(value: Any, default: float = 0.0) -> float:
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _get_price_history(
     ticker: str,
     lookback_days: int,
@@ -165,7 +174,6 @@ def df_get_indicators(
         "atr20": latest.get("ATRr_20"),
         "levels": {"support": support, "resistance": resistance},
         "breakout": {
-            # TODO: 实现突破逻辑 [cite: 54]
             "level": None,
             "distance_pct": None,
         },
@@ -176,6 +184,28 @@ def df_get_indicators(
         for k, v in indicators.items()
         if v is not None and not (isinstance(v, float) and math.isnan(v))
     }
+
+    # Include raw OHLCV rows so callers can store to DB
+    ohlcv_rows = []
+    for idx, row in df_prices.iterrows():
+        idx_value: Any = idx
+        date_value = (
+            idx_value.strftime("%Y-%m-%d")
+            if hasattr(idx_value, "strftime")
+            else str(idx_value)[:10]
+        )
+        ohlcv_rows.append(
+            {
+                "date": date_value,
+                "open": _to_float(row.get("open")),
+                "high": _to_float(row.get("high")),
+                "low": _to_float(row.get("low")),
+                "close": _to_float(row.get("close")),
+                "volume": _to_float(row.get("volume")),
+            }
+        )
+    indicators["_ohlcv_rows"] = ohlcv_rows
+
     return indicators
 
 
@@ -203,6 +233,10 @@ def df_get_fundamentals(ticker: str) -> dict:
                 "ps": info.get("priceToSalesTrailing12Months"),
                 "ev_ebitda": info.get("enterpriseToEbitda"),
                 "eps": info.get("trailingEps"),
+                "market_cap": info.get("marketCap"),
+                "roe": to_pct("returnOnEquity"),
+                "dividend_yield": to_pct("dividendYield"),
+                "profit_margin": to_pct("profitMargins"),
                 "gross_margin": to_pct("grossMargins"),
                 "op_margin": to_pct("operatingMargins"),
             },
@@ -224,6 +258,46 @@ def df_get_fundamentals(ticker: str) -> dict:
     except Exception as e:
         print(f"[yfinance] Error fetching fundamentals for {ticker}: {e}")
         return {}
+
+
+def df_get_news_yahoo(ticker: str, limit: int = 20) -> list[dict]:
+    """Fetch news from Yahoo Finance via yf.Ticker.news.
+
+    Returns structured JSON directly — no HTML scraping needed.
+    Each article has: title, link, publisher, providerPublishTime, thumbnail.
+    """
+    try:
+        t = yf.Ticker(ticker)
+        raw = t.news or []
+        articles = []
+        for item in raw[:limit]:
+            content = item.get("content", {}) or {}
+            pub_time = (
+                content.get("pubDate") or content.get("providerPublishTime") or ""
+            )
+            if pub_time and isinstance(pub_time, (int, float)):
+                from datetime import datetime, timezone
+
+                pub_time = datetime.fromtimestamp(pub_time, tz=timezone.utc).isoformat()
+            articles.append(
+                {
+                    "title": content.get("title", "") or item.get("title", ""),
+                    "summary": content.get("summary", "") or "",
+                    "url": content.get("canonicalUrl", {}) or {},
+                    "source_name": content.get("provider", {}).get("displayName", "")
+                    if isinstance(content.get("provider"), dict)
+                    else "",
+                    "published_at": str(pub_time) if pub_time else "",
+                }
+            )
+            # Normalize url field
+            if isinstance(articles[-1]["url"], dict):
+                articles[-1]["url"] = articles[-1]["url"].get("url", "") or ""
+        return [a for a in articles if a["title"]]
+    except Exception as exc:
+        logger = __import__("logging").getLogger(__name__)
+        logger.warning("[yfinance] News fetch failed for %s: %s", ticker, exc)
+        return []
 
 
 def df_get_sector_context(ticker: str) -> Dict[str, Any]:

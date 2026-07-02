@@ -7,6 +7,7 @@ export { backtestApi } from "./backtest";
 export { riskApi } from "./risk";
 export { scannerApi } from "./scanner";
 export { watchlistApi } from "./watchlist";
+export { monitorApi } from "./monitor";
 export { approvalsApi } from "./approvals";
 export { insightsApi } from "./insights";
 export { reportsApi } from "./reports";
