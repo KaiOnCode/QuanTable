@@ -6,8 +6,8 @@ import type {
 
 export const approvalsApi = {
   list(params?: { status?: string }): Promise<{
-    pending: Approval[];
-    total_pending: number;
+    items: Approval[];
+    total: number;
   }> {
     const sp = new URLSearchParams();
     if (params?.status) sp.set("status", params.status);

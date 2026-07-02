@@ -35,7 +35,7 @@ class ContextStore:
     def __init__(self, data_dir: str | Path = DEFAULT_DATA_DIR):
         self.data_dir = Path(data_dir).resolve()
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        self._conns: dict[str, sqlite3.Connection] = {}
+        self._conns: dict[tuple[str, int | None], sqlite3.Connection] = {}
 
     # ── Strategy registry (system.db) ──────────────────────
 
@@ -177,13 +177,50 @@ class ContextStore:
                 payload_json TEXT DEFAULT '{}',
                 timestamp TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS approvals (
+                id TEXT PRIMARY KEY,
+                strategy_id TEXT DEFAULT '',
+                account_id TEXT DEFAULT '',
+                decision_id TEXT DEFAULT '',
+                session_id TEXT NOT NULL,
+                ticker TEXT NOT NULL,
+                original_action TEXT NOT NULL,
+                original_target_position_pct REAL DEFAULT 0.0,
+                original_confidence REAL DEFAULT 0.0,
+                pm_report TEXT DEFAULT '',
+                triggered_rules_json TEXT DEFAULT '[]',
+                approval_reason TEXT DEFAULT '',
+                agent_reports_json TEXT DEFAULT '[]',
+                status TEXT DEFAULT 'pending',
+                reviewer TEXT DEFAULT '',
+                reviewer_notes TEXT DEFAULT '',
+                modified_action TEXT DEFAULT '',
+                modified_target_position_pct REAL,
+                created_at TEXT NOT NULL,
+                decided_at TEXT,
+                timeout_at TEXT
+            );
             CREATE INDEX IF NOT EXISTS idx_sessions_ticker ON sessions(ticker);
             CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
             CREATE INDEX IF NOT EXISTS idx_reports_session ON agent_reports(session_id);
             CREATE INDEX IF NOT EXISTS idx_decisions_session ON decisions(session_id);
             CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
             CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
+            CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status);
+            CREATE INDEX IF NOT EXISTS idx_approvals_session ON approvals(session_id);
+            CREATE INDEX IF NOT EXISTS idx_approvals_decision ON approvals(decision_id);
         """)
+        for col in (
+            "strategy_id TEXT DEFAULT ''",
+            "account_id TEXT DEFAULT ''",
+            "decision_id TEXT DEFAULT ''",
+            "approval_reason TEXT DEFAULT ''",
+        ):
+            try:
+                db.execute(f"ALTER TABLE approvals ADD COLUMN {col}")
+            except Exception:
+                pass
+        db.commit()
 
     def record_session(
         self, strategy_id: str, session_id: str, ticker: str, status: str = "running"
@@ -729,17 +766,126 @@ class ContextStore:
         ).fetchone()
         return _brief_row_to_dict(row) if row else None
 
+    # ── Approvals ───────────────────────────────────────────
+
+    def create_approval(self, strategy_id: str, approval: dict) -> str:
+        import uuid
+
+        self._init_strategy_db(strategy_id)
+        db = self._strategy_db(strategy_id)
+        aid = approval.get("id") or str(uuid.uuid4())
+        db.execute(
+            """INSERT INTO approvals
+               (id, strategy_id, account_id, decision_id, session_id, ticker,
+                original_action, original_target_position_pct, original_confidence,
+                pm_report, triggered_rules_json, approval_reason, agent_reports_json,
+                status, reviewer, reviewer_notes, modified_action,
+                modified_target_position_pct, created_at, decided_at, timeout_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                aid,
+                strategy_id,
+                approval.get("account_id", ""),
+                approval.get("decision_id", ""),
+                approval.get("session_id", ""),
+                approval.get("ticker", ""),
+                approval.get("original_action", "HOLD"),
+                approval.get("original_target_position_pct", 0.0),
+                approval.get("original_confidence", 0.0),
+                approval.get("pm_report", ""),
+                json.dumps(approval.get("triggered_rules", []), ensure_ascii=False),
+                approval.get("approval_reason", ""),
+                json.dumps(approval.get("agent_reports", []), ensure_ascii=False),
+                approval.get("status", "pending"),
+                approval.get("reviewer", ""),
+                approval.get("reviewer_notes", ""),
+                approval.get("modified_action", ""),
+                approval.get("modified_target_position_pct"),
+                approval.get("created_at", _now()),
+                approval.get("decided_at"),
+                approval.get("timeout_at"),
+            ),
+        )
+        db.commit()
+        return aid
+
+    def get_approval(self, strategy_id: str, approval_id: str) -> dict | None:
+        self._init_strategy_db(strategy_id)
+        row = (
+            self._strategy_db(strategy_id)
+            .execute("SELECT * FROM approvals WHERE id = ?", (approval_id,))
+            .fetchone()
+        )
+        return dict(row) if row else None
+
+    def list_approvals(
+        self,
+        strategy_id: str,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        self._init_strategy_db(strategy_id)
+        db = self._strategy_db(strategy_id)
+        if status:
+            statuses = [s.strip() for s in status.split(",") if s.strip()]
+            if len(statuses) == 1:
+                rows = db.execute(
+                    "SELECT * FROM approvals WHERE status = ? ORDER BY created_at DESC LIMIT ?",
+                    (statuses[0], limit),
+                ).fetchall()
+            else:
+                placeholders = ",".join("?" * len(statuses))
+                rows = db.execute(
+                    f"SELECT * FROM approvals WHERE status IN ({placeholders}) ORDER BY created_at DESC LIMIT ?",
+                    (*statuses, limit),
+                ).fetchall()
+        else:
+            rows = db.execute(
+                "SELECT * FROM approvals ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def update_approval_status(
+        self,
+        strategy_id: str,
+        approval_id: str,
+        status: str,
+        reviewer: str = "",
+        reviewer_notes: str = "",
+        modified_action: str | None = None,
+        modified_target_position_pct: float | None = None,
+    ) -> bool:
+        self._init_strategy_db(strategy_id)
+        db = self._strategy_db(strategy_id)
+        fields = ["status = ?", "reviewer = ?", "reviewer_notes = ?", "decided_at = ?"]
+        params: list[object] = [status, reviewer, reviewer_notes, _now()]
+        if modified_action is not None:
+            fields.append("modified_action = ?")
+            params.append(modified_action)
+        if modified_target_position_pct is not None:
+            fields.append("modified_target_position_pct = ?")
+            params.append(modified_target_position_pct)
+        params.append(approval_id)
+        sql = f"UPDATE approvals SET {', '.join(fields)} WHERE id = ?"
+        cursor = db.execute(sql, params)
+        db.commit()
+        return cursor.rowcount > 0
+
     # ── Storage management ──────────────────────────────────
 
     def _get_conn(self, db_name: str) -> sqlite3.Connection:
-        if db_name not in self._conns:
+        import threading
+
+        key = (db_name, threading.current_thread().ident)
+        if key not in self._conns:
             path = self.data_dir / db_name
-            conn = sqlite3.connect(str(path))
+            conn = sqlite3.connect(str(path), check_same_thread=False)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=NORMAL")
-            self._conns[db_name] = conn
-        return self._conns[db_name]
+            self._conns[key] = conn
+        return self._conns[key]
 
     def close(self) -> None:
         for conn in self._conns.values():
@@ -752,9 +898,11 @@ class ContextStore:
     def delete_strategy_data(self, strategy_id: str) -> None:
         """Delete a strategy's database file."""
         path = self.data_dir / f"{strategy_id}.db"
-        if strategy_id in self._conns:
-            self._conns[strategy_id].close()
-            del self._conns[strategy_id]
+        db_name = f"{strategy_id}.db"
+        keys_to_remove = [key for key in self._conns if key[0] == db_name]
+        for key in keys_to_remove:
+            self._conns[key].close()
+            del self._conns[key]
         path.unlink(missing_ok=True)
 
 

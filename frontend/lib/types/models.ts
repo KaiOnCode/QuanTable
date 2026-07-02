@@ -15,6 +15,9 @@ export type AnalyzeRequest = {
   ticker: string;
   date?: string | null;
   current_position_pct?: number;
+  strategy_id?: string;
+  account_id?: string;
+  decision_id?: string | null;
   mode?: AnalysisMode;
   active_agents?: string[];
   beliefs?: string[];
@@ -48,6 +51,9 @@ export type SSEDebateEvent = {
 
 export type SSEResultEvent = {
   session_id: string;
+  strategy_id?: string;
+  account_id?: string;
+  decision_id?: string;
   action: TradingAction;
   direction: TradingDirection;
   confidence: number;
@@ -58,6 +64,10 @@ export type SSEResultEvent = {
   debate_records?: SSEDebateEvent[];
   news_articles?: { title: string; source: string; url: string; published_at: string }[];
   elapsed_s?: number;
+  approval_required?: boolean;
+  approval_status?: ApprovalStatus | null;
+  approval_id?: string | null;
+  triggered_rules?: string[];
 };
 
 export type SSEErrorEvent = {
@@ -182,13 +192,33 @@ export interface DebateRecord {
 export type ApprovalStatus = "pending" | "approved" | "rejected" | "modified" | "timed_out";
 
 export interface Approval {
-  id: string; strategy_id: string; decision_id: string; status: ApprovalStatus;
-  triggered_rules: string[]; original_decision: Record<string, unknown>;
-  modified_params: Record<string, unknown> | null;
-  cross_review_model: string | null; cross_review_result: string | null;
-  cross_review_consensus: boolean; reviewer: string | null;
-  reviewer_notes: string; created_at: string; resolved_at: string | null;
-  timeout_at: string;
+  id: string;
+  strategy_id?: string;
+  account_id?: string;
+  session_id?: string;
+  decision_id?: string;
+  ticker?: string;
+  status: ApprovalStatus;
+  triggered_rules?: string[];
+  triggered_rules_json?: string;
+  approval_reason?: string;
+  original_action?: string;
+  original_target_position_pct?: number;
+  original_confidence?: number;
+  original_decision?: Record<string, unknown>;
+  modified_params?: Record<string, unknown> | null;
+  modified_action?: string;
+  modified_target_position_pct?: number | null;
+  cross_review_model?: string | null;
+  cross_review_result?: string | null;
+  cross_review_consensus?: boolean;
+  reviewer: string | null;
+  reviewer_notes: string;
+  pm_report?: string;
+  created_at: string;
+  resolved_at?: string | null;
+  decided_at?: string | null;
+  timeout_at?: string;
 }
 
 export interface Conversation {
@@ -308,7 +338,7 @@ export interface ApiError {
   error: { code: string; message: string; details: Record<string, unknown> };
 }
 
-export interface ApprovalActionRequest { reviewer: string; notes?: string; modified_params?: Record<string, unknown>; }
+export interface ApprovalActionRequest { reviewer: string; notes?: string; modified_action?: string; modified_target_position_pct?: number; }
 export interface WatchlistCreateRequest { name: string; tickers: string[]; }
 export interface AddTickerRequest { ticker: string; }
 export interface CreateAlertRequest { ticker: string; type: AlertType; threshold_value: number | string; }

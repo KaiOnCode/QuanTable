@@ -113,6 +113,7 @@ app.add_middleware(
 from server.routes import (  # noqa: E402
     agent,
     analyze,
+    approvals,
     health,
     insights,
     market,
@@ -128,6 +129,7 @@ app.include_router(strategies.router, prefix="/api")
 app.include_router(memory.router, prefix="/api")
 app.include_router(settings.router, prefix="/api")
 app.include_router(health.router, prefix="/api")
+app.include_router(approvals.router, prefix="/api")
 app.include_router(market.router, prefix="/api")
 app.include_router(watchlist.router, prefix="/api")
 app.include_router(monitor.router, prefix="/api")

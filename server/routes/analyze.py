@@ -48,6 +48,13 @@ class AnalyzeRequest(BaseModel):
     ticker: str = Field(..., description="Stock ticker symbol, e.g. AAPL")
     date: str | None = Field(None, description="ISO 8601 date for historical analysis")
     current_position_pct: float = Field(0.0, ge=-100.0, le=100.0)
+    strategy_id: str = Field(
+        "default", description="Strategy identity for HITL context"
+    )
+    account_id: str = Field("default", description="Account identity for HITL context")
+    decision_id: str | None = Field(
+        None, description="Optional caller-provided decision identity"
+    )
     mode: str = Field("standard", pattern="^(fast|standard|deep)$")
     active_agents: list[str] | None = None
     beliefs: list[str] = []
@@ -214,16 +221,80 @@ async def analyze(request: AnalyzeRequest):
             pass
 
         elapsed = round(time.time() - started_at, 2)
+        decision_id = request.decision_id or str(uuid.uuid4())
+        target_position_pct = float(final_result.get("Target_position_pct", 0))
+        approval_status: str | None = None
+        approval_id: str | None = None
+        triggered_rules: list[str] = []
+
+        try:
+            from hitl import HITLRuleConfig, HITLRuleEngine
+            from hitl.models import PMDecision
+            from storage.store import get_store
+
+            normalized_action = action.upper()
+            if normalized_action not in {"BUY", "SELL", "HOLD"}:
+                normalized_action = "HOLD"
+
+            hitl_confidence = confidence
+            if hitl_confidence > 1.0 and hitl_confidence <= 100.0:
+                hitl_confidence = hitl_confidence / 100.0
+            hitl_confidence = max(0.0, min(1.0, hitl_confidence))
+            hitl_target_pct = max(0.0, min(100.0, target_position_pct))
+
+            engine = HITLRuleEngine(
+                HITLRuleConfig(
+                    position_change_threshold_pct=20.0,
+                    min_confidence_threshold=0.5,
+                    max_single_ticker_pct=30.0,
+                )
+            )
+            pm_decision = PMDecision(
+                action=normalized_action,
+                target_position_pct=hitl_target_pct,
+                confidence=hitl_confidence,
+                report=pm_report,
+            )
+            needs_approval, triggered_rules = engine.evaluate(
+                pm_decision,
+                current_position_pct=request.current_position_pct,
+            )
+            if needs_approval:
+                approval_status = "pending"
+                approval_id = get_store().create_approval(
+                    request.strategy_id,
+                    {
+                        "strategy_id": request.strategy_id,
+                        "account_id": request.account_id,
+                        "decision_id": decision_id,
+                        "session_id": session_id,
+                        "ticker": request.ticker,
+                        "original_action": normalized_action,
+                        "original_target_position_pct": hitl_target_pct,
+                        "original_confidence": hitl_confidence,
+                        "pm_report": pm_report,
+                        "triggered_rules": triggered_rules,
+                        "approval_reason": ", ".join(triggered_rules),
+                        "agent_reports": agent_reports,
+                        "status": "pending",
+                        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    },
+                )
+        except Exception as exc:
+            logger.warning("HITL check failed for %s: %s", request.ticker, exc)
 
         result_payload = {
             "session_id": session_id,
+            "strategy_id": request.strategy_id,
+            "account_id": request.account_id,
+            "decision_id": decision_id,
             "action": action,
             "direction": direction,
             "confidence": confidence,
             "timeframe": timeframe,
             "report": pm_report,
             "agent_reports": agent_reports,
-            "target_position_pct": float(final_result.get("Target_position_pct", 0)),
+            "target_position_pct": target_position_pct,
             "debate_records": final_result.get("debate_history", []),
             "news_articles": [
                 {
@@ -235,6 +306,10 @@ async def analyze(request: AnalyzeRequest):
                 for a in news_articles[:8]
             ],
             "elapsed_s": elapsed,
+            "approval_required": approval_status == "pending",
+            "approval_status": approval_status,
+            "approval_id": approval_id,
+            "triggered_rules": triggered_rules,
         }
 
         yield _sse_event("result", result_payload)
