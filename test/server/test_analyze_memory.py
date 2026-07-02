@@ -8,10 +8,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
 
-import hitl.executor
 import quick_ask.orchestrator
 from server.routes import analyze
-from storage.store import ContextStore
 
 
 def _parse_sse_events(text: str) -> list[tuple[str, dict[str, Any]]]:
@@ -30,10 +28,10 @@ def _parse_sse_events(text: str) -> list[tuple[str, dict[str, Any]]]:
     return events
 
 
-def test_analyze_creates_pending_approval_without_hitl_executor(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+def test_analyze_passes_memory_identity_and_returns_record_id(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store = ContextStore(tmp_path)
+    captured: dict[str, Any] = {}
 
     class FakeAssistant:
         def stream(
@@ -48,39 +46,45 @@ def test_analyze_creates_pending_approval_without_hitl_executor(
             account_id: str,
             decision_id: str,
         ) -> Iterator[dict[str, dict[str, object]]]:
-            del date, current_position_pct, strategy_id, session_id
-            del memory_enabled, account_id, decision_id
+            captured.update(
+                {
+                    "ticker": ticker,
+                    "date": date,
+                    "current_position_pct": current_position_pct,
+                    "strategy_id": strategy_id,
+                    "session_id": session_id,
+                    "memory_enabled": memory_enabled,
+                    "account_id": account_id,
+                    "decision_id": decision_id,
+                }
+            )
             yield {
                 "PM_agent": {
-                    "PM_report": f"{ticker} decision\nconfidence: 0.4",
-                    "Action": "BUY",
-                    "Target_position_pct": 60.0,
+                    "PM_report": (
+                        "方向: Neutral\n"
+                        "时间范围: 1-3d\n"
+                        "置信度: 0.8\n"
+                        "一句话结论: 继续观察"
+                    ),
+                    "Action": "HOLD",
+                    "Target_position_pct": 0.0,
                 }
             }
+            yield {"remember_memory": {"memory_record_id": "memory-1"}}
 
     class FakeDataService:
         def get_news(self, ticker: str, window_days: int) -> list[dict[str, str]]:
             del ticker, window_days
             return []
 
-    def fail_if_executor_is_called(*args: object, **kwargs: object) -> None:
-        del args, kwargs
-        raise AssertionError("HITL executor must not run during pending approval")
-
     async def noop_notify(*args: object, **kwargs: object) -> None:
         del args, kwargs
 
     monkeypatch.setattr(quick_ask.orchestrator, "IntelliFin_Assistant", FakeAssistant)
-    monkeypatch.setattr(analyze, "get_store", lambda: store, raising=False)
+    monkeypatch.setattr("dataflow.service.DataService", FakeDataService)
     monkeypatch.setattr(analyze, "_notify_analysis_completed", noop_notify)
     monkeypatch.setattr(analyze, "_notify_analysis_failed", noop_notify)
-    monkeypatch.setattr("dataflow.service.DataService", FakeDataService)
-    monkeypatch.setattr(
-        hitl.executor.HITLExecutor,
-        "process_approval_result",
-        fail_if_executor_is_called,
-    )
-    monkeypatch.setattr("storage.store.get_store", lambda: store)
+    monkeypatch.setattr(analyze, "_load_settings", lambda: {"memory_enabled": False})
 
     app = FastAPI()
     app.include_router(analyze.router, prefix="/api")
@@ -93,7 +97,7 @@ def test_analyze_creates_pending_approval_without_hitl_executor(
             "strategy_id": "strategy-1",
             "account_id": "account-1",
             "decision_id": "decision-1",
-            "current_position_pct": 0,
+            "current_position_pct": 12.0,
         },
     )
 
@@ -101,20 +105,9 @@ def test_analyze_creates_pending_approval_without_hitl_executor(
     events = _parse_sse_events(response.text)
     result = next(payload for event, payload in events if event == "result")
 
-    assert result["approval_required"] is True
-    assert result["approval_status"] == "pending"
-    assert result["decision_id"] == "decision-1"
-    assert result["account_id"] == "account-1"
-    assert result["triggered_rules"] == [
-        "position_change",
-        "low_confidence",
-        "high_concentration",
-    ]
-
-    approvals = store.list_approvals("strategy-1")
-    assert len(approvals) == 1
-    assert approvals[0]["status"] == "pending"
-    assert approvals[0]["decision_id"] == "decision-1"
-    assert approvals[0]["account_id"] == "account-1"
-
-    store.close()
+    assert captured["strategy_id"] == "strategy-1"
+    assert captured["account_id"] == "account-1"
+    assert captured["decision_id"] == "decision-1"
+    assert captured["memory_enabled"] is False
+    assert result["memory_record_id"] == "memory-1"
+    assert result["memory_enabled"] is False

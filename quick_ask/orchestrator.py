@@ -12,6 +12,8 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 
+from memory import MemoryService
+from memory.service import memory_enabled as is_memory_enabled
 from quick_ask.agents.PM import PM_agent
 from quick_ask.agents.fundamentals_analyst import fundamentals_analyst_agent
 from quick_ask.agents.market_analyst import market_analyst_agent
@@ -91,47 +93,67 @@ def should_continue(node_name: str):
 
 
 def _remember_memory_node(state: AgentState):
-    """Graph node: persist PM decision to MemoryStore after analysis completes."""
+    """Graph node: persist PM decision after analysis completes."""
     try:
-        from memory.store import MemoryStore
-        from memory.models import MemoryRecord
-
-        ticker = state.get("ticker", "")
-        action = str(state.get("Action") or "HOLD")
-        pm_report = str(state.get("PM_report") or "")
-        confidence_raw = state.get("confidence", 0.5)
-        session_id = str(state.get("session_id") or str(uuid.uuid4()))
         strategy_id = str(state.get("strategy_id") or "default")
-
-        # Build memory record
-        record = MemoryRecord(
-            id=str(uuid.uuid4()),
+        enabled_value = state.get("memory_enabled")
+        enabled = enabled_value if isinstance(enabled_value, bool) else None
+        service = MemoryService(
             strategy_id=strategy_id,
-            session_id=session_id,
-            ticker=ticker,
-            outcome_quality=0.0,  # unknown until trade resolves
-            confidence=float(confidence_raw) if confidence_raw else 0.5,
-            episodic=f"Analysis: {action} {ticker}. {pm_report[:300]}",
-            semantic="",
-            procedural="",
-            trade_record={
-                "action": action,
-                "target_position_pct": state.get("Target_position_pct", 0),
-                "date": state.get("date", ""),
-            },
-            tags=[ticker, action.lower()],
-            created_at=time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            enabled=enabled,
         )
-
-        store = MemoryStore("data/memory.db")
-        store.remember(record)
-        logger.info(
-            "Memory recorded: %s %s (owm=%.2f)", ticker, action, record.owm_score
-        )
+        memory_record_id = service.remember_decision(state)
+        if memory_record_id:
+            logger.info("Memory recorded: %s", memory_record_id)
+            return {"memory_record_id": memory_record_id}
     except Exception as exc:
         logger.warning("Memory remember failed: %s", exc)
 
-    return {}  # no state changes needed
+    return {}
+
+
+def _build_initial_state(
+    *,
+    ticker: str,
+    date: str | None,
+    current_position_pct: float,
+    strategy_id: str,
+    session_id: str,
+    memory_enabled: bool | None,
+    account_id: str | None,
+    decision_id: str | None,
+) -> dict:
+    relevant_memories = []
+    memory_context = ""
+    memory_active = is_memory_enabled(memory_enabled)
+
+    if memory_active:
+        try:
+            service = MemoryService(strategy_id=strategy_id, enabled=memory_active)
+            market_context = {
+                "ticker": ticker,
+                "date": date,
+                "current_position_pct": current_position_pct,
+            }
+            relevant_memories = service.recall_records(ticker, market_context)
+            memory_context = service.recall_context(ticker, market_context)
+            logger.info("Recalled %d memories for %s", len(relevant_memories), ticker)
+        except Exception as exc:
+            logger.debug("Memory recall skipped: %s", exc)
+
+    return {
+        "ticker": ticker,
+        "date": date,
+        "current_position_pct": current_position_pct,
+        "relevant_memories": relevant_memories,
+        "memory_context": memory_context,
+        "memory_enabled": memory_active,
+        "session_id": session_id,
+        "strategy_id": strategy_id,
+        "account_id": account_id or "",
+        "decision_id": decision_id or "",
+        "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
 
 
 class IntelliFin_Assistant:
@@ -198,34 +220,23 @@ class IntelliFin_Assistant:
         current_position_pct: float = 0.0,
         strategy_id: str = "default",
         session_id: str | None = None,
+        memory_enabled: bool | None = None,
+        account_id: str | None = None,
+        decision_id: str | None = None,
     ):
         # Generate session ID
         sid = session_id or str(uuid.uuid4())
 
-        # ── Memory recall: inject relevant past decisions before PM sees them ──
-        relevant_memories = []
-        try:
-            from memory.store import MemoryStore
-
-            mem_store = MemoryStore("data/memory.db")
-            relevant_memories = mem_store.recall_by_context(
-                context={"ticker": ticker},
-                strategy_id=strategy_id,
-                limit=5,
-            )
-            logger.info("Recalled %d memories for %s", len(relevant_memories), ticker)
-        except Exception as exc:
-            logger.debug("Memory recall skipped: %s", exc)
-
-        # 初始化状态
-        initial_state = {
-            "ticker": ticker,
-            "date": date,
-            "current_position_pct": current_position_pct,
-            "relevant_memories": relevant_memories,
-            "session_id": sid,
-            "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        }
+        initial_state = _build_initial_state(
+            ticker=ticker,
+            date=date,
+            current_position_pct=current_position_pct,
+            strategy_id=strategy_id,
+            session_id=sid,
+            memory_enabled=memory_enabled,
+            account_id=account_id,
+            decision_id=decision_id,
+        )
         return self.wf.invoke(
             cast(AgentState, initial_state),
             config={"configurable": {"thread_id": sid}},
@@ -238,32 +249,23 @@ class IntelliFin_Assistant:
         current_position_pct: float = 0.0,
         strategy_id: str = "default",
         session_id: str | None = None,
+        memory_enabled: bool | None = None,
+        account_id: str | None = None,
+        decision_id: str | None = None,
     ):
         """Stream analysis — yields {node_name: state_update} as each agent completes."""
         sid = session_id or str(uuid.uuid4())
 
-        relevant_memories = []
-        try:
-            from memory.store import MemoryStore
-
-            mem_store = MemoryStore("data/memory.db")
-            relevant_memories = mem_store.recall_by_context(
-                context={"ticker": ticker},
-                strategy_id=strategy_id,
-                limit=5,
-            )
-            logger.info("Recalled %d memories for %s", len(relevant_memories), ticker)
-        except Exception as exc:
-            logger.debug("Memory recall skipped: %s", exc)
-
-        initial_state = {
-            "ticker": ticker,
-            "date": date,
-            "current_position_pct": current_position_pct,
-            "relevant_memories": relevant_memories,
-            "session_id": sid,
-            "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        }
+        initial_state = _build_initial_state(
+            ticker=ticker,
+            date=date,
+            current_position_pct=current_position_pct,
+            strategy_id=strategy_id,
+            session_id=sid,
+            memory_enabled=memory_enabled,
+            account_id=account_id,
+            decision_id=decision_id,
+        )
         for event in self.wf.stream(
             cast(AgentState, initial_state),
             config={"configurable": {"thread_id": sid}},

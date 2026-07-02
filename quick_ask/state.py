@@ -42,6 +42,11 @@ class AgentState(MessagesState):
 
     # Memory
     relevant_memories: list = []
+    memory_context: str = ""
+    memory_enabled: bool = True
+    memory_record_id: str = ""
     session_id: str = ""
+    account_id: str = ""
+    decision_id: str = ""
     started_at: str = ""
     strategy_id: str = "default"

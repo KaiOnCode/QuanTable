@@ -51,7 +51,9 @@ def PM_agent(llm):
             return {}
 
         # ── Memory recall ──
-        memory_context = _format_memories(state.get("relevant_memories", []) or [])
+        memory_context = state.get("memory_context") or _format_memories(
+            state.get("relevant_memories", []) or []
+        )
 
         prompt = ChatPromptTemplate.from_messages(
             [
@@ -72,6 +74,7 @@ def PM_agent(llm):
                     "- 给出简要的 IF–THEN 逻辑：在什么价格/事件/时间条件下，你会改变当前结论及对应动作。\n"
                     "提供“Reasoning Outline（高层）”：权重如何映射到最终动作、哪些触发会改变结论及优先级。\n"
                     "只使用输入事实；未知项以“Unknown: …”标注并说明影响；\n "
+                    "历史记忆只能作为辅助背景；若记忆与当前 MARKET/FUNDAMENTAL/NEWS/RISK 证据冲突，必须以当前证据为准。\n"
                     "━━━━ 历史相关决策（OWM 加权记忆）━━━━\n"
                     "{memory_context}\n"
                     "━━━━ 当前分析报告 ━━━━\n"

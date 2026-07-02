@@ -20,6 +20,9 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from memory.service import memory_enabled as is_memory_enabled
+from server.routes.settings import _load_settings
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["analysis"])
@@ -94,7 +97,15 @@ async def analyze(request: AnalyzeRequest):
 
     async def event_stream():
         session_id = str(uuid.uuid4())
+        decision_id = request.decision_id or str(uuid.uuid4())
         started_at = time.time()
+        try:
+            analysis_memory_enabled = is_memory_enabled(
+                _load_settings().get("memory_enabled", True)
+            )
+        except Exception:
+            logger.warning("Failed to load memory setting; using env/default")
+            analysis_memory_enabled = is_memory_enabled()
 
         # Emit initial progress
         yield _sse_event(
@@ -122,7 +133,11 @@ async def analyze(request: AnalyzeRequest):
                     request.ticker,
                     date=analysis_date,
                     current_position_pct=request.current_position_pct,
+                    strategy_id=request.strategy_id,
                     session_id=session_id,
+                    memory_enabled=analysis_memory_enabled,
+                    account_id=request.account_id,
+                    decision_id=decision_id,
                 ):
                     queue.put(("event", event))
                 queue.put(("done", None))
@@ -174,6 +189,7 @@ async def analyze(request: AnalyzeRequest):
                         if k in _AGENT_REPORT_KEYS.values() or k in (
                             "Action",
                             "Target_position_pct",
+                            "memory_record_id",
                         ):
                             final_result[k] = v
                     # Emit progress when an agent produces its report
@@ -222,7 +238,6 @@ async def analyze(request: AnalyzeRequest):
             pass
 
         elapsed = round(time.time() - started_at, 2)
-        decision_id = request.decision_id or str(uuid.uuid4())
         target_position_pct = float(final_result.get("Target_position_pct", 0))
         approval_status: str | None = None
         approval_id: str | None = None
@@ -289,6 +304,8 @@ async def analyze(request: AnalyzeRequest):
             "strategy_id": request.strategy_id,
             "account_id": request.account_id,
             "decision_id": decision_id,
+            "memory_enabled": analysis_memory_enabled,
+            "memory_record_id": final_result.get("memory_record_id"),
             "action": action,
             "direction": direction,
             "confidence": confidence,
