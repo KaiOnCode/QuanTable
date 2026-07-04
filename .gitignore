@@ -230,6 +230,8 @@ data/*.db-shm
 data/*.db-wal
 *.db-journal
 data/agent-runs/
+# Runtime Settings
+data/settings.json
 
 # Vibe-Trading reference (local only — key files extracted to skills/ and mcp/)
 skills/Vibe-Trading/
