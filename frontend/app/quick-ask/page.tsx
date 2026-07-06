@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Shell } from "@/components/layout/shell";
 import {
   Card,
@@ -39,9 +39,12 @@ import {
 } from "lucide-react";
 import { Markdown } from "@/components/markdown";
 import { createSSEStream } from "@/lib/api/client";
+import { analyzeApi } from "@/lib/api/analyze";
 import { HistoryPanel } from "@/components/quick-ask/history-panel";
 import { TickerPreview } from "@/components/quick-ask/ticker-preview";
 import type {
+  AnalysisMode,
+  AnalysisSessionSnapshot,
   SSEProgressEvent,
   SSEDebateEvent,
   SSEResultEvent,
@@ -79,6 +82,34 @@ const STAGE_LABELS: Record<number, string> = {
   3: "Risk Assessment",
   4: "Risk Synthesis",
   5: "Final Decision",
+};
+
+const ACTIVE_SESSION_KEY = "quickAsk.activeSessionId";
+
+const createInitialStatuses = () => {
+  const statuses = new Map<string, AgentStatus>();
+  AGENTS.forEach((agent) => {
+    statuses.set(agent.name, {
+      name: agent.name,
+      status: "waiting",
+      stage: agent.stage,
+    });
+  });
+  return statuses;
+};
+
+const buildStatusesFromSnapshot = (snapshot: AnalysisSessionSnapshot) => {
+  const statuses = createInitialStatuses();
+  snapshot.progress_events?.forEach((event) => {
+    statuses.set(event.agent, {
+      name: event.agent,
+      status: event.status,
+      duration_ms: event.duration_ms,
+      error: event.error,
+      stage: AGENTS.find((agent) => agent.name === event.agent)?.stage || 0,
+    });
+  });
+  return statuses;
 };
 
 function parseReport(report: string): { direction?: string; timeframe?: string; confidence?: string; oneliner?: string; body: string } {
@@ -223,8 +254,67 @@ export default function QuickAskPage() {
   const [streamedReports, setStreamedReports] = useState<Map<string, string>>(
     new Map()
   );
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [abortController, setAbortController] =
     useState<AbortController | null>(null);
+
+  const applySnapshot = useCallback((snapshot: AnalysisSessionSnapshot) => {
+    setTicker(snapshot.ticker || "");
+    if (["fast", "standard", "deep"].includes(snapshot.mode)) {
+      setMode(snapshot.mode as AnalysisMode);
+    }
+    setAgentStatuses(buildStatusesFromSnapshot(snapshot));
+    setStreamedReports(new Map(Object.entries(snapshot.agent_reports || {})));
+    setDebates(snapshot.result?.debate_records || []);
+
+    if (snapshot.status === "running") {
+      setAnalyzing(true);
+      setResult(null);
+      setError(null);
+      setActiveSessionId(snapshot.session_id);
+      sessionStorage.setItem(ACTIVE_SESSION_KEY, snapshot.session_id);
+      return;
+    }
+
+    setAnalyzing(false);
+    setActiveSessionId(null);
+    sessionStorage.removeItem(ACTIVE_SESSION_KEY);
+
+    if (snapshot.status === "completed" && snapshot.result) {
+      setResult(snapshot.result);
+      setError(null);
+    } else if (snapshot.status === "failed") {
+      setResult(null);
+      setError(snapshot.error || "Analysis failed");
+    }
+  }, []);
+
+  useEffect(() => {
+    const sessionId = sessionStorage.getItem(ACTIVE_SESSION_KEY);
+    if (!sessionId) return;
+
+    setActiveSessionId(sessionId);
+    analyzeApi
+      .getHistory(sessionId)
+      .then(applySnapshot)
+      .catch(() => {
+        sessionStorage.removeItem(ACTIVE_SESSION_KEY);
+        setActiveSessionId(null);
+      });
+  }, [applySnapshot]);
+
+  useEffect(() => {
+    if (!activeSessionId || !analyzing) return;
+
+    const interval = window.setInterval(() => {
+      analyzeApi
+        .getHistory(activeSessionId)
+        .then(applySnapshot)
+        .catch(() => {});
+    }, 2000);
+
+    return () => window.clearInterval(interval);
+  }, [activeSessionId, analyzing, applySnapshot]);
 
   const handleAnalyze = () => {
     if (!ticker.trim() || analyzing) return;
@@ -234,17 +324,11 @@ export default function QuickAskPage() {
     setDebates([]);
     setError(null);
     setStreamedReports(new Map());
+    setActiveSessionId(null);
+    sessionStorage.removeItem(ACTIVE_SESSION_KEY);
 
     // Immediately mark PM as "started" so user sees feedback
-    const initialStatuses = new Map<string, AgentStatus>();
-    AGENTS.forEach((a) => {
-      initialStatuses.set(a.name, {
-        name: a.name,
-        status: "waiting",
-        stage: a.stage,
-      });
-    });
-    setAgentStatuses(initialStatuses);
+    setAgentStatuses(createInitialStatuses());
 
     const controller = createSSEStream(
       "/analyze",
@@ -257,6 +341,10 @@ export default function QuickAskPage() {
       },
       {
         onProgress: (event: SSEProgressEvent) => {
+          if (event.session_id) {
+            setActiveSessionId(event.session_id);
+            sessionStorage.setItem(ACTIVE_SESSION_KEY, event.session_id);
+          }
           setAgentStatuses((prev) => {
             const next = new Map(prev);
             next.set(event.agent, {
@@ -282,9 +370,13 @@ export default function QuickAskPage() {
         onResult: (event: SSEResultEvent) => {
           setResult(event);
           setAnalyzing(false);
+          setActiveSessionId(null);
+          sessionStorage.removeItem(ACTIVE_SESSION_KEY);
         },
         onError: (event) => {
           setAnalyzing(false);
+          setActiveSessionId(null);
+          sessionStorage.removeItem(ACTIVE_SESSION_KEY);
           setError(`[${event.agent}] ${event.error}`);
         },
         onComplete: () => {

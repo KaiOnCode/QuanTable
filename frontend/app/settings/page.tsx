@@ -26,6 +26,12 @@ import {
 } from "@/components/ui/select";
 import { settingsApi, type NotificationTestResult } from "@/lib/api/settings";
 import { api } from "@/lib/api/client";
+import {
+  DEEP_THINK_MODEL_OPTIONS,
+  DEFAULT_DEEP_THINK_MODEL,
+  DEFAULT_QUICK_THINK_MODEL,
+  QUICK_THINK_MODEL_OPTIONS,
+} from "@/lib/llm-defaults";
 import type { HealthResponse, SystemConfig } from "@/lib/types/models";
 import {
   Settings,
@@ -44,8 +50,8 @@ import {
 const DEFAULT_SETTINGS: SystemConfig = {
   llm_api_key: "",
   llm_base_url: "https://api.deepseek.com/v1",
-  llm_model: "deepseek-chat",
-  deep_think_model: "deepseek-chat",
+  llm_model: DEFAULT_QUICK_THINK_MODEL,
+  deep_think_model: DEFAULT_DEEP_THINK_MODEL,
   email_smtp_host: "",
   email_smtp_port: 587,
   email_username: "",
@@ -227,8 +233,11 @@ export default function SettingsPage() {
                 >
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="deepseek-chat">deepseek-chat</SelectItem>
-                    <SelectItem value="gpt-4o-mini">gpt-4o-mini</SelectItem>
+                    {QUICK_THINK_MODEL_OPTIONS.map((model) => (
+                      <SelectItem key={model} value={model}>
+                        {model}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -242,8 +251,11 @@ export default function SettingsPage() {
                 >
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="deepseek-chat">deepseek-chat</SelectItem>
-                    <SelectItem value="claude-sonnet-4-6">claude-sonnet-4-6</SelectItem>
+                    {DEEP_THINK_MODEL_OPTIONS.map((model) => (
+                      <SelectItem key={model} value={model}>
+                        {model}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>

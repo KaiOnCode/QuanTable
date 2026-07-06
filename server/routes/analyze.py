@@ -11,23 +11,21 @@ import json
 import logging
 import time
 import uuid
-from pathlib import Path
 from queue import Empty, Queue
 from threading import Thread
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from memory.service import memory_enabled as is_memory_enabled
+from server import analysis_runs
 from server.routes.settings import _load_settings
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["analysis"])
-
-HISTORY_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "history"
 
 # Map node name → report key in state
 _AGENT_REPORT_KEYS: dict[str, str] = {
@@ -72,44 +70,98 @@ def _sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {payload}\n\n"
 
 
-def _save_session_json(session_id: str, ticker: str, mode: str, result: dict) -> None:
-    """Persist session to data/history/{session_id}.json."""
-    try:
-        HISTORY_DIR.mkdir(parents=True, exist_ok=True)
-        record = {
-            "session_id": session_id,
-            "ticker": ticker,
-            "mode": mode,
-            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "request": {"ticker": ticker, "mode": mode},
-            "result": result,
-        }
-        path = HISTORY_DIR / f"{session_id}.json"
-        path.write_text(json.dumps(record, ensure_ascii=False, default=str, indent=2))
-        logger.debug("Session saved: %s", path)
-    except Exception:
-        logger.warning("Failed to save session %s", session_id, exc_info=True)
-
-
 @router.post("/analyze")
 async def analyze(request: AnalyzeRequest):
     """Start a new analysis. Returns SSE stream with real-time progress events."""
+    session_id = str(uuid.uuid4())
+    decision_id = request.decision_id or str(uuid.uuid4())
+    started_at = time.time()
+    try:
+        analysis_memory_enabled = is_memory_enabled(
+            _load_settings().get("memory_enabled", True)
+        )
+    except Exception:
+        logger.warning("Failed to load memory setting; using env/default")
+        analysis_memory_enabled = is_memory_enabled()
 
-    async def event_stream():
-        session_id = str(uuid.uuid4())
-        decision_id = request.decision_id or str(uuid.uuid4())
-        started_at = time.time()
-        try:
-            analysis_memory_enabled = is_memory_enabled(
-                _load_settings().get("memory_enabled", True)
-            )
-        except Exception:
-            logger.warning("Failed to load memory setting; using env/default")
-            analysis_memory_enabled = is_memory_enabled()
+    analysis_runs.create_running_snapshot(
+        session_id=session_id,
+        ticker=request.ticker,
+        mode=request.mode,
+        request_payload=_request_payload(request),
+    )
+    analysis_runs.create_run(session_id)
+    subscriber = analysis_runs.subscribe_run(session_id)
+    asyncio.create_task(
+        _execute_analysis_run(
+            request=request,
+            session_id=session_id,
+            decision_id=decision_id,
+            started_at=started_at,
+            analysis_memory_enabled=analysis_memory_enabled,
+        )
+    )
 
-        # Emit initial progress
-        yield _sse_event(
-            "progress",
+    return StreamingResponse(
+        _event_stream_from_queue(subscriber),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get("/analyze/runs/{session_id}/events")
+async def subscribe_analysis_run(session_id: str):
+    if not analysis_runs.has_run(session_id):
+        raise HTTPException(404, "Session not found")
+    return StreamingResponse(
+        _event_stream_from_queue(analysis_runs.subscribe_run(session_id)),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+def _request_payload(request: AnalyzeRequest) -> dict[str, object]:
+    if hasattr(request, "model_dump"):
+        return request.model_dump()
+    return request.dict()
+
+
+async def _event_stream_from_queue(
+    queue: analysis_runs.SubscriberQueue,
+):
+    loop = asyncio.get_event_loop()
+    while True:
+        item = await loop.run_in_executor(None, queue.get)
+        if item is None:
+            break
+        event_name, payload = item
+        yield _sse_event(event_name, payload)
+
+
+def _publish_progress(session_id: str, payload: dict[str, Any]) -> None:
+    analysis_runs.record_progress(session_id, payload)
+    analysis_runs.publish_run_event(session_id, ("progress", payload))
+
+
+async def _execute_analysis_run(
+    *,
+    request: AnalyzeRequest,
+    session_id: str,
+    decision_id: str,
+    started_at: float,
+    analysis_memory_enabled: bool,
+) -> None:
+    try:
+        _publish_progress(
+            session_id,
             {
                 "agent": "system",
                 "status": "started",
@@ -119,18 +171,13 @@ async def analyze(request: AnalyzeRequest):
             },
         )
 
-        # ── Run stream in thread, consume via queue ──
         queue: Queue = Queue()
 
-        def _stream_worker():
+        def _stream_worker() -> None:
             try:
-                from quick_ask.orchestrator import IntelliFin_Assistant
-
                 analysis_date = request.date or time.strftime("%Y-%m-%dT00:00:00Z")
-
-                assistant = IntelliFin_Assistant()
-                for event in assistant.stream(
-                    request.ticker,
+                for event in analysis_runs.run_orchestrator_stream(
+                    ticker=request.ticker,
                     date=analysis_date,
                     current_position_pct=request.current_position_pct,
                     strategy_id=request.strategy_id,
@@ -157,194 +204,211 @@ async def analyze(request: AnalyzeRequest):
                     None, lambda: queue.get(timeout=120)
                 )
             except Empty:
-                logger.warning("Stream timeout for %s", session_id)
-                break
+                message = f"Analysis timed out for {session_id}"
+                logger.warning(message)
+                await _fail_analysis_run(request, session_id, message)
+                return
 
             if msg_type == "done":
                 break
 
             if msg_type == "error":
-                logger.exception("Analysis failed for %s: %s", request.ticker, payload)
-                yield _sse_event(
-                    "error",
-                    {
-                        "agent": "orchestrator",
-                        "error": str(payload)[:500],
-                        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                    },
-                )
-                await _notify_analysis_failed(request, session_id, str(payload))
+                logger.error("Analysis failed for %s: %s", request.ticker, payload)
+                await _fail_analysis_run(request, session_id, str(payload))
                 return
 
-            # msg_type == "event": {node_name: {key: value, ...}}
-            if msg_type != "event":
+            if msg_type != "event" or not isinstance(payload, dict):
                 continue
 
-            if isinstance(payload, dict):
-                for node_name, update in payload.items():
-                    if not isinstance(update, dict):
-                        continue
-                    # Merge all recognized keys into final result
-                    for k, v in update.items():
-                        if k in _AGENT_REPORT_KEYS.values() or k in (
-                            "Action",
-                            "Target_position_pct",
-                            "memory_record_id",
-                        ):
-                            final_result[k] = v
-                    # Emit progress when an agent produces its report
-                    report_key = _AGENT_REPORT_KEYS.get(node_name)
-                    if (
-                        report_key
-                        and update.get(report_key)
-                        and node_name not in seen_reports
+            for node_name, update in payload.items():
+                if not isinstance(update, dict):
+                    continue
+                for key, value in update.items():
+                    if key in _AGENT_REPORT_KEYS.values() or key in (
+                        "Action",
+                        "Target_position_pct",
+                        "memory_record_id",
                     ):
-                        seen_reports.add(node_name)
-                        report_text = update[report_key]
-                        yield _sse_event(
-                            "progress",
-                            {
-                                "agent": node_name,
-                                "status": "completed",
-                                "report": report_text,
-                                "duration_ms": 0,
-                                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                            },
-                        )
-                        logger.debug(
-                            "Agent %s completed (%d chars)", node_name, len(report_text)
-                        )
+                        final_result[key] = value
+                report_key = _AGENT_REPORT_KEYS.get(node_name)
+                if (
+                    report_key
+                    and update.get(report_key)
+                    and node_name not in seen_reports
+                ):
+                    seen_reports.add(node_name)
+                    report_text = update[report_key]
+                    progress_payload = {
+                        "agent": node_name,
+                        "status": "completed",
+                        "report": report_text,
+                        "duration_ms": 0,
+                        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    }
+                    _publish_progress(session_id, progress_payload)
+                    logger.debug(
+                        "Agent %s completed (%d chars)", node_name, len(report_text)
+                    )
 
-        # ── After stream completes: build and emit result ──
-        pm_report = final_result.get("PM_report", "")
-        action = final_result.get("Action", "HOLD")
-        direction, confidence, timeframe = _parse_pm_report(pm_report, action)
-
-        # Build agent reports map
-        agent_reports = {}
-        for agent_name, report_key in _AGENT_REPORT_KEYS.items():
-            report = final_result.get(report_key, "")
-            if report:
-                agent_reports[agent_name] = report
-
-        # Fetch news articles
-        news_articles = []
-        try:
-            from dataflow.service import DataService
-
-            svc = DataService()
-            news_articles = svc.get_news(request.ticker, window_days=7)
-        except Exception:
-            pass
-
-        elapsed = round(time.time() - started_at, 2)
-        target_position_pct = float(final_result.get("Target_position_pct", 0))
-        approval_status: str | None = None
-        approval_id: str | None = None
-        triggered_rules: list[str] = []
-
-        try:
-            from hitl import HITLRuleConfig, HITLRuleEngine
-            from hitl.models import PMDecision
-            from storage.store import get_store
-
-            normalized_action = action.upper()
-            if normalized_action not in {"BUY", "SELL", "HOLD"}:
-                normalized_action = "HOLD"
-
-            hitl_confidence = confidence
-            if hitl_confidence > 1.0 and hitl_confidence <= 100.0:
-                hitl_confidence = hitl_confidence / 100.0
-            hitl_confidence = max(0.0, min(1.0, hitl_confidence))
-            hitl_target_pct = max(0.0, min(100.0, target_position_pct))
-
-            engine = HITLRuleEngine(
-                HITLRuleConfig(
-                    position_change_threshold_pct=20.0,
-                    min_confidence_threshold=0.5,
-                    max_single_ticker_pct=30.0,
-                )
-            )
-            pm_decision = PMDecision(
-                action=normalized_action,
-                target_position_pct=hitl_target_pct,
-                confidence=hitl_confidence,
-                report=pm_report,
-            )
-            needs_approval, triggered_rules = engine.evaluate(
-                pm_decision,
-                current_position_pct=request.current_position_pct,
-            )
-            if needs_approval:
-                approval_status = "pending"
-                approval_id = get_store().create_approval(
-                    request.strategy_id,
-                    {
-                        "strategy_id": request.strategy_id,
-                        "account_id": request.account_id,
-                        "decision_id": decision_id,
-                        "session_id": session_id,
-                        "ticker": request.ticker,
-                        "original_action": normalized_action,
-                        "original_target_position_pct": hitl_target_pct,
-                        "original_confidence": hitl_confidence,
-                        "pm_report": pm_report,
-                        "triggered_rules": triggered_rules,
-                        "approval_reason": ", ".join(triggered_rules),
-                        "agent_reports": agent_reports,
-                        "status": "pending",
-                        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                    },
-                )
-        except Exception as exc:
-            logger.warning("HITL check failed for %s: %s", request.ticker, exc)
-
-        result_payload = {
-            "session_id": session_id,
-            "strategy_id": request.strategy_id,
-            "account_id": request.account_id,
-            "decision_id": decision_id,
-            "memory_enabled": analysis_memory_enabled,
-            "memory_record_id": final_result.get("memory_record_id"),
-            "action": action,
-            "direction": direction,
-            "confidence": confidence,
-            "timeframe": timeframe,
-            "report": pm_report,
-            "agent_reports": agent_reports,
-            "target_position_pct": target_position_pct,
-            "debate_records": final_result.get("debate_history", []),
-            "news_articles": [
-                {
-                    "title": a["title"],
-                    "source": a.get("source_name", ""),
-                    "url": a.get("url", ""),
-                    "published_at": a.get("published_at", ""),
-                }
-                for a in news_articles[:8]
-            ],
-            "elapsed_s": elapsed,
-            "approval_required": approval_status == "pending",
-            "approval_status": approval_status,
-            "approval_id": approval_id,
-            "triggered_rules": triggered_rules,
-        }
-
-        yield _sse_event("result", result_payload)
-
-        # ── Persist to history ──
-        _save_session_json(session_id, request.ticker, request.mode, result_payload)
+        result_payload = await _build_result_payload(
+            request=request,
+            session_id=session_id,
+            decision_id=decision_id,
+            started_at=started_at,
+            analysis_memory_enabled=analysis_memory_enabled,
+            final_result=final_result,
+        )
+        analysis_runs.complete_snapshot(session_id, result_payload)
+        analysis_runs.publish_run_event(session_id, ("result", result_payload))
         await _notify_analysis_completed(request, result_payload)
+    except Exception as exc:
+        logger.exception("Analysis run crashed for %s", session_id)
+        await _fail_analysis_run(request, session_id, str(exc))
+    finally:
+        analysis_runs.close_run(session_id)
 
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
+
+async def _fail_analysis_run(
+    request: AnalyzeRequest,
+    session_id: str,
+    error: str,
+) -> None:
+    message = error[:500]
+    analysis_runs.fail_snapshot(session_id, message)
+    analysis_runs.publish_run_event(
+        session_id,
+        (
+            "error",
+            {
+                "agent": "orchestrator",
+                "error": message,
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            },
+        ),
     )
+    await _notify_analysis_failed(request, session_id, message)
+
+
+async def _build_result_payload(
+    *,
+    request: AnalyzeRequest,
+    session_id: str,
+    decision_id: str,
+    started_at: float,
+    analysis_memory_enabled: bool,
+    final_result: dict[str, Any],
+) -> dict[str, Any]:
+    pm_report = final_result.get("PM_report", "")
+    action = final_result.get("Action", "HOLD")
+    direction, confidence, timeframe = _parse_pm_report(pm_report, action)
+
+    agent_reports = {}
+    for agent_name, report_key in _AGENT_REPORT_KEYS.items():
+        report = final_result.get(report_key, "")
+        if report:
+            agent_reports[agent_name] = report
+
+    news_articles = []
+    try:
+        from dataflow.service import DataService
+
+        svc = DataService()
+        news_articles = svc.get_news(request.ticker, window_days=7)
+    except Exception:
+        pass
+
+    elapsed = round(time.time() - started_at, 2)
+    target_position_pct = float(final_result.get("Target_position_pct", 0))
+    approval_status: str | None = None
+    approval_id: str | None = None
+    triggered_rules: list[str] = []
+
+    try:
+        from hitl import HITLRuleConfig, HITLRuleEngine
+        from hitl.models import PMDecision
+        from storage.store import get_store
+
+        normalized_action = action.upper()
+        if normalized_action not in {"BUY", "SELL", "HOLD"}:
+            normalized_action = "HOLD"
+
+        hitl_confidence = confidence
+        if hitl_confidence > 1.0 and hitl_confidence <= 100.0:
+            hitl_confidence = hitl_confidence / 100.0
+        hitl_confidence = max(0.0, min(1.0, hitl_confidence))
+        hitl_target_pct = max(0.0, min(100.0, target_position_pct))
+
+        engine = HITLRuleEngine(
+            HITLRuleConfig(
+                position_change_threshold_pct=20.0,
+                min_confidence_threshold=0.5,
+                max_single_ticker_pct=30.0,
+            )
+        )
+        pm_decision = PMDecision(
+            action=normalized_action,
+            target_position_pct=hitl_target_pct,
+            confidence=hitl_confidence,
+            report=pm_report,
+        )
+        needs_approval, triggered_rules = engine.evaluate(
+            pm_decision,
+            current_position_pct=request.current_position_pct,
+        )
+        if needs_approval:
+            approval_status = "pending"
+            approval_id = get_store().create_approval(
+                request.strategy_id,
+                {
+                    "strategy_id": request.strategy_id,
+                    "account_id": request.account_id,
+                    "decision_id": decision_id,
+                    "session_id": session_id,
+                    "ticker": request.ticker,
+                    "original_action": normalized_action,
+                    "original_target_position_pct": hitl_target_pct,
+                    "original_confidence": hitl_confidence,
+                    "pm_report": pm_report,
+                    "triggered_rules": triggered_rules,
+                    "approval_reason": ", ".join(triggered_rules),
+                    "agent_reports": agent_reports,
+                    "status": "pending",
+                    "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                },
+            )
+    except Exception as exc:
+        logger.warning("HITL check failed for %s: %s", request.ticker, exc)
+
+    return {
+        "session_id": session_id,
+        "strategy_id": request.strategy_id,
+        "account_id": request.account_id,
+        "decision_id": decision_id,
+        "memory_enabled": analysis_memory_enabled,
+        "memory_record_id": final_result.get("memory_record_id"),
+        "action": action,
+        "direction": direction,
+        "confidence": confidence,
+        "timeframe": timeframe,
+        "report": pm_report,
+        "agent_reports": agent_reports,
+        "target_position_pct": target_position_pct,
+        "debate_records": final_result.get("debate_history", []),
+        "news_articles": [
+            {
+                "title": a["title"],
+                "source": a.get("source_name", ""),
+                "url": a.get("url", ""),
+                "published_at": a.get("published_at", ""),
+            }
+            for a in news_articles[:8]
+        ],
+        "elapsed_s": elapsed,
+        "approval_required": approval_status == "pending",
+        "approval_status": approval_status,
+        "approval_id": approval_id,
+        "triggered_rules": triggered_rules,
+    }
 
 
 def _parse_pm_report(report: str, action: str) -> tuple[str, float, str]:
@@ -478,57 +542,45 @@ async def _notify_analysis_failed(
 @router.get("/analyze/history")
 async def list_history(limit: int = 20):
     """List past analysis sessions."""
-    items = []
-    try:
-        HISTORY_DIR.mkdir(parents=True, exist_ok=True)
-        files = sorted(
-            HISTORY_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True
-        )
-        for f in files[:limit]:
-            try:
-                data = json.loads(f.read_text())
-                items.append(
-                    {
-                        "session_id": data.get("session_id"),
-                        "ticker": data.get("ticker"),
-                        "mode": data.get("mode"),
-                        "created_at": data.get("created_at"),
-                        "action": data.get("result", {}).get("action"),
-                        "direction": data.get("result", {}).get("direction"),
-                        "confidence": data.get("result", {}).get("confidence"),
-                        "oneliner": _extract_oneliner(
-                            data.get("result", {}).get("report", "")
-                        ),
-                    }
-                )
-            except Exception:
-                continue
-    except Exception:
-        pass
+    items = [_history_item(data) for data in analysis_runs.list_snapshots(limit)]
     return {"items": items, "total": len(items)}
 
 
 @router.get("/analyze/history/{session_id}")
 async def get_history(session_id: str):
     """Get full session data."""
-    from fastapi import HTTPException
-
-    path = HISTORY_DIR / f"{session_id}.json"
-    if not path.exists():
+    try:
+        return analysis_runs.load_snapshot(session_id)
+    except FileNotFoundError:
         raise HTTPException(404, "Session not found")
-    return json.loads(path.read_text())
 
 
 @router.delete("/analyze/history/{session_id}")
 async def delete_history(session_id: str):
     """Delete a past analysis session."""
-    from fastapi import HTTPException
-
-    path = HISTORY_DIR / f"{session_id}.json"
+    path = analysis_runs.HISTORY_DIR / f"{session_id}.json"
     if not path.exists():
         raise HTTPException(404, "Session not found")
     path.unlink()
     return {"ok": True}
+
+
+def _history_item(data: dict[str, Any]) -> dict[str, Any]:
+    result = data.get("result")
+    result_data = result if isinstance(result, dict) else None
+    report = str(result_data.get("report", "")) if result_data else ""
+    return {
+        "session_id": data.get("session_id"),
+        "ticker": data.get("ticker"),
+        "mode": data.get("mode"),
+        "status": data.get("status", "completed"),
+        "created_at": data.get("created_at"),
+        "updated_at": data.get("updated_at"),
+        "action": result_data.get("action") if result_data else None,
+        "direction": result_data.get("direction") if result_data else None,
+        "confidence": result_data.get("confidence") if result_data else None,
+        "oneliner": _extract_oneliner(report) if result_data else "",
+    }
 
 
 def _extract_oneliner(report: str) -> str:

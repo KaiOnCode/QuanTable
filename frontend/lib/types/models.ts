@@ -76,6 +76,48 @@ export type SSEErrorEvent = {
   timestamp?: string;
 };
 
+export type AnalysisRunStatus = "running" | "completed" | "failed";
+
+export interface AnalysisProgressSnapshot {
+  agent: string;
+  status: AgentRunStatus;
+  report?: string;
+  duration_ms?: number;
+  tool?: string;
+  error?: string;
+  session_id?: string;
+  ticker?: string;
+  timestamp?: string;
+}
+
+export interface AnalysisSessionSnapshot {
+  session_id: string;
+  ticker: string;
+  mode: AnalysisMode;
+  status: AnalysisRunStatus;
+  created_at: string;
+  updated_at?: string;
+  completed_at?: string | null;
+  request: AnalyzeRequest;
+  progress_events: AnalysisProgressSnapshot[];
+  agent_reports: Record<string, string>;
+  result: SSEResultEvent | null;
+  error: string | null;
+}
+
+export interface AnalysisHistoryItem {
+  session_id: string;
+  ticker: string;
+  mode: AnalysisMode;
+  status: AnalysisRunStatus;
+  created_at: string;
+  updated_at?: string;
+  action: TradingAction | null;
+  direction: TradingDirection | null;
+  confidence: number | null;
+  oneliner: string;
+}
+
 // ── API request / response types (required by lib/api/*.ts) ──
 
 export type StrategyType = "agent" | "quant" | "hitl";
@@ -376,6 +418,11 @@ export interface MonitorTask {
   expanded_keywords?: string[];
   expanded_tickers?: string[];
   report_language?: string;
+  run_status?: "idle" | "running" | "failed";
+  current_run_id?: string | null;
+  last_run_started_at?: string | null;
+  last_run_finished_at?: string | null;
+  last_run_error?: string;
   status: string; created_at: string; updated_at: string; last_run_at: string | null;
 }
 

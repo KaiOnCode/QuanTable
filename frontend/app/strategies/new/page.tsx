@@ -17,6 +17,10 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { strategiesApi } from "@/lib/api/strategies";
+import {
+  DEFAULT_DEEP_THINK_MODEL,
+  DEFAULT_QUICK_THINK_MODEL,
+} from "@/lib/llm-defaults";
 import type { CreateStrategyRequest } from "@/lib/types/models";
 import {
   ArrowLeft, Plus, Loader2, X,
@@ -46,8 +50,8 @@ export default function NewStrategyPage() {
         beliefs: [],
         belief_weights: {},
         risk_debate_rounds: 2,
-        agent_model: "deepseek-chat",
-        deep_think_model: "deepseek-chat",
+        agent_model: DEFAULT_QUICK_THINK_MODEL,
+        deep_think_model: DEFAULT_DEEP_THINK_MODEL,
         agent_temperature: 0,
         enable_debate_mode: true,
         enable_cross_review: false,

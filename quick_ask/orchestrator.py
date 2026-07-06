@@ -26,6 +26,7 @@ from quick_ask.agents.utils.agent_tools import (
     get_price,
 )
 from quick_ask.state import AgentState
+from server.llm_defaults import DEFAULT_QUICK_THINK_MODEL
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 load_dotenv("properties.env")
@@ -165,7 +166,7 @@ class IntelliFin_Assistant:
         #     )
         api_base = os.getenv("OPENAI_API_BASE", "")
         self.llm = ChatOpenAI(
-            model=os.getenv("OPENAI_MODEL", "deepseek-chat"),
+            model=os.getenv("OPENAI_MODEL", DEFAULT_QUICK_THINK_MODEL),
             api_key=lambda: os.getenv("OPENAI_API_KEY") or "",
             base_url=api_base if api_base else None,
             temperature=0.0,

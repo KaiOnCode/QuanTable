@@ -17,6 +17,11 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from notification import build_manager
+from server.llm_defaults import (
+    DEFAULT_DEEP_THINK_MODEL,
+    DEFAULT_QUICK_THINK_MODEL,
+    migrate_model_config,
+)
 
 router = APIRouter(tags=["settings"])
 
@@ -25,8 +30,8 @@ CONFIG_PATH = Path(os.getenv("AGENTIC_QUANT_SETTINGS_PATH", "data/settings.json"
 DEFAULT_CONFIG = {
     "llm_api_key": "sk-****",
     "llm_base_url": os.getenv("OPENAI_API_BASE", "https://api.deepseek.com/v1"),
-    "llm_model": os.getenv("OPENAI_MODEL", "deepseek-chat"),
-    "deep_think_model": "deepseek-chat",
+    "llm_model": os.getenv("OPENAI_MODEL", DEFAULT_QUICK_THINK_MODEL),
+    "deep_think_model": DEFAULT_DEEP_THINK_MODEL,
     "email_smtp_host": "",
     "email_smtp_port": 587,
     "email_username": "",
@@ -60,7 +65,7 @@ class NotificationRequest(BaseModel):
 
 def _load_settings() -> dict[str, Any]:
     if not CONFIG_PATH.exists():
-        return DEFAULT_CONFIG.copy()
+        return migrate_model_config(DEFAULT_CONFIG.copy())
     try:
         with CONFIG_PATH.open("r", encoding="utf-8") as fp:
             saved = json.load(fp)
@@ -68,7 +73,7 @@ def _load_settings() -> dict[str, Any]:
         raise HTTPException(
             status_code=500, detail=f"Invalid settings file: {exc}"
         ) from exc
-    return {**DEFAULT_CONFIG, **saved}
+    return migrate_model_config({**DEFAULT_CONFIG, **saved})
 
 
 def _save_settings(config: dict[str, Any]) -> None:
@@ -116,6 +121,7 @@ async def update_settings(config: dict):
         if config.get(key) in {"********", "sk-****"}:
             updated[key] = current.get(key, "")
 
+    updated = migrate_model_config(updated)
     _save_settings(updated)
     return _safe_settings(updated)
 

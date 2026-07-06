@@ -154,7 +154,7 @@ async def run_monitor(monitor_id: str):
     if task is None:
         raise HTTPException(404, f"Monitor {monitor_id} not found")
 
-    if monitor_id in _running_tasks:
+    if monitor_id in _running_tasks or task.get("run_status") == "running":
         raise HTTPException(409, "Task is already running. Please wait.")
 
     targets = task.get("targets", {})
@@ -166,16 +166,31 @@ async def run_monitor(monitor_id: str):
     if not has_input:
         raise HTTPException(400, "Add keywords or tickers before running this task.")
 
+    run_id = str(uuid.uuid4())
+    started = get_store().start_monitor_run(monitor_id, run_id)
+    if started is None:
+        raise HTTPException(404, f"Monitor {monitor_id} not found")
+
     _running_tasks.add(monitor_id)
+    asyncio.create_task(_execute_monitor_run(monitor_id, run_id))
+    return {
+        "ok": True,
+        "monitor_id": monitor_id,
+        "run_id": run_id,
+        "status": "running",
+    }
+
+
+async def _execute_monitor_run(monitor_id: str, run_id: str) -> None:
     try:
         from server.monitor_engine import execute
 
-        loop = asyncio.get_event_loop()
-        report = await loop.run_in_executor(None, execute, monitor_id)
-        return {"report_id": report.get("id", ""), "ok": True, **report}
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, execute, monitor_id)
+        get_store().finish_monitor_run(monitor_id, run_id)
     except Exception as exc:
         logger.exception("Manual run failed for monitor %s", monitor_id)
-        raise HTTPException(500, f"Execution failed: {str(exc)[:200]}")
+        get_store().fail_monitor_run(monitor_id, run_id, str(exc))
     finally:
         _running_tasks.discard(monitor_id)
 
@@ -231,12 +246,28 @@ def _run_scheduled(monitor_id: str) -> None:
     import threading
 
     def _run():
+        store = get_store()
+        task = store.get_monitor(monitor_id)
+        if task is None:
+            return
+        if monitor_id in _running_tasks or task.get("run_status") == "running":
+            logger.info("Skipping scheduled monitor %s; run already active", monitor_id)
+            return
+        run_id = str(uuid.uuid4())
+        started = store.start_monitor_run(monitor_id, run_id)
+        if started is None:
+            return
+        _running_tasks.add(monitor_id)
         try:
             from server.monitor_engine import execute
 
             execute(monitor_id)
+            store.finish_monitor_run(monitor_id, run_id)
         except Exception as exc:
             logger.error("Scheduled run failed for %s: %s", monitor_id, exc)
+            store.fail_monitor_run(monitor_id, run_id, str(exc))
+        finally:
+            _running_tasks.discard(monitor_id)
 
     threading.Thread(target=_run, daemon=True).start()
 

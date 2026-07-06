@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
 from dotenv import load_dotenv
+from server.llm_defaults import DEFAULT_QUICK_THINK_MODEL
 
 load_dotenv("properties.env")
 
@@ -244,7 +245,7 @@ def generate_brief(market_data: dict, articles: list[dict]) -> dict:
         from langchain_openai import ChatOpenAI
 
         llm = ChatOpenAI(
-            model=os.getenv("OPENAI_MODEL", "deepseek-chat"),
+            model=os.getenv("OPENAI_MODEL", DEFAULT_QUICK_THINK_MODEL),
             api_key=lambda: os.getenv("OPENAI_API_KEY") or "",
             base_url=os.getenv("OPENAI_API_BASE") or None,
             temperature=0.3,

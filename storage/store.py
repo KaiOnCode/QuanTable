@@ -412,6 +412,11 @@ class ContextStore:
             "expanded_keywords_json TEXT DEFAULT '[]'",
             "expanded_tickers_json TEXT DEFAULT '[]'",
             "report_language TEXT DEFAULT 'zh'",
+            "run_status TEXT DEFAULT 'idle'",
+            "current_run_id TEXT",
+            "last_run_started_at TEXT",
+            "last_run_finished_at TEXT",
+            "last_run_error TEXT DEFAULT ''",
         ):
             try:
                 db.execute(f"ALTER TABLE monitor_tasks ADD COLUMN {col}")
@@ -604,6 +609,64 @@ class ContextStore:
             (_now(), monitor_id),
         )
         db.commit()
+
+    def start_monitor_run(self, monitor_id: str, run_id: str) -> dict | None:
+        self._init_monitor_db()
+        now = _now()
+        db = self._system_db()
+        cursor = db.execute(
+            """UPDATE monitor_tasks
+               SET run_status = 'running',
+                   current_run_id = ?,
+                   last_run_started_at = ?,
+                   last_run_error = '',
+                   updated_at = ?
+               WHERE id = ?""",
+            (run_id, now, now, monitor_id),
+        )
+        db.commit()
+        if cursor.rowcount == 0:
+            return None
+        return self.get_monitor(monitor_id)
+
+    def finish_monitor_run(self, monitor_id: str, run_id: str) -> dict | None:
+        self._init_monitor_db()
+        now = _now()
+        db = self._system_db()
+        cursor = db.execute(
+            """UPDATE monitor_tasks
+               SET run_status = 'idle',
+                   current_run_id = NULL,
+                   last_run_finished_at = ?,
+                   last_run_at = ?,
+                   last_run_error = '',
+                   updated_at = ?
+               WHERE id = ? AND current_run_id = ?""",
+            (now, now, now, monitor_id, run_id),
+        )
+        db.commit()
+        if cursor.rowcount == 0:
+            return None
+        return self.get_monitor(monitor_id)
+
+    def fail_monitor_run(self, monitor_id: str, run_id: str, error: str) -> dict | None:
+        self._init_monitor_db()
+        now = _now()
+        db = self._system_db()
+        cursor = db.execute(
+            """UPDATE monitor_tasks
+               SET run_status = 'failed',
+                   current_run_id = NULL,
+                   last_run_finished_at = ?,
+                   last_run_error = ?,
+                   updated_at = ?
+               WHERE id = ? AND current_run_id = ?""",
+            (now, error[:500], now, monitor_id, run_id),
+        )
+        db.commit()
+        if cursor.rowcount == 0:
+            return None
+        return self.get_monitor(monitor_id)
 
     # ── Monitoring Reports ──────────────────────────────────
 

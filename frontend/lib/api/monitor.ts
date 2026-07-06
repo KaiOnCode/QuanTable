@@ -24,7 +24,12 @@ export const monitorApi = {
     return api.delete(`/monitors/${monitorId}`);
   },
 
-  run(monitorId: string): Promise<MonitoringReport & { report_id: string }> {
+  run(monitorId: string): Promise<{
+    ok: boolean;
+    monitor_id: string;
+    run_id: string;
+    status: "running";
+  }> {
     return api.post(`/monitors/${monitorId}/run`);
   },
 

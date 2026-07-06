@@ -39,6 +39,10 @@ export default function MonitorPage() {
   const { data, isLoading } = useQuery({
     queryKey: ["monitors"],
     queryFn: () => monitorApi.list(),
+    refetchInterval: (query) => {
+      const monitors = query.state.data?.monitors ?? [];
+      return monitors.some((m) => m.run_status === "running") ? 2000 : false;
+    },
   });
   const monitors = data?.monitors ?? [];
   const selected = monitors.find((m) => m.id === selectedId);
@@ -104,7 +108,19 @@ export default function MonitorPage() {
                   >
                     <div className="flex items-center justify-between">
                       <span className="font-medium text-sm truncate">{m.name}</span>
-                      <Badge variant="outline" className="text-xs">{m.mode}</Badge>
+                      <div className="flex items-center gap-1">
+                        {m.run_status === "running" && (
+                          <Badge variant="secondary" className="text-xs">
+                            Running
+                          </Badge>
+                        )}
+                        {m.run_status === "failed" && (
+                          <Badge variant="destructive" className="text-xs">
+                            Failed
+                          </Badge>
+                        )}
+                        <Badge variant="outline" className="text-xs">{m.mode}</Badge>
+                      </div>
                     </div>
                     <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
                       <Clock className="h-3 w-3" />
@@ -143,21 +159,21 @@ function MonitorDetail({ monitor }: { monitor: MonitorTask }) {
     queryKey: ["monitors", monitor.id, "reports"],
     queryFn: () => monitorApi.listReports(monitor.id, 10),
     enabled: !!monitor.id,
+    refetchInterval: monitor.run_status === "running" ? 2000 : false,
   });
   const reports = reportsData?.reports ?? [];
 
   const runMutation = useMutation({
     mutationFn: () => monitorApi.run(monitor.id),
-    onSuccess: (report) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["monitors"] });
       queryClient.invalidateQueries({ queryKey: ["monitors", monitor.id, "reports"] });
-      setViewReport(report);  // Show result immediately from response
     },
     onError: (err: Error) => {
       alert("Run failed: " + err.message);
     },
   });
-  const isRunning = runMutation.isPending;
+  const isRunning = monitor.run_status === "running" || runMutation.isPending;
 
   const deleteMutation = useMutation({
     mutationFn: () => monitorApi.delete(monitor.id),
@@ -275,6 +291,17 @@ function MonitorDetail({ monitor }: { monitor: MonitorTask }) {
             <CardDescription>
               {monitor.mode} · {cronLabel(monitor.cron_expression)}
             </CardDescription>
+            {monitor.run_status === "running" && (
+              <Badge variant="secondary" className="mt-2 gap-1">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Running
+              </Badge>
+            )}
+            {monitor.run_status === "failed" && monitor.last_run_error && (
+              <p className="mt-2 text-xs text-destructive">
+                {monitor.last_run_error}
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <Button size="sm" variant="outline" onClick={() => toggleStatus.mutate()} disabled={toggleStatus.isPending}

@@ -20,27 +20,11 @@ import {
   AccordionContent,
 } from "@/components/ui/accordion";
 import { ActionBadge, DirectionBadge } from "@/components/shared/badges";
-import { api } from "@/lib/api/client";
+import { analyzeApi } from "@/lib/api/analyze";
 import { formatDateTime } from "@/lib/utils";
-import type { SSEResultEvent } from "@/lib/types/models";
-import {
-  ArrowLeft,
-  Loader2,
-  Clock,
-  Zap,
-  TrendingUp,
-  TrendingDown,
-} from "lucide-react";
+import type { AnalysisSessionSnapshot } from "@/lib/types/models";
+import { ArrowLeft, Loader2, Clock, Zap } from "lucide-react";
 import { Markdown } from "@/components/markdown";
-
-type SessionData = {
-  session_id: string;
-  ticker: string;
-  mode: string;
-  created_at: string;
-  request: { ticker: string; mode: string };
-  result: SSEResultEvent;
-};
 
 function parseReport(report: string) {
   const lines = report.split("\n");
@@ -72,19 +56,32 @@ function parseReport(report: string) {
 export default function HistoryDetailPage() {
   const { conversationId } = useParams<{ conversationId: string }>();
   const router = useRouter();
-  const [session, setSession] = useState<SessionData | null>(null);
+  const [session, setSession] = useState<AnalysisSessionSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!conversationId) return;
     setLoading(true);
-    api
-      .get<SessionData>(`analyze/history/${conversationId}`)
+    analyzeApi
+      .getHistory(conversationId)
       .then(setSession)
       .catch((err) => setError(String(err)))
       .finally(() => setLoading(false));
   }, [conversationId]);
+
+  useEffect(() => {
+    if (!conversationId || session?.status !== "running") return;
+
+    const interval = window.setInterval(() => {
+      analyzeApi
+        .getHistory(conversationId)
+        .then(setSession)
+        .catch(() => {});
+    }, 2000);
+
+    return () => window.clearInterval(interval);
+  }, [conversationId, session?.status]);
 
   if (loading) {
     return (
@@ -121,10 +118,10 @@ export default function HistoryDetailPage() {
   }
 
   const result = session.result;
-  const parsed = result.report ? parseReport(result.report) : null;
+  const parsed = result?.report ? parseReport(result.report) : null;
   const oneliner = parsed?.oneliner || "";
-  const bodyText = parsed?.body || result.report || "";
-  const confidence = result.confidence ?? 0.5;
+  const bodyText = parsed?.body || result?.report || "";
+  const confidence = result?.confidence ?? 0.5;
   const confidencePct = Math.round(confidence * 100);
   const barColor =
     confidencePct >= 70
@@ -154,16 +151,72 @@ export default function HistoryDetailPage() {
                 <Clock className="h-3 w-3" />
                 {formatDateTime(session.created_at)}
               </span>
-              {result.elapsed_s != null && (
+              {result?.elapsed_s != null && (
                 <span className="text-xs text-muted-foreground">
                   · {result.elapsed_s}s
                 </span>
               )}
+              <Badge variant="secondary" className="text-xs">
+                {session.status}
+              </Badge>
             </div>
           </div>
         </div>
 
+        {session.status === "running" && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Analysis Running
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {session.progress_events.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  Waiting for analysis progress.
+                </p>
+              ) : (
+                session.progress_events.map((event, index) => (
+                  <div
+                    key={`${event.agent}-${index}`}
+                    className="rounded-lg bg-muted/40 p-3 text-sm"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-mono text-xs">
+                        {event.agent.replace(/_/g, " ")}
+                      </span>
+                      <Badge variant="outline" className="text-[10px]">
+                        {event.status}
+                      </Badge>
+                    </div>
+                    {event.report && (
+                      <div className="mt-2 line-clamp-3 text-xs text-muted-foreground">
+                        {event.report}
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {session.status === "failed" && (
+          <Card className="border-destructive">
+            <CardHeader>
+              <CardTitle className="text-base text-destructive">
+                Analysis Failed
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm">{session.error || "Analysis failed."}</p>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Result Card */}
+        {result && (
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Analysis Result</CardTitle>
@@ -209,9 +262,10 @@ export default function HistoryDetailPage() {
             )}
           </CardContent>
         </Card>
+        )}
 
         {/* Agent Reports */}
-        {result.agent_reports &&
+        {result?.agent_reports &&
           Object.keys(result.agent_reports).length > 0 && (
             <Card>
               <CardHeader>
@@ -241,7 +295,7 @@ export default function HistoryDetailPage() {
           )}
 
         {/* News Sources */}
-        {result.news_articles && result.news_articles.length > 0 && (
+        {result?.news_articles && result.news_articles.length > 0 && (
           <Card>
             <CardHeader>
               <CardTitle className="text-sm">

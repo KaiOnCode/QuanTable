@@ -12,6 +12,7 @@ from threading import Thread
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
+from server.llm_defaults import DEFAULT_QUICK_THINK_MODEL
 from storage import get_store
 
 router = APIRouter(tags=["insights"])
@@ -67,7 +68,7 @@ async def watchlist_summary(data: dict):
 
     try:
         llm = ChatOpenAI(
-            model=os.getenv("OPENAI_MODEL", "deepseek-chat"),
+            model=os.getenv("OPENAI_MODEL", DEFAULT_QUICK_THINK_MODEL),
             api_key=lambda: os.getenv("OPENAI_API_KEY") or "",
             base_url=os.getenv("OPENAI_API_BASE") or None,
             temperature=0.3,

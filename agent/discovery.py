@@ -15,6 +15,8 @@ import json
 import logging
 import os
 
+from server.llm_defaults import DEFAULT_QUICK_THINK_MODEL
+
 logger = logging.getLogger(__name__)
 
 
@@ -41,7 +43,7 @@ def discover_related_tickers(
 
     api_base = os.getenv("OPENAI_API_BASE", "")
     llm = ChatOpenAI(
-        model=os.getenv("OPENAI_MODEL", "deepseek-chat"),
+        model=os.getenv("OPENAI_MODEL", DEFAULT_QUICK_THINK_MODEL),
         api_key=lambda: os.getenv("OPENAI_API_KEY") or "",
         base_url=api_base if api_base else None,
         temperature=0.0,

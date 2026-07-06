@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Callable
 
 from dotenv import load_dotenv
+from server.llm_defaults import DEFAULT_QUICK_THINK_MODEL
 
 from .compression import (
     TOKEN_THRESHOLD,
@@ -109,7 +110,9 @@ class AgentLoop:
         if self._llm is None:
             from langchain_openai import ChatOpenAI
 
-            model = self.config.model or os.getenv("OPENAI_MODEL", "deepseek-chat")
+            model = self.config.model or os.getenv(
+                "OPENAI_MODEL", DEFAULT_QUICK_THINK_MODEL
+            )
             self._llm = ChatOpenAI(
                 model=model,
                 api_key=lambda: os.getenv("OPENAI_API_KEY") or "",

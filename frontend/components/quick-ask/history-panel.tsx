@@ -15,41 +15,32 @@ import { ActionBadge, DirectionBadge } from "@/components/shared/badges";
 import { formatDateTime } from "@/lib/utils";
 import { History, Loader2, X } from "lucide-react";
 import { api } from "@/lib/api/client";
-
-type HistoryItem = {
-  session_id: string;
-  ticker: string;
-  mode: string;
-  created_at: string;
-  action: string;
-  direction: string;
-  confidence: number;
-  oneliner: string;
-};
+import { analyzeApi } from "@/lib/api/analyze";
+import type { AnalysisHistoryItem } from "@/lib/types/models";
 
 export function HistoryPanel() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  const [items, setItems] = useState<HistoryItem[]>([]);
+  const [items, setItems] = useState<AnalysisHistoryItem[]>([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (open) {
       setLoading(true);
-      api
-        .get<{ items: HistoryItem[] }>("analyze/history?limit=30")
+      analyzeApi
+        .listHistory(30)
         .then((data) => setItems(data.items || []))
         .catch(() => {})
         .finally(() => setLoading(false));
     }
   }, [open]);
 
-  const handleSelect = (item: HistoryItem) => {
+  const handleSelect = (item: AnalysisHistoryItem) => {
     setOpen(false);
     router.push(`/quick-ask/${item.session_id}`);
   };
 
-  const handleDelete = async (e: React.MouseEvent, item: HistoryItem) => {
+  const handleDelete = async (e: React.MouseEvent, item: AnalysisHistoryItem) => {
     e.stopPropagation();
     try {
       await api.delete(`analyze/history/${item.session_id}`);
@@ -91,8 +82,16 @@ export function HistoryPanel() {
                     <span className="font-mono font-bold text-sm">
                       {item.ticker}
                     </span>
-                    <ActionBadge action={item.action} />
-                    <DirectionBadge direction={item.direction} />
+                    {item.action && <ActionBadge action={item.action} />}
+                    {item.direction && <DirectionBadge direction={item.direction} />}
+                    {item.status !== "completed" && (
+                      <Badge
+                        variant={item.status === "failed" ? "destructive" : "secondary"}
+                        className="text-[10px] px-1.5 py-0"
+                      >
+                        {item.status}
+                      </Badge>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
                     <span>{formatDateTime(item.created_at)}</span>
