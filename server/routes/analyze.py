@@ -558,10 +558,8 @@ async def get_history(session_id: str):
 @router.delete("/analyze/history/{session_id}")
 async def delete_history(session_id: str):
     """Delete a past analysis session."""
-    path = analysis_runs.HISTORY_DIR / f"{session_id}.json"
-    if not path.exists():
+    if not analysis_runs.delete_snapshot(session_id):
         raise HTTPException(404, "Session not found")
-    path.unlink()
     return {"ok": True}
 
 

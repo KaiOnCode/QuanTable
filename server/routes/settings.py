@@ -28,7 +28,7 @@ router = APIRouter(tags=["settings"])
 CONFIG_PATH = Path(os.getenv("AGENTIC_QUANT_SETTINGS_PATH", "data/settings.json"))
 
 DEFAULT_CONFIG = {
-    "llm_api_key": "sk-****",
+    "llm_api_key": "",
     "llm_base_url": os.getenv("OPENAI_API_BASE", "https://api.deepseek.com/v1"),
     "llm_model": os.getenv("OPENAI_MODEL", DEFAULT_QUICK_THINK_MODEL),
     "deep_think_model": DEFAULT_DEEP_THINK_MODEL,
@@ -55,12 +55,37 @@ DEFAULT_CONFIG = {
     "mcp_external_servers": {},
 }
 
+_LEGACY_SECRET_PLACEHOLDERS = {"sk-****", "********"}
+
 
 class NotificationRequest(BaseModel):
     message: str = Field(..., min_length=1)
     title: str = "Agentic-Quant Alert"
     priority: str = "normal"
     channels: list[str] | None = None
+
+
+def _is_masked_secret(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    stripped = value.strip()
+    return stripped in _LEGACY_SECRET_PLACEHOLDERS or (
+        bool(stripped) and set(stripped) == {"*"}
+    )
+
+
+def _effective_llm_api_key(config: dict[str, Any]) -> tuple[str, str]:
+    saved = str(config.get("llm_api_key") or "")
+    if saved and not _is_masked_secret(saved):
+        return saved, "settings"
+    env_key = os.getenv("OPENAI_API_KEY", "")
+    if env_key:
+        return env_key, "properties.env"
+    return "", "missing"
+
+
+def _mask_secret(value: str) -> str:
+    return "*" * len(value) if value else ""
 
 
 def _load_settings() -> dict[str, Any]:
@@ -82,16 +107,39 @@ def _save_settings(config: dict[str, Any]) -> None:
         json.dump(config, fp, ensure_ascii=False, indent=2)
 
 
-def _safe_settings(config: dict[str, Any]) -> dict[str, Any]:
-    masked = config.copy()
+def _merge_settings_update(
+    current: dict[str, Any], config: dict[str, Any]
+) -> dict[str, Any]:
+    updated = {**current, **config}
+
     for key in (
         "llm_api_key",
         "email_password",
         "telegram_bot_token",
         "whatsapp_access_token",
     ):
-        if masked.get(key):
-            masked[key] = "********"
+        if _is_masked_secret(config.get(key)):
+            updated[key] = current.get(key, "")
+
+    return migrate_model_config(updated)
+
+
+def _safe_settings(config: dict[str, Any]) -> dict[str, Any]:
+    masked = config.copy()
+    llm_key, llm_source = _effective_llm_api_key(config)
+    masked["llm_api_key"] = _mask_secret(llm_key)
+    masked["llm_api_key_configured"] = bool(llm_key)
+    masked["llm_api_key_source"] = llm_source
+    masked["llm_api_key_length"] = len(llm_key)
+
+    for key in (
+        "email_password",
+        "telegram_bot_token",
+        "whatsapp_access_token",
+    ):
+        value = str(masked.get(key) or "")
+        if value:
+            masked[key] = _mask_secret(value)
     return masked
 
 
@@ -109,19 +157,7 @@ async def get_settings():
 async def update_settings(config: dict):
     """Update system configuration (partial update supported)."""
     current = _load_settings()
-    updated = {**current, **config}
-
-    # Keep existing secrets when the frontend sends the masked placeholder back.
-    for key in (
-        "llm_api_key",
-        "email_password",
-        "telegram_bot_token",
-        "whatsapp_access_token",
-    ):
-        if config.get(key) in {"********", "sk-****"}:
-            updated[key] = current.get(key, "")
-
-    updated = migrate_model_config(updated)
+    updated = _merge_settings_update(current, config)
     _save_settings(updated)
     return _safe_settings(updated)
 

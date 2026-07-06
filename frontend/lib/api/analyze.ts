@@ -20,6 +20,10 @@ export const analyzeApi = {
     return api.get(`analyze/history?limit=${limit}`);
   },
 
+  deleteHistory(sessionId: string): Promise<{ ok: boolean }> {
+    return api.delete(`analyze/history/${sessionId}`);
+  },
+
   batch(data: {
     tickers: string[];
     mode?: string;

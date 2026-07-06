@@ -24,9 +24,24 @@ def _snapshot_path(session_id: str) -> Path:
     return HISTORY_DIR / f"{session_id}.json"
 
 
+def _deleted_dir() -> Path:
+    return HISTORY_DIR / ".deleted"
+
+
+def _deletion_marker_path(session_id: str) -> Path:
+    return _deleted_dir() / f"{session_id}.deleted"
+
+
+def is_snapshot_deleted(session_id: str) -> bool:
+    return _deletion_marker_path(session_id).exists()
+
+
 def _write_snapshot(snapshot: dict[str, Any]) -> None:
+    session_id = str(snapshot["session_id"])
+    if is_snapshot_deleted(session_id):
+        return
     HISTORY_DIR.mkdir(parents=True, exist_ok=True)
-    path = _snapshot_path(str(snapshot["session_id"]))
+    path = _snapshot_path(session_id)
     tmp_path = path.with_suffix(".tmp")
     tmp_path.write_text(
         json.dumps(snapshot, ensure_ascii=False, default=str, indent=2),
@@ -62,10 +77,24 @@ def create_running_snapshot(
 
 
 def load_snapshot(session_id: str) -> dict[str, Any]:
+    if is_snapshot_deleted(session_id):
+        raise FileNotFoundError(session_id)
     return json.loads(_snapshot_path(session_id).read_text(encoding="utf-8"))
 
 
+def delete_snapshot(session_id: str) -> bool:
+    path = _snapshot_path(session_id)
+    existed = path.exists()
+    _deleted_dir().mkdir(parents=True, exist_ok=True)
+    _deletion_marker_path(session_id).write_text(_now(), encoding="utf-8")
+    if existed:
+        path.unlink()
+    return existed
+
+
 def record_progress(session_id: str, event: dict[str, object]) -> None:
+    if is_snapshot_deleted(session_id):
+        return
     snapshot = load_snapshot(session_id)
     event_with_time = dict(event)
     event_with_time.setdefault("timestamp", _now())
@@ -85,6 +114,8 @@ def record_progress(session_id: str, event: dict[str, object]) -> None:
 
 
 def complete_snapshot(session_id: str, result_payload: dict[str, object]) -> None:
+    if is_snapshot_deleted(session_id):
+        return
     snapshot = load_snapshot(session_id)
     now = _now()
     snapshot["status"] = "completed"
@@ -100,6 +131,8 @@ def complete_snapshot(session_id: str, result_payload: dict[str, object]) -> Non
 
 
 def fail_snapshot(session_id: str, error: str) -> None:
+    if is_snapshot_deleted(session_id):
+        return
     snapshot = load_snapshot(session_id)
     now = _now()
     snapshot["status"] = "failed"
@@ -117,7 +150,12 @@ def list_snapshots(limit: int = 20) -> list[dict[str, Any]]:
         reverse=True,
     )
     snapshots: list[dict[str, Any]] = []
-    for path in files[:limit]:
+    for path in files:
+        if len(snapshots) >= limit:
+            break
+        session_id = path.stem
+        if is_snapshot_deleted(session_id):
+            continue
         try:
             snapshots.append(json.loads(path.read_text(encoding="utf-8")))
         except Exception:
@@ -131,6 +169,8 @@ def create_run(session_id: str) -> None:
 
 
 def has_run(session_id: str) -> bool:
+    if is_snapshot_deleted(session_id):
+        return False
     with _subscribers_lock:
         if session_id in _subscribers:
             return True

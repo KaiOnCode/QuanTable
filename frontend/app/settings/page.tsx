@@ -73,6 +73,9 @@ const DEFAULT_SETTINGS: SystemConfig = {
   weekly_reflection_day: "sunday",
   weekly_reflection_time: "18:00",
   mcp_external_servers: {},
+  llm_api_key_configured: false,
+  llm_api_key_source: "missing",
+  llm_api_key_length: 0,
 };
 
 type ProviderStatus = { name: string; status: string };
@@ -206,7 +209,23 @@ export default function SettingsPage() {
           <CardContent className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>API Key</Label>
+                <div className="flex items-center justify-between gap-2">
+                  <Label>API Key</Label>
+                  <div className="flex items-center gap-2">
+                    <Badge variant={config.llm_api_key_configured ? "secondary" : "destructive"}>
+                      {config.llm_api_key_source === "properties.env"
+                        ? "properties.env"
+                        : config.llm_api_key_source === "settings"
+                          ? "settings"
+                          : "missing"}
+                    </Badge>
+                    {config.llm_api_key_configured && (
+                      <span className="text-xs text-muted-foreground">
+                        {config.llm_api_key_length ?? config.llm_api_key.length} chars
+                      </span>
+                    )}
+                  </div>
+                </div>
                 <Input
                   type="password"
                   value={config.llm_api_key}

@@ -325,6 +325,8 @@ export interface SystemEvent {
   timestamp: string;
 }
 
+export type LlmApiKeySource = "settings" | "properties.env" | "missing";
+
 export interface SystemConfig {
   llm_api_key: string; llm_base_url: string; llm_model: string;
   deep_think_model: string; email_smtp_host: string; email_smtp_port: number;
@@ -338,6 +340,9 @@ export interface SystemConfig {
   max_concurrent_analyses: number; memory_enabled: boolean;
   memory_retention_days: number; weekly_reflection_day: string;
   weekly_reflection_time: string; mcp_external_servers: Record<string, unknown>;
+  llm_api_key_configured?: boolean;
+  llm_api_key_source?: LlmApiKeySource;
+  llm_api_key_length?: number;
 }
 
 export interface BacktestRequest {

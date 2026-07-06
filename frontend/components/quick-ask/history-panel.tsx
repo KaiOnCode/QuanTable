@@ -14,7 +14,7 @@ import {
 import { ActionBadge, DirectionBadge } from "@/components/shared/badges";
 import { formatDateTime } from "@/lib/utils";
 import { History, Loader2, X } from "lucide-react";
-import { api } from "@/lib/api/client";
+import { toast } from "sonner";
 import { analyzeApi } from "@/lib/api/analyze";
 import type { AnalysisHistoryItem } from "@/lib/types/models";
 
@@ -23,6 +23,7 @@ export function HistoryPanel() {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<AnalysisHistoryItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (open) {
@@ -40,14 +41,29 @@ export function HistoryPanel() {
     router.push(`/quick-ask/${item.session_id}`);
   };
 
-  const handleDelete = async (e: React.MouseEvent, item: AnalysisHistoryItem) => {
-    e.stopPropagation();
+  const deleteItem = async (item: AnalysisHistoryItem) => {
+    if (deletingIds.has(item.session_id)) return;
+
+    setDeletingIds((prev) => new Set(prev).add(item.session_id));
     try {
-      await api.delete(`analyze/history/${item.session_id}`);
+      await analyzeApi.deleteHistory(item.session_id);
       setItems((prev) => prev.filter((i) => i.session_id !== item.session_id));
-    } catch {
-      // ignore
+    } catch (error: unknown) {
+      toast.error("Failed to delete analysis history", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setDeletingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(item.session_id);
+        return next;
+      });
     }
+  };
+
+  const handleDelete = (e: React.MouseEvent, item: AnalysisHistoryItem) => {
+    e.stopPropagation();
+    void deleteItem(item);
   };
 
   return (
@@ -112,11 +128,21 @@ export function HistoryPanel() {
                   </div>
                   <span
                     onClick={(e) => handleDelete(e, item)}
-                    className="shrink-0 p-1 rounded hover:bg-destructive/10 transition-colors cursor-pointer"
+                    className={`shrink-0 p-1 rounded transition-colors cursor-pointer ${
+                      deletingIds.has(item.session_id)
+                        ? "opacity-50 pointer-events-none"
+                        : "hover:bg-destructive/10"
+                    }`}
                     title="Delete"
                     role="button"
                     tabIndex={0}
-                    onKeyDown={(e) => { if (e.key === "Enter") handleDelete(e as any, item); }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        void deleteItem(item);
+                      }
+                    }}
                   >
                     <X className="h-3.5 w-3.5 text-muted-foreground hover:text-destructive" />
                   </span>
