@@ -3,34 +3,28 @@ import type {
   ScannerRuleRequest,
   ScannerAgentRequest,
   ScannerBeliefRequest,
-  ScanResult,
-  ScannerQuery,
+  ScanRun,
+  ScanRunListResponse,
 } from "@/lib/types/models";
 
 export const scannerApi = {
-  scanRule(data: ScannerRuleRequest): Promise<{
-    results: ScanResult[];
-    total_matches: number;
-    scanned_at: string;
-  }> {
+  scanRule(data: ScannerRuleRequest): Promise<ScanRun> {
     return api.post("/scanner/rule", data);
   },
 
-  scanAgent(data: ScannerAgentRequest): Promise<{
-    results: ScanResult[];
-    total_matches: number;
-  }> {
-    return api.post("/scanner/agent", data);
+  scanAgent(data: ScannerAgentRequest): Promise<ScanRun> {
+    return api.post("/agent/scanner", data);
   },
 
-  scanBelief(data: ScannerBeliefRequest): Promise<{
-    results: ScanResult[];
-    total_matches: number;
-  }> {
-    return api.post("/scanner/belief", data);
+  scanBelief(data: ScannerBeliefRequest): Promise<ScanRun> {
+    return api.post("/agent/scanner", data);
   },
 
-  getQueries(): Promise<ScannerQuery[]> {
-    return api.get("/scanner/queries");
+  getRun(scanRunId: string): Promise<ScanRun> {
+    return api.get(`/scanner/runs/${scanRunId}`);
+  },
+
+  listRuns(): Promise<ScanRunListResponse> {
+    return api.get("/scanner/runs");
   },
 };

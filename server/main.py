@@ -123,6 +123,7 @@ from server.routes import (  # noqa: E402
     market,
     memory,
     monitor,
+    scanner,
     settings,
     strategies,
     watchlist,
@@ -138,4 +139,5 @@ app.include_router(market.router, prefix="/api")
 app.include_router(watchlist.router, prefix="/api")
 app.include_router(monitor.router, prefix="/api")
 app.include_router(insights.router, prefix="/api")
+app.include_router(scanner.router, prefix="/api")
 app.include_router(agent.router, prefix="/api")

@@ -753,49 +753,84 @@ Benchmark factors against a universe.
 
 ### `POST /api/scanner/rule`
 
+SHARED deterministic route. The only universe is cached `tracked`: the
+deduplicated union of strategy tickers, watchlist tickers, and cached market
+tickers. It never invokes an LLM or fetches a provider.
+
 **Request:**
+
 ```json
 {
   "conditions": [
-    { "field": "rsi14", "operator": "<", "value": 30 },
-    { "field": "pe_ratio", "operator": "<", "value": 15 }
+    { "field": "price", "operator": ">", "value": 140.0 }
   ],
-  "universe": "sp500"
+  "universe": "tracked"
 }
 ```
 
-**Response:**
+`field` is restricted to `price`, `change_pct`, `volume`, `rsi14`, `sma20`,
+`sma50`, `pe_ratio`, `pb_ratio`, `market_cap`, or `sector`; operators are
+`<`, `>`, `<=`, `>=`, `==`, and `between`. Missing values remain missing,
+never zero.
+
+**Response `201`:**
+
 ```json
 {
-  "results": [ScanResult],
-  "total_matches": 23,
-  "scanned_at": "..."
+  "id": "scan-run-id",
+  "mode": "rule",
+  "status": "completed",
+  "input": { "conditions": [{ "field": "price", "operator": ">", "value": 140.0 }], "universe": "tracked" },
+  "compiled_conditions": [{ "field": "price", "operator": ">", "value": 140.0, "value2": null }],
+  "result": {
+    "scanned_count": 1,
+    "matched_count": 1,
+    "missing_data_count": 0,
+    "warnings": [],
+    "results": []
+  }
 }
 ```
 
-### `POST /api/scanner/agent`
+### `GET /api/scanner/runs`
 
-**Request:**
+SHARED persisted run history for Scanner UI and Reports. Optional query:
+`status=running|completed|failed`, `limit=1..100`.
+
+### `GET /api/scanner/runs/{scan_run_id}`
+
+SHARED read of one durable rule, agent, or belief run. Missing IDs return `404`.
+
+### `POST /api/agent/scanner`
+
+ACTIVE judgment route. It runs a restricted `AgentLoop` that can only use
+`scan_tracked_universe` and `search_skills`; the model must call the Scanner
+tool exactly once. Final prose is never interpreted as a result.
+
+**Agent request:**
+
 ```json
 {
-  "query": "Find tech stocks that had negative news last week but strong fundamentals",
-  "universe": "nasdaq100"
+  "mode": "agent",
+  "query": "find tracked shares whose price is above 140"
 }
 ```
 
-### `POST /api/scanner/belief`
+**Belief request:**
 
-**Request:**
 ```json
 {
-  "belief_id": "uuid",
-  "universe": "sp500"
+  "mode": "belief",
+  "strategy_id": "strategy-uuid",
+  "belief_text": "Technology momentum"
 }
 ```
 
-### `GET /api/scanner/queries`
-
-Saved scan queries.
+`belief_text` must exactly exist in the selected strategy's `beliefs`; its
+persisted `belief_weights` entry is included in the compiler prompt. This API
+does not accept a `belief_id`. Invalid/missing sources, unavailable LLMs, no
+tool call, or invalid tool output return `422`; an explicit failed run is
+persisted without chain-of-thought.
 
 ---
 

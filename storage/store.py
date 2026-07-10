@@ -21,6 +21,7 @@ from typing import Literal
 DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 type BacktestJobStatus = Literal["pending", "running", "completed", "failed"]
+type ScanRunStatus = Literal["running", "completed", "failed"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +33,21 @@ class BacktestJobRecord:
     error_json: str | None
     created_at: str
     started_at: str | None
+    completed_at: str | None
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class ScanRunRecord:
+    id: str
+    input_json: str
+    compiled_conditions_json: str | None
+    result_json: str | None
+    error_json: str | None
+    status: ScanRunStatus
+    mode: str
+    strategy_id: str | None
+    created_at: str
     completed_at: str | None
     updated_at: str
 
@@ -119,6 +135,35 @@ class ContextStore:
         query += " ORDER BY updated_at DESC"
         rows = db.execute(query, params).fetchall()
         return [json.loads(row[0]) for row in rows]
+
+    def list_watchlist_tickers(self) -> list[str]:
+        """Return normalized tickers persisted by existing watchlists."""
+        db = self._system_db()
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS watchlists (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                tickers_json TEXT DEFAULT '[]',
+                notes_json TEXT DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )"""
+        )
+        db.commit()
+        rows = db.execute("SELECT tickers_json FROM watchlists").fetchall()
+        tickers: set[str] = set()
+        for row in rows:
+            try:
+                decoded = json.loads(str(row["tickers_json"] or "[]"))
+            except json.JSONDecodeError:
+                continue
+            if isinstance(decoded, list):
+                tickers.update(
+                    ticker.strip().upper()
+                    for ticker in decoded
+                    if isinstance(ticker, str) and ticker.strip()
+                )
+        return sorted(tickers)
 
     def update_strategy(self, strategy_id: str, updates: dict) -> dict | None:
         """Merge updates into an existing strategy's config_json. Returns updated config."""
@@ -1058,6 +1103,129 @@ class ContextStore:
         )
         db.commit()
 
+    def create_scan_run(
+        self,
+        run_id: str,
+        input_json: str,
+        mode: str,
+        strategy_id: str | None = None,
+    ) -> ScanRunRecord:
+        self._init_scan_runs_db()
+        now = _now()
+        db = self._system_db()
+        db.execute(
+            """INSERT INTO scan_runs
+               (id, input_json, compiled_conditions_json, result_json, error_json,
+                status, mode, strategy_id, created_at, completed_at, updated_at)
+               VALUES (?, ?, NULL, NULL, NULL, 'running', ?, ?, ?, NULL, ?)""",
+            (run_id, input_json, mode, strategy_id, now, now),
+        )
+        db.commit()
+        run = self.get_scan_run(run_id)
+        if run is None:
+            raise RuntimeError("scan run was not persisted")
+        return run
+
+    def complete_scan_run(
+        self, run_id: str, compiled_conditions_json: str, result_json: str
+    ) -> bool:
+        self._init_scan_runs_db()
+        now = _now()
+        cursor = self._system_db().execute(
+            """UPDATE scan_runs
+               SET status = 'completed', compiled_conditions_json = ?, result_json = ?,
+                   error_json = NULL, completed_at = ?, updated_at = ?
+               WHERE id = ? AND status = 'running'""",
+            (compiled_conditions_json, result_json, now, now, run_id),
+        )
+        self._system_db().commit()
+        return cursor.rowcount == 1
+
+    def fail_scan_run(
+        self,
+        run_id: str,
+        error_json: str,
+        compiled_conditions_json: str | None = None,
+    ) -> bool:
+        self._init_scan_runs_db()
+        now = _now()
+        cursor = self._system_db().execute(
+            """UPDATE scan_runs
+               SET status = 'failed', compiled_conditions_json = COALESCE(?, compiled_conditions_json),
+                   error_json = ?, completed_at = ?, updated_at = ?
+               WHERE id = ? AND status = 'running'""",
+            (compiled_conditions_json, error_json, now, now, run_id),
+        )
+        self._system_db().commit()
+        return cursor.rowcount == 1
+
+    def get_scan_run(self, run_id: str) -> ScanRunRecord | None:
+        self._init_scan_runs_db()
+        row = (
+            self._system_db()
+            .execute(
+                """SELECT id, input_json, compiled_conditions_json, result_json, error_json,
+                          status, mode, strategy_id, created_at, completed_at, updated_at
+                   FROM scan_runs WHERE id = ?""",
+                (run_id,),
+            )
+            .fetchone()
+        )
+        return _scan_run_from_row(row) if row is not None else None
+
+    def list_scan_runs(
+        self, status: ScanRunStatus | None = None, limit: int = 50
+    ) -> list[ScanRunRecord]:
+        self._init_scan_runs_db()
+        if status is None:
+            rows = (
+                self._system_db()
+                .execute(
+                    """SELECT id, input_json, compiled_conditions_json, result_json, error_json,
+                          status, mode, strategy_id, created_at, completed_at, updated_at
+                   FROM scan_runs ORDER BY created_at DESC LIMIT ?""",
+                    (limit,),
+                )
+                .fetchall()
+            )
+        else:
+            rows = (
+                self._system_db()
+                .execute(
+                    """SELECT id, input_json, compiled_conditions_json, result_json, error_json,
+                          status, mode, strategy_id, created_at, completed_at, updated_at
+                   FROM scan_runs WHERE status = ? ORDER BY created_at DESC LIMIT ?""",
+                    (status, limit),
+                )
+                .fetchall()
+            )
+        return [_scan_run_from_row(row) for row in rows]
+
+    def _init_scan_runs_db(self) -> None:
+        db = self._system_db()
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS scan_runs (
+                id TEXT PRIMARY KEY,
+                input_json TEXT NOT NULL,
+                compiled_conditions_json TEXT,
+                result_json TEXT,
+                error_json TEXT,
+                status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed')),
+                mode TEXT NOT NULL,
+                strategy_id TEXT,
+                created_at TEXT NOT NULL,
+                completed_at TEXT,
+                updated_at TEXT NOT NULL
+            )"""
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_scan_runs_created_at ON scan_runs(created_at DESC)"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_scan_runs_status ON scan_runs(status)"
+        )
+        db.commit()
+
     # ── Storage management ──────────────────────────────────
 
     def _get_conn(self, db_name: str) -> sqlite3.Connection:
@@ -1132,6 +1300,36 @@ def _backtest_job_from_row(row: sqlite3.Row) -> BacktestJobRecord:
         created_at=str(row["created_at"]),
         started_at=(str(row["started_at"]) if row["started_at"] else None),
         completed_at=(str(row["completed_at"]) if row["completed_at"] else None),
+        updated_at=str(row["updated_at"]),
+    )
+
+
+def _scan_run_from_row(row: sqlite3.Row) -> ScanRunRecord:
+    status = str(row["status"])
+    match status:
+        case "running":
+            normalized_status: ScanRunStatus = "running"
+        case "completed":
+            normalized_status = "completed"
+        case "failed":
+            normalized_status = "failed"
+        case _:
+            raise RuntimeError("invalid persisted scan run status")
+    return ScanRunRecord(
+        id=str(row["id"]),
+        input_json=str(row["input_json"]),
+        compiled_conditions_json=(
+            str(row["compiled_conditions_json"])
+            if row["compiled_conditions_json"]
+            else None
+        ),
+        result_json=str(row["result_json"]) if row["result_json"] else None,
+        error_json=str(row["error_json"]) if row["error_json"] else None,
+        status=normalized_status,
+        mode=str(row["mode"]),
+        strategy_id=str(row["strategy_id"]) if row["strategy_id"] else None,
+        created_at=str(row["created_at"]),
+        completed_at=str(row["completed_at"]) if row["completed_at"] else None,
         updated_at=str(row["updated_at"]),
     )
 

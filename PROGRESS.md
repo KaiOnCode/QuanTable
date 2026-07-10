@@ -2,6 +2,53 @@
 
 Last updated: 2026-07-11 | Branch: `dev`
 
+## Frontend Demo Integration: Phase 3 — Tracked-Universe Scanner ✅
+
+Completed on 2026-07-11 under
+`plans/frontend-demo-integration/frontend-demo-to-real-functionality-plan.md`.
+
+Delivered:
+
+- Added the deterministic tracked-universe resolver and typed Scanner engine.
+  The sorted universe is the normalized union of strategy, watchlist, and
+  cached-market tickers; snapshots use cached `MarketDataStore` data only,
+  preserve missing values, expose provenance and warnings, and evaluate the
+  frozen field/operator grammar with deterministic AND semantics.
+- Added durable SQLite scan runs plus separate SHARED rule/read routes and an
+  ACTIVE restricted Agent/Belief compilation route. Agent compilation accepts
+  exactly one validated `scan_tracked_universe` tool result; Belief mode
+  verifies exact strategy ownership and weight, and neither path persists
+  chain-of-thought.
+- Replaced the Scanner demo with real Rule, Agent, and Belief workflows,
+  editable typed conditions, honest tracked-universe counts, visible
+  pending/error/empty/partial states, API-backed results and compiled
+  conditions, and `scan_run_id` reload restoration.
+
+Fresh independent final gate evidence:
+
+- `uv run pytest test/scanner test/server/test_scanner_api.py test/agent/test_scanner_tool.py test/agent/test_tool_allowlist.py test/dataflow/test_data_service.py test/server/test_strategies_lifecycle.py -q`
+  passed: `54 passed`, with one existing Starlette/httpx deprecation warning.
+- `uv run basedpyright --baselinefile bugs/basedpyright/baseline.json` passed
+  with zero diagnostics. Scoped `uv run ruff check` and
+  `uv run ruff format --check`, `cd frontend && npx tsc --noEmit`,
+  `cd frontend && npm run lint`, and `git diff --check` passed. Frontend lint
+  retained 75 existing out-of-scope warnings and reported no errors or
+  warnings in the changed Scanner files.
+- The required escalated `cd frontend && npm run build` retry passed against
+  the current source after the sandbox-only Turbopack localhost-port `EPERM`;
+  compilation, TypeScript, page collection, and all 20 routes completed.
+- Fresh mounted FastAPI and production Chromium QA exercised Rule, Agent, and
+  Belief request bodies and results, Add/Remove conditions, exact belief
+  ownership, empty and 503 states, `scan_run_id` reload restoration, mode
+  isolation, and responsive 375px layouts. The three-hypothesis runtime audit
+  rejected provider/future-data leakage, cross-mode stale restoration, and
+  ACTIVE allowlist or belief-ownership bypass. Full receipt:
+  `.omo/evidence/frontend-demo-integration/phase-3/phase-gate-final.md`.
+
+Next: begin only Phase 4 Todos 9–10 (decision-target Risk analytics and the
+truthful Risk page) after this Phase 3 commit is pushed and `origin/dev`
+parity is proved.
+
 ## Frontend Demo Integration: Phase 2 — Trusted Backtest ✅
 
 Completed on 2026-07-11 under

@@ -282,22 +282,117 @@ export interface InsightFeedback {
   comment: string;
 }
 
-export interface ScanCondition {
-  field: string; operator: "<" | ">" | "<=" | ">=" | "==" | "between";
-  value: number | string; value2: number | null;
-}
+export const scannerFields = [
+  "price",
+  "change_pct",
+  "volume",
+  "rsi14",
+  "sma20",
+  "sma50",
+  "pe_ratio",
+  "pb_ratio",
+  "market_cap",
+  "sector",
+] as const;
 
-export interface ScannerQuery {
-  id: string; name: string; type: "rule" | "agent" | "belief";
-  conditions: ScanCondition[]; natural_language: string;
-  belief_id: string | null; created_at: string;
-}
+export type ScannerField = (typeof scannerFields)[number];
+export type ScannerOperator = "<" | ">" | "<=" | ">=" | "==" | "between";
+export type ScannerMode = "rule" | "agent" | "belief";
+export type ScanRunStatus = "running" | "completed" | "failed";
+export type ScannerUniverseSource = "market_store" | "strategy" | "watchlist";
 
-export interface ScanResult {
-  query_id: string; ticker: string; match_score: number;
-  matched_conditions: string[]; explanation: string;
-  snapshot_data: Record<string, unknown>; scanned_at: string;
-}
+export type ScanCondition = {
+  readonly field: ScannerField;
+  readonly operator: ScannerOperator;
+  readonly value: number | string;
+  readonly value2: number | string | null;
+};
+
+export type ScannerSnapshotValue = {
+  readonly value: number | string | null;
+  readonly unit: string;
+  readonly currency: string | null;
+  readonly source: string | null;
+  readonly as_of: string | null;
+};
+
+export type ScannerSnapshot = {
+  readonly ticker: string;
+  readonly price: ScannerSnapshotValue;
+  readonly change_pct: ScannerSnapshotValue;
+  readonly volume: ScannerSnapshotValue;
+  readonly rsi14: ScannerSnapshotValue;
+  readonly sma20: ScannerSnapshotValue;
+  readonly sma50: ScannerSnapshotValue;
+  readonly pe_ratio: ScannerSnapshotValue;
+  readonly pb_ratio: ScannerSnapshotValue;
+  readonly market_cap: ScannerSnapshotValue;
+  readonly sector: ScannerSnapshotValue;
+};
+
+export type TrackedTicker = {
+  readonly ticker: string;
+  readonly provenance: readonly ScannerUniverseSource[];
+};
+
+export type ScanResult = {
+  readonly ticker: string;
+  readonly match_score: number;
+  readonly matched_conditions: readonly ScanCondition[];
+  readonly snapshot: ScannerSnapshot;
+  readonly provenance: readonly ScannerUniverseSource[];
+  readonly source_dates: Readonly<Record<string, string>>;
+};
+
+export type ScannerResponse = {
+  readonly universe: readonly TrackedTicker[];
+  readonly results: readonly ScanResult[];
+  readonly scanned_count: number;
+  readonly matched_count: number;
+  readonly missing_data_count: number;
+  readonly warnings: readonly string[];
+  readonly scanned_at: string;
+};
+
+export type ScanRunError = {
+  readonly code: "scanner_failed" | "invalid_tool_output" | "llm_unavailable";
+  readonly message: string;
+};
+
+export type ScanRun = {
+  readonly id: string;
+  readonly input: Readonly<Record<string, unknown>>;
+  readonly compiled_conditions: readonly ScanCondition[] | null;
+  readonly result: ScannerResponse | null;
+  readonly error: ScanRunError | null;
+  readonly status: ScanRunStatus;
+  readonly mode: ScannerMode;
+  readonly strategy_id: string | null;
+  readonly created_at: string;
+  readonly completed_at: string | null;
+  readonly updated_at: string;
+};
+
+export type ScannerRuleRequest = {
+  readonly conditions: readonly ScanCondition[];
+  readonly universe?: "tracked";
+};
+
+export type ScannerAgentRequest = {
+  readonly mode: "agent";
+  readonly query: string;
+};
+
+export type ScannerBeliefRequest = {
+  readonly mode: "belief";
+  readonly strategy_id: string;
+  readonly belief_text: string;
+};
+
+export type ScanRunListResponse = {
+  readonly items: readonly ScanRun[];
+  readonly total: number;
+};
 
 export type AlertType = "price_above" | "price_below" | "rsi_above" | "rsi_below" | "volume_spike" | "news_event" | "agent_flag";
 
@@ -462,9 +557,6 @@ export interface ApprovalActionRequest { reviewer: string; notes?: string; modif
 export interface WatchlistCreateRequest { name: string; tickers: string[]; }
 export interface AddTickerRequest { ticker: string; }
 export interface CreateAlertRequest { ticker: string; type: AlertType; threshold_value: number | string; notification_channels?: string[] | null; }
-export interface ScannerRuleRequest { conditions: ScanCondition[]; universe?: string; }
-export interface ScannerAgentRequest { query: string; universe?: string; }
-export interface ScannerBeliefRequest { belief_id: string; universe?: string; }
 export interface AnalyzeBatchRequest { tickers: string[]; mode?: string; }
 export interface CreateKnowledgeEntryRequest { type: "rule" | "finding" | "failure"; title: string; content: string; confidence?: number; source_session_id?: string; }
 export interface CreateHypothesisRequest { claim: string; acceptance_criteria: string; budget_rounds?: number; }

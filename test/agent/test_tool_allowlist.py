@@ -33,3 +33,25 @@ def test_default_registry_remains_unrestricted_for_normal_agent_chat() -> None:
     # Then: an ordinary financial capability remains present.
     assert "get_price" in registry.list_tools()
     assert "run_analysis" in registry.list_tools()
+
+
+def test_scanner_compilation_registry_exposes_no_workspace_or_write_tools() -> None:
+    # Given: Scanner compilation's Phase 2 subset contract.
+    allowed = frozenset({"scan_tracked_universe", "search_skills"})
+    registry = ToolRegistry(allowed_tools=allowed)
+    registry.discover()
+
+    # When: its OpenAI schema and system prompt are rendered.
+    names = {
+        definition["function"]["name"] for definition in registry.get_definitions()
+    }
+    prompt = AgentLoop(
+        config=AgentConfig(allowed_tools=allowed)
+    )._build_default_system_prompt(registry, "compile a tracked scanner")
+
+    # Then: the compiler can only inspect skills and call the typed scanner engine.
+    assert names == allowed
+    assert "bash" not in prompt
+    assert "read_file" not in prompt
+    assert "write_file" not in prompt
+    assert "run_analysis" not in prompt

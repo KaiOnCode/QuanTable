@@ -4,6 +4,7 @@
 |-------|-------|------|-------|
 | `/api/agent/*` | **ACTIVE** | `agent.py` | ReAct agent terminal (main dev) |
 | `/api/agent/backtest*` | **ACTIVE** | `agent.py` | Persisted single-ticker backtest jobs and CSV exports |
+| `/api/agent/scanner` | **ACTIVE** | `agent.py` | Restricted AgentLoop compiles query/belief requests through the typed Scanner tool |
 | `/api/analyze` | LEGACY | `analyze.py` | Old LangGraph pipeline (frozen) |
 | `/api/health` | SHARED | `health.py` | Health check |
 | `/api/market/*` | SHARED | `market.py` | Market data REST |
@@ -13,6 +14,7 @@
 | `/api/strategies/*` | SHARED | `strategies.py` | Strategy config |
 | `/api/watchlist/*` | SHARED | `watchlist.py` | Watchlist CRUD |
 | `/api/settings/*` | SHARED | `settings.py` | User settings |
+| `/api/scanner/*` | SHARED | `scanner.py` | Deterministic tracked-universe rule scans and persisted run reads |
 
 ## Rules
 - ACTIVE routes must use `agentgraph.react_loop.AgentLoop` — NEVER import from `agents/` or `agentgraph.orchestrator`

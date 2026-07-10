@@ -9,14 +9,17 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Thread
+from typing import Literal
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agent.backtest_jobs import (
     BacktestJobResponse,
@@ -24,6 +27,8 @@ from agent.backtest_jobs import (
     BacktestRequest,
     default_backtest_job_service,
 )
+from agent.scanner_adapter import ScannerCompilationError, ScannerCompilationService
+from server.routes.scanner import ScanRunError, ScanRunResponse, _response_from_record
 from storage import get_store
 
 router = APIRouter(tags=["agent"])
@@ -32,6 +37,7 @@ logger = logging.getLogger(__name__)
 RUNS_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "agent-runs"
 RUNS_DIR.mkdir(parents=True, exist_ok=True)
 _backtest_job_service: BacktestJobService | None = None
+_scanner_compilation_service: ScannerCompilationService | None = None
 
 
 def get_backtest_job_service() -> BacktestJobService:
@@ -39,6 +45,15 @@ def get_backtest_job_service() -> BacktestJobService:
     if _backtest_job_service is None:
         _backtest_job_service = default_backtest_job_service(get_store())
     return _backtest_job_service
+
+
+def get_scanner_compilation_service() -> ScannerCompilationService:
+    global _scanner_compilation_service
+    if _scanner_compilation_service is None:
+        _scanner_compilation_service = ScannerCompilationService(
+            llm_available=bool(os.getenv("OPENAI_API_KEY"))
+        )
+    return _scanner_compilation_service
 
 
 def _sse(event: str, data: dict) -> str:
@@ -56,6 +71,32 @@ class AgentChatRequest(BaseModel):
         None, description="Previous messages for context"
     )
     include_shell: bool = Field(False, description="Include bash/shell tools")
+
+
+class AgentScannerRequest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    mode: Literal["agent", "belief"]
+    query: str | None = Field(default=None, min_length=1, max_length=2000)
+    strategy_id: str | None = Field(default=None, min_length=1, max_length=128)
+    belief_text: str | None = Field(default=None, min_length=1, max_length=2000)
+
+    @model_validator(mode="after")
+    def validate_mode_source(self) -> AgentScannerRequest:
+        match self.mode:
+            case "agent":
+                if self.query is None:
+                    raise ValueError("agent scanner requires query")
+            case "belief":
+                if self.strategy_id is None or self.belief_text is None:
+                    raise ValueError(
+                        "belief scanner requires strategy_id and belief_text"
+                    )
+            case unreachable:
+                from typing import assert_never
+
+                assert_never(unreachable)
+        return self
 
 
 @router.post("/agent/chat")
@@ -274,6 +315,78 @@ async def download_backtest_trades(backtest_id: str) -> Response:
             "Content-Disposition": f'attachment; filename="backtest-{backtest_id}-trades.csv"'
         },
     )
+
+
+@router.post("/agent/scanner", status_code=201, response_model=ScanRunResponse)
+async def create_agent_scanner(request: AgentScannerRequest) -> ScanRunResponse:
+    store = get_store()
+    belief_weight: float | None = None
+    match request.mode:
+        case "agent":
+            assert request.query is not None
+            source = {"mode": "agent", "query": request.query}
+            prompt = request.query
+        case "belief":
+            assert request.strategy_id is not None
+            assert request.belief_text is not None
+            strategy = store.get_strategy(request.strategy_id)
+            if strategy is None:
+                raise HTTPException(404, "Strategy not found")
+            beliefs = strategy.get("beliefs")
+            if not isinstance(beliefs, list) or request.belief_text not in beliefs:
+                raise HTTPException(422, "Belief does not belong to strategy")
+            weights = strategy.get("belief_weights")
+            raw_weight = (
+                weights.get(request.belief_text) if isinstance(weights, dict) else None
+            )
+            belief_weight = (
+                float(raw_weight) if isinstance(raw_weight, int | float) else 1.0
+            )
+            source = {
+                "mode": "belief",
+                "strategy_id": request.strategy_id,
+                "belief_text": request.belief_text,
+                "belief_weight": belief_weight,
+            }
+            prompt = (
+                f"Compile a tracked scanner for belief: {request.belief_text}. "
+                f"Belief weight: {belief_weight}."
+            )
+        case unreachable:
+            from typing import assert_never
+
+            assert_never(unreachable)
+    run_id = uuid4().hex
+    store.create_scan_run(
+        run_id,
+        json.dumps(source, ensure_ascii=False),
+        mode=request.mode,
+        strategy_id=request.strategy_id,
+    )
+    compiler = get_scanner_compilation_service()
+    try:
+        compiled = compiler.compile(prompt, session_id=run_id)
+    except ScannerCompilationError as error:
+        code: Literal["invalid_tool_output", "llm_unavailable"] = (
+            "llm_unavailable" if not compiler.can_compile else "invalid_tool_output"
+        )
+        failure = ScanRunError(code=code, message=str(error))
+        store.fail_scan_run(run_id, failure.model_dump_json())
+        raise HTTPException(422, "Scanner compilation failed") from error
+    completed = store.complete_scan_run(
+        run_id,
+        json.dumps(
+            [condition.model_dump(mode="json") for condition in compiled.conditions],
+            ensure_ascii=False,
+        ),
+        compiled.result.model_dump_json(),
+    )
+    if not completed:
+        raise RuntimeError("scanner run did not complete")
+    run = store.get_scan_run(run_id)
+    if run is None:
+        raise RuntimeError("scanner run disappeared after completion")
+    return _response_from_record(run)
 
 
 # ── Skills ────────────────────────────────────────────────────

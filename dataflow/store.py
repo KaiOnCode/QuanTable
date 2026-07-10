@@ -204,6 +204,19 @@ class MarketDataStore:
             ).fetchone()
         return row[0] if row and row[0] else None
 
+    def list_known_tickers(self) -> list[str]:
+        """Return the sorted distinct ticker union already present in cached tables."""
+        with self._conn() as db:
+            rows = db.execute(
+                """SELECT ticker FROM ohlcv
+                   UNION
+                   SELECT ticker FROM fundamentals
+                   UNION
+                   SELECT ticker FROM ticker_meta
+                   ORDER BY ticker ASC"""
+            ).fetchall()
+        return [str(row["ticker"]) for row in rows]
+
     # ── Fundamentals ────────────────────────────────────────
 
     def upsert_fundamentals(
