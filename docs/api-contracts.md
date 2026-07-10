@@ -16,6 +16,7 @@ Start a new analysis. Returns SSE stream with progress events, final result as l
 ```json
 {
   "ticker": "AAPL",
+  "strategy_id": "strategy-uuid-or-default",
   "date": "2024-01-15T00:00:00Z",
   "current_position_pct": 0.0,
   "mode": "standard",
@@ -26,6 +27,10 @@ Start a new analysis. Returns SSE stream with progress events, final result as l
   "enable_cross_review": false
 }
 ```
+
+The Quick Ask UI always sends the selected strategy identity. It exposes an
+explicit `default` option alongside persisted strategy IDs, and restores a
+validated `strategy_id` from the URL or the active analysis snapshot.
 
 **SSE Events:**
 ```
@@ -106,21 +111,42 @@ Delete strategy and its database. **Requires confirmation:** `?confirm=true`
 
 ### `POST /api/strategies/{strategy_id}/clone`
 
-**Request:** `{ "name": "My Cloned Strategy" }`
+**Request:** `{ "name": "My Cloned Strategy" }`. `name` is trimmed, non-empty,
+and at most 200 characters; unknown request fields return `422`.
 
-**Response:** `201` + new StrategyConfig (with `parent_strategy_id` set)
+**Response:** `201` + a new StrategyConfig with a fresh `id`, `name`, timestamps,
+`status: "draft"`, and `parent_strategy_id` set to the source strategy ID. Only
+configuration is copied, including custom config fields. Identity/timestamps,
+inline memory/history/decisions, runtime state, database references, credentials,
+and secret/API-key fields are excluded; the source strategy database is not copied.
 
 ### `POST /api/strategies/{strategy_id}/start`
 
-Activate a paused/stopped strategy. Resumes scheduling.
+Persist a lifecycle status change: `draft|paused|stopped -> active`. Starting an
+already-active strategy is idempotent and does not rewrite it. Archived or other
+unsupported states return `409`. This endpoint does not start a scheduler.
 
 ### `POST /api/strategies/{strategy_id}/pause`
 
-Pause strategy. Current positions are NOT liquidated.
+Persist `active -> paused`. Pausing an already-paused strategy is idempotent and
+does not rewrite it; all other states return `409`. Positions are unchanged.
 
 ### `POST /api/strategies/{strategy_id}/stop`
 
-Stop strategy. Optionally liquidate positions: `{ "liquidate": true }`
+**Request:** `{ "liquidate": false }` (`false` is the default). The field must be
+a JSON boolean; unknown request fields return `422`.
+
+Persist `draft|active|paused -> stopped`. Stopping an already-stopped strategy is
+idempotent and does not rewrite it; unsupported states return `409`.
+`{ "liquidate": true }` always returns `409` with
+`{ "detail": "Liquidation is not supported" }`; this endpoint never pretends to
+liquidate positions.
+
+For clone, start, pause, and non-liquidating stop requests, an unknown strategy
+ID returns `404` with `{ "detail": "Strategy {strategy_id} not found" }`.
+Because `liquidate=true` is always unsupported, that stop request returns its
+stable `409` before strategy lookup. Transition conflicts use `409` with
+`{ "detail": "Cannot {action} strategy from status {status}" }`.
 
 ### `GET /api/strategies/{strategy_id}/agents`
 
@@ -266,6 +292,10 @@ Audit trail. Query params: `?session_id=uuid`
 
 Query params: `?ticker=AAPL&limit=20&min_score=0.5`
 
+Records are read from `MEMORY_DB_PATH` (default `data/memory.db`) and are scoped
+to the strategy ID in the path. A storage open/read failure returns `500` with
+`{ "detail": "Failed to read memory" }`; it is not represented as an empty list.
+
 **Response:**
 ```json
 {
@@ -277,6 +307,11 @@ Query params: `?ticker=AAPL&limit=20&min_score=0.5`
 ### `GET /api/strategies/{strategy_id}/memory/{memory_id}`
 
 **Response:** MemoryRecord (full, all 5 layers)
+
+This endpoint uses the same configured store as the list endpoint. An unknown
+memory ID, or a memory owned by a different strategy, returns `404` with
+`{ "detail": "Memory {memory_id} not found" }`. Storage failures use the same
+safe `500` response as the list endpoint.
 
 ### `POST /api/strategies/{strategy_id}/memory/search`
 

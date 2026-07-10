@@ -6,7 +6,6 @@ import { Shell } from "@/components/layout/shell";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -123,6 +122,8 @@ export default function HistoryDetailPage() {
   const bodyText = parsed?.body || result?.report || "";
   const confidence = result?.confidence ?? 0.5;
   const confidencePct = Math.round(confidence * 100);
+  const strategyId = session.request.strategy_id ?? result?.strategy_id ?? "default";
+  const strategyLabel = strategyId === "default" ? "Default" : strategyId;
   const barColor =
     confidencePct >= 70
       ? "bg-green-500"
@@ -134,18 +135,25 @@ export default function HistoryDetailPage() {
     <Shell>
       <div className="p-6 max-w-6xl mx-auto space-y-6">
         {/* Back + Header */}
-        <div className="flex items-center gap-4">
+        <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:gap-4">
           <Button variant="ghost" size="sm" onClick={() => router.back()}>
             <ArrowLeft className="mr-1 h-4 w-4" /> Back
           </Button>
-          <div>
+          <div className="min-w-0">
             <h2 className="text-lg font-semibold flex items-center gap-2">
               <Zap className="h-5 w-5" />
               {session.ticker} Analysis
             </h2>
-            <div className="flex items-center gap-2 mt-1">
+            <div className="mt-1 flex flex-wrap items-center gap-2">
               <Badge variant="outline" className="text-xs">
                 {session.mode}
+              </Badge>
+              <Badge
+                variant="outline"
+                className="max-w-full text-xs"
+                title={`Strategy: ${strategyLabel}`}
+              >
+                Strategy: <span className="ml-1 truncate font-mono">{strategyLabel}</span>
               </Badge>
               <span className="text-xs text-muted-foreground flex items-center gap-1">
                 <Clock className="h-3 w-3" />
@@ -177,9 +185,9 @@ export default function HistoryDetailPage() {
                   Waiting for analysis progress.
                 </p>
               ) : (
-                session.progress_events.map((event, index) => (
+                session.progress_events.map((event) => (
                   <div
-                    key={`${event.agent}-${index}`}
+                    key={`${event.agent}-${event.status}-${event.timestamp ?? event.report ?? ""}`}
                     className="rounded-lg bg-muted/40 p-3 text-sm"
                   >
                     <div className="flex items-center justify-between gap-2">
@@ -305,7 +313,10 @@ export default function HistoryDetailPage() {
             <CardContent>
               <div className="space-y-2">
                 {result.news_articles.map((a, i) => (
-                  <div key={i} className="flex items-start gap-2 text-sm">
+                  <div
+                    key={`${a.url}-${a.published_at}`}
+                    className="flex items-start gap-2 text-sm"
+                  >
                     <span className="text-muted-foreground shrink-0 mt-0.5">
                       {i + 1}.
                     </span>

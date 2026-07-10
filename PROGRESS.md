@@ -1,6 +1,46 @@
 # Progress & Roadmap
 
-Last updated: 2026-05-31 22:45 | Branch: `feat/frontend-backend`
+Last updated: 2026-07-10 22:17 | Branch: `dev`
+
+## Frontend Demo Integration: Phase 1 — Strategy Lifecycle & Scoped Memory ✅
+
+Completed on 2026-07-10 under
+`plans/frontend-demo-integration/frontend-demo-to-real-functionality-plan.md`.
+
+Delivered:
+
+- Persisted Strategy clone/start/pause/stop routes with stable 404/409 contracts,
+  idempotent lifecycle transitions, clone isolation, and explicit rejection of
+  unsupported liquidation.
+- Quick Ask now selects, sends, restores, and displays the real `strategy_id`;
+  Strategy list mutations invalidate live state and expose failures; Memory Lab
+  uses the selected strategy's configured memory store with distinct loading,
+  empty, and storage-error states plus explicit refresh.
+- Memory list/detail consistently honor `MEMORY_DB_PATH`, reject cross-strategy
+  record access, and return observable `500` storage failures rather than a
+  false empty result. The responsive mobile navigation and affected layouts
+  were remediated as direct Phase 1 browser-QA support.
+
+Fresh independent final gate evidence:
+
+- `cd frontend && npm run build` passed on the immediate escalated retry after
+  the sandbox-only Turbopack localhost-port bind failure; compilation,
+  TypeScript, and all 20 static pages completed.
+- `uv run pytest test/server/test_strategies_lifecycle.py test/server/test_memory_routes.py test/memory/test_service.py test/server/test_analyze_memory.py test/quick_ask/test_memory_integration.py -q`
+  passed: `38 passed, 1` existing Starlette/httpx deprecation warning.
+- `uv run basedpyright --baselinefile bugs/basedpyright/baseline.json`, scoped
+  Ruff check/format, `cd frontend && npx tsc --noEmit`, and Git diff checks all
+  passed. `cd frontend && npm run lint` passed with zero errors and 85 existing
+  out-of-scope warnings.
+- Mounted FastAPI and real Chromium proof covered strategy create/lifecycle/
+  clone, visible lifecycle 409, exact Quick Ask `strategy_id` request body,
+  Memory Lab 200 then rendered 500 error state, and cleanup of temporary
+  strategies. Full receipt and source hashes:
+  `.omo/evidence/frontend-demo-integration/phase-1/phase-gate-final.md`.
+
+Next: begin Phase 2 Todos 3–5 (ACTIVE Backtest/no-lookahead contract, durable
+SQLite jobs/API, and truthful Backtest UI) only after this Phase 1 commit is
+pushed and `origin/dev` parity is proved.
 
 ## Phase 1 Progress: Data Foundation ✅
 

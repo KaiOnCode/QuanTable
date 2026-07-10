@@ -7,47 +7,47 @@ import {
   Card, CardContent, CardDescription, CardHeader, CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { EmptyState } from "@/components/shared/empty-state";
 import { formatPercent } from "@/lib/utils";
 import { strategiesApi } from "@/lib/api/strategies";
-import { api } from "@/lib/api/client";
-import type { StrategyConfig, MemoryRecord } from "@/lib/types/models";
+import { memoryApi } from "@/lib/api/memory";
 import {
-  Brain, Search, Loader2, BookOpen, FlaskConical, History, BarChart3,
+  Brain, Search, Loader2, BookOpen, FlaskConical, History, RefreshCw,
 } from "lucide-react";
 
 export default function MemoryLabPage() {
-  const [selectedStrategy, setSelectedStrategy] = useState<string>("");
+  const [requestedStrategy, setRequestedStrategy] = useState<string>("");
   const [tickerFilter, setTickerFilter] = useState("");
 
-  const { data: strategiesData } = useQuery({
-    queryKey: ["strategies", undefined, undefined],
+  const strategiesQuery = useQuery({
+    queryKey: ["strategies"],
     queryFn: () => strategiesApi.list(),
   });
-  const strategies = strategiesData?.items ?? [];
+  const strategies = strategiesQuery.data?.items ?? [];
+  const selectedStrategy =
+    strategies.find((strategy) => strategy.id === requestedStrategy)?.id ??
+    strategies[0]?.id ??
+    "";
+  const selectedStrategyName =
+    strategies.find((strategy) => strategy.id === selectedStrategy)?.name ?? "";
 
-  // Set initial strategy
-  if (!selectedStrategy && strategies.length > 0) {
-    setSelectedStrategy(strategies[0].id);
-  }
-
-  const { data: memoryData, isLoading } = useQuery({
+  const memoryQuery = useQuery({
     queryKey: ["memory", selectedStrategy, tickerFilter],
-    queryFn: () =>
-      api.get<{ memories: MemoryRecord[]; total: number }>(
-        `/strategies/${selectedStrategy}/memory?limit=50${tickerFilter ? `&ticker=${tickerFilter}` : ""}`
-      ),
-    enabled: !!selectedStrategy,
+    queryFn: () => memoryApi.list(selectedStrategy, {
+      limit: 50,
+      ticker: tickerFilter || undefined,
+    }),
+    enabled: selectedStrategy.length > 0,
+    retry: false,
   });
-  const memories = memoryData?.memories ?? [];
+  const memories = memoryQuery.data?.memories ?? [];
 
   // OWM score distribution (computed client-side)
   const owmScores = memories.map((m) => m.owm_score);
@@ -55,7 +55,7 @@ export default function MemoryLabPage() {
 
   return (
     <Shell>
-      <div className="p-6 space-y-6">
+      <div className="p-4 sm:p-6 space-y-6">
         <div>
           <h2 className="text-lg font-semibold flex items-center gap-2">
             <Brain className="h-5 w-5" /> Memory Lab
@@ -68,11 +68,17 @@ export default function MemoryLabPage() {
         {/* Strategy selector */}
         <Card>
           <CardContent className="pt-4">
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-4 flex-wrap">
               <span className="text-sm font-medium">Strategy:</span>
-              <Select value={selectedStrategy} onValueChange={(v) => v && setSelectedStrategy(v)}>
-                <SelectTrigger className="w-64">
-                  <SelectValue placeholder="Select strategy" />
+              <Select
+                value={selectedStrategy}
+                onValueChange={(v) => v && setRequestedStrategy(v)}
+                disabled={strategiesQuery.isLoading || strategiesQuery.isError || strategies.length === 0}
+              >
+                <SelectTrigger className="w-full sm:w-64" aria-label="Strategy">
+                  <span className="flex flex-1 truncate text-left">
+                    {selectedStrategyName}
+                  </span>
                 </SelectTrigger>
                 <SelectContent>
                   {strategies.map((s) => (
@@ -80,31 +86,72 @@ export default function MemoryLabPage() {
                   ))}
                 </SelectContent>
               </Select>
-              <div className="relative">
+              <div className="relative w-full sm:w-auto">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                   placeholder="Filter by ticker..."
                   value={tickerFilter}
                   onChange={(e) => setTickerFilter(e.target.value.toUpperCase())}
-                  className="pl-9 w-40"
+                  className="pl-9 w-full sm:w-40"
+                  disabled={!selectedStrategy}
                 />
               </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="w-full sm:w-auto"
+                disabled={!selectedStrategy || memoryQuery.isFetching}
+                onClick={() => void memoryQuery.refetch()}
+              >
+                <RefreshCw className={`mr-2 h-4 w-4 ${memoryQuery.isFetching ? "animate-spin" : ""}`} />
+                {memoryQuery.isFetching ? "Refreshing" : "Refresh"}
+              </Button>
+              {strategiesQuery.isLoading ? (
+                <span className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Loading strategies
+                </span>
+              ) : null}
             </div>
           </CardContent>
         </Card>
 
+        {strategiesQuery.isError ? (
+          <Card className="border-destructive">
+            <CardContent className="pt-6 text-sm text-destructive" role="alert">
+              Failed to load strategies: {strategiesQuery.error.message}
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {!strategiesQuery.isLoading && !strategiesQuery.isError && strategies.length === 0 ? (
+          <Card>
+            <CardContent className="pt-8">
+              <EmptyState
+                icon={<Brain className="h-12 w-12" />}
+                title="No strategies available"
+                description="Create a strategy before browsing strategy-scoped memory."
+              />
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {!strategiesQuery.isLoading && !strategiesQuery.isError && strategies.length > 0 ? (
         <Tabs defaultValue="memories">
-          <TabsList>
+          <div className="overflow-x-auto pb-1">
+          <TabsList className="w-max">
             <TabsTrigger value="memories"><Brain className="mr-2 h-4 w-4" />Memories ({memories.length})</TabsTrigger>
             <TabsTrigger value="reflections"><History className="mr-2 h-4 w-4" />Reflections</TabsTrigger>
             <TabsTrigger value="knowledge"><BookOpen className="mr-2 h-4 w-4" />Knowledge Base</TabsTrigger>
             <TabsTrigger value="hypotheses"><FlaskConical className="mr-2 h-4 w-4" />Hypotheses</TabsTrigger>
           </TabsList>
+          </div>
 
           {/* Memories Tab */}
           <TabsContent value="memories" className="space-y-4">
             {/* OWM Score overview */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {memoryQuery.isSuccess ? (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               <Card>
                 <CardHeader className="pb-2">
                   <CardDescription>Total Memories</CardDescription>
@@ -139,10 +186,21 @@ export default function MemoryLabPage() {
                 </CardContent>
               </Card>
             </div>
+            ) : null}
 
             {/* Memory table */}
-            {isLoading ? (
+            {memoryQuery.isLoading ? (
               <Card><CardContent className="pt-8 flex justify-center"><Loader2 className="h-6 w-6 animate-spin" /></CardContent></Card>
+            ) : memoryQuery.isError ? (
+              <Card className="border-destructive">
+                <CardContent className="pt-6 space-y-3" role="alert">
+                  <p className="text-sm font-medium text-destructive">Failed to load memory records.</p>
+                  <p className="text-xs text-muted-foreground">{memoryQuery.error.message}</p>
+                  <Button type="button" variant="outline" size="sm" onClick={() => void memoryQuery.refetch()}>
+                    <RefreshCw className="mr-2 h-4 w-4" /> Try Again
+                  </Button>
+                </CardContent>
+              </Card>
             ) : memories.length === 0 ? (
               <Card>
                 <CardContent className="pt-8">
@@ -217,6 +275,7 @@ export default function MemoryLabPage() {
             </CardContent></Card>
           </TabsContent>
         </Tabs>
+        ) : null}
       </div>
     </Shell>
   );

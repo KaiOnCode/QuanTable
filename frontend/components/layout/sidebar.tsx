@@ -42,20 +42,27 @@ const navItems = [
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
-export function Sidebar() {
+type SidebarProps = {
+  readonly mobile?: boolean;
+  readonly onNavigate?: () => void;
+};
+
+export function Sidebar({ mobile = false, onNavigate }: SidebarProps) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
+  const isCollapsed = mobile ? false : collapsed;
 
   return (
     <aside
       className={cn(
-        "flex flex-col border-r border-border bg-sidebar transition-all duration-300 h-screen sticky top-0",
-        collapsed ? "w-16" : "w-56"
+        "flex flex-col border-r border-border bg-sidebar transition-all duration-300 h-dvh",
+        mobile ? "w-full" : "hidden md:flex sticky top-0",
+        !mobile && (isCollapsed ? "w-16" : "w-56")
       )}
     >
       {/* Logo */}
       <div className="flex items-center h-14 px-4 border-b border-border">
-        {!collapsed && (
+        {!isCollapsed && (
           <Link href="/" className="flex items-center gap-2 font-semibold text-sm">
             <div className="h-7 w-7 rounded bg-primary flex items-center justify-center">
               <TrendingUp className="h-4 w-4 text-primary-foreground" />
@@ -63,7 +70,7 @@ export function Sidebar() {
             <span className="truncate">Agentic-Quant</span>
           </Link>
         )}
-        {collapsed && (
+        {isCollapsed && (
           <div className="h-7 w-7 rounded bg-primary flex items-center justify-center mx-auto">
             <TrendingUp className="h-4 w-4 text-primary-foreground" />
           </div>
@@ -82,18 +89,19 @@ export function Sidebar() {
               <Link
                 key={item.href}
                 href={item.href}
+                onClick={onNavigate}
                 className={cn(
                   buttonVariants({
                     variant: isActive ? "secondary" : "ghost",
-                    size: collapsed ? "icon" : "default",
+                    size: isCollapsed ? "icon" : "default",
                   }),
                   "justify-start gap-3 h-9",
-                  collapsed && "w-10 mx-auto",
-                  !collapsed && "w-full px-3"
+                  isCollapsed && "w-10 mx-auto",
+                  !isCollapsed && "w-full px-3"
                 )}
               >
                 <item.icon className="h-4 w-4 shrink-0" />
-                {!collapsed && (
+                {!isCollapsed && (
                   <span className="text-sm truncate">{item.label}</span>
                 )}
               </Link>
@@ -103,21 +111,26 @@ export function Sidebar() {
       </ScrollArea>
 
       {/* Collapse toggle */}
-      <Separator />
-      <div className="p-2">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="w-full h-8"
-          onClick={() => setCollapsed(!collapsed)}
-        >
-          {collapsed ? (
-            <ChevronRight className="h-4 w-4" />
-          ) : (
-            <ChevronLeft className="h-4 w-4" />
-          )}
-        </Button>
-      </div>
+      {!mobile ? (
+        <>
+          <Separator />
+          <div className="p-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="w-full h-8"
+              onClick={() => setCollapsed(!collapsed)}
+              aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
+            >
+              {collapsed ? (
+                <ChevronRight className="h-4 w-4" />
+              ) : (
+                <ChevronLeft className="h-4 w-4" />
+              )}
+            </Button>
+          </div>
+        </>
+      ) : null}
     </aside>
   );
 }

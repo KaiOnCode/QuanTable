@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Shell } from "@/components/layout/shell";
 import {
   Card, CardContent, CardDescription, CardHeader, CardTitle,
@@ -31,6 +31,7 @@ const DEFAULT_AGENTS = ["market", "news", "fundamentals", "pm"];
 
 export default function NewStrategyPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [type, setType] = useState("agent");
@@ -75,7 +76,8 @@ export default function NewStrategyPage() {
         creator: "",
         parent_strategy_id: null,
       } satisfies CreateStrategyRequest),
-    onSuccess: (result) => {
+    onSuccess: async (result) => {
+      await queryClient.invalidateQueries({ queryKey: ["strategies"] });
       router.push(`/strategies/${result.id}`);
     },
     onError: (e: Error) => {
@@ -107,8 +109,8 @@ export default function NewStrategyPage() {
 
   return (
     <Shell>
-      <div className="p-6 max-w-2xl mx-auto space-y-6">
-        <div className="flex items-center gap-3">
+      <div className="p-4 sm:p-6 max-w-2xl mx-auto space-y-6">
+        <div className="flex flex-wrap items-center gap-3">
           <Link href="/strategies" className={buttonVariants({ variant: "ghost", size: "sm" })}>
             <ArrowLeft className="mr-2 h-4 w-4" /> Back
           </Link>
@@ -149,7 +151,7 @@ export default function NewStrategyPage() {
               <div className="space-y-2">
                 <Label>Strategy Type</Label>
                 <Select value={type} onValueChange={(v) => v && setType(v)}>
-                  <SelectTrigger className="w-48">
+                  <SelectTrigger className="w-full sm:w-48">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -170,7 +172,7 @@ export default function NewStrategyPage() {
               {/* Tickers */}
               <div className="space-y-2">
                 <Label>Tickers</Label>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <Input
                     placeholder="AAPL"
                     value={tickerInput}
@@ -218,7 +220,7 @@ export default function NewStrategyPage() {
           )}
 
           {/* Submit */}
-          <div className="flex justify-end gap-3 mt-6">
+          <div className="flex flex-col-reverse gap-3 mt-6 sm:flex-row sm:justify-end">
             <Link href="/strategies" className={buttonVariants({ variant: "outline" })}>
               Cancel
             </Link>

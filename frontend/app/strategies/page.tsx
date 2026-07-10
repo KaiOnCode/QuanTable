@@ -6,11 +6,8 @@ import { Shell } from "@/components/layout/shell";
 import {
   Card,
   CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -37,7 +34,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { EmptyState } from "@/components/shared/empty-state";
 import { StatusBadge } from "@/components/shared/badges";
-import { formatPercent, formatDate } from "@/lib/utils";
+import { formatDate } from "@/lib/utils";
 import { strategiesApi } from "@/lib/api/strategies";
 import type { StrategyConfig } from "@/lib/types/models";
 import {
@@ -49,17 +46,53 @@ import {
   Square,
   Copy,
   Trash2,
-  TrendingUp,
-  ArrowUpRight,
   Loader2,
 } from "lucide-react";
 import Link from "next/link";
+import { toast } from "sonner";
+
+type LifecycleAction = "start" | "pause" | "stop";
+
+type RowAction = {
+  readonly strategyId: string;
+  readonly action: LifecycleAction;
+};
+
+type RowError = {
+  readonly strategyId: string;
+  readonly message: string;
+};
+
+const lifecycleLabel = (action: LifecycleAction) => {
+  switch (action) {
+    case "start":
+      return "active";
+    case "pause":
+      return "paused";
+    case "stop":
+      return "stopped";
+  }
+};
 
 export default function StrategiesPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [rowError, setRowError] = useState<RowError | null>(null);
+  const [pendingRowCounts, setPendingRowCounts] = useState<Record<string, number>>({});
+
+  const updatePendingRow = (strategyId: string, delta: 1 | -1) => {
+    setPendingRowCounts((current) => {
+      const nextCount = Math.max(0, (current[strategyId] ?? 0) + delta);
+      if (nextCount === 0) {
+        const remaining = { ...current };
+        delete remaining[strategyId];
+        return remaining;
+      }
+      return { ...current, [strategyId]: nextCount };
+    });
+  };
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["strategies", typeFilter, statusFilter],
@@ -77,6 +110,46 @@ export default function StrategiesPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["strategies"] }),
   });
 
+  const lifecycleMutation = useMutation({
+    mutationFn: ({ strategyId, action }: RowAction) => {
+      switch (action) {
+        case "start":
+          return strategiesApi.start(strategyId);
+        case "pause":
+          return strategiesApi.pause(strategyId);
+        case "stop":
+          return strategiesApi.stop(strategyId);
+      }
+    },
+    onMutate: (variables) => updatePendingRow(variables.strategyId, 1),
+    onSuccess: async (_result, variables) => {
+      setRowError(null);
+      toast.success(`Strategy marked ${lifecycleLabel(variables.action)}.`);
+      await queryClient.invalidateQueries({ queryKey: ["strategies"] });
+    },
+    onError: (mutationError: Error, variables) => {
+      setRowError({ strategyId: variables.strategyId, message: mutationError.message });
+      toast.error(`Strategy update failed: ${mutationError.message}`);
+    },
+    onSettled: (_result, _error, variables) => updatePendingRow(variables.strategyId, -1),
+  });
+
+  const cloneMutation = useMutation({
+    mutationFn: (strategy: StrategyConfig) =>
+      strategiesApi.clone(strategy.id, `${strategy.name.slice(0, 195)} Copy`),
+    onMutate: (strategy) => updatePendingRow(strategy.id, 1),
+    onSuccess: async (clone) => {
+      setRowError(null);
+      toast.success(`Cloned as ${clone.name}.`);
+      await queryClient.invalidateQueries({ queryKey: ["strategies"] });
+    },
+    onError: (mutationError: Error, strategy) => {
+      setRowError({ strategyId: strategy.id, message: mutationError.message });
+      toast.error(`Clone failed: ${mutationError.message}`);
+    },
+    onSettled: (_clone, _error, strategy) => updatePendingRow(strategy.id, -1),
+  });
+
   const filtered = strategies.filter((s) => {
     if (search && !s.name.toLowerCase().includes(search.toLowerCase()))
       return false;
@@ -85,9 +158,9 @@ export default function StrategiesPage() {
 
   return (
     <Shell>
-      <div className="p-6 space-y-6">
+      <div className="p-4 sm:p-6 space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 className="text-lg font-semibold">Strategies</h2>
             <p className="text-sm text-muted-foreground">
@@ -178,8 +251,8 @@ export default function StrategiesPage() {
 
         {/* Table */}
         {!isLoading && !isError && filtered.length > 0 ? (
-          <Card>
-            <Table>
+          <Card className="overflow-x-auto">
+            <Table className="min-w-[760px]">
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
@@ -191,8 +264,10 @@ export default function StrategiesPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filtered.map((s) => (
-                  <TableRow key={s.id}>
+                {filtered.map((s) => {
+                  const isRowPending = (pendingRowCounts[s.id] ?? 0) > 0;
+                  return (
+                    <TableRow key={s.id}>
                     <TableCell>
                       <Link
                         href={`/strategies/${s.id}`}
@@ -203,6 +278,11 @@ export default function StrategiesPage() {
                       <p className="text-xs text-muted-foreground truncate max-w-[200px]">
                         {s.description}
                       </p>
+                      {rowError?.strategyId === s.id ? (
+                        <p className="mt-1 max-w-[280px] text-xs text-destructive" role="alert">
+                          {rowError.message}
+                        </p>
+                      ) : null}
                     </TableCell>
                     <TableCell>
                       <Badge variant="outline" className="uppercase text-xs">
@@ -230,26 +310,51 @@ export default function StrategiesPage() {
                     </TableCell>
                     <TableCell>
                       <DropdownMenu>
-                        <DropdownMenuTrigger className="hover:bg-muted rounded-md">
+                        <DropdownMenuTrigger
+                          className="hover:bg-muted rounded-md"
+                          disabled={isRowPending}
+                          aria-label={`Actions for ${s.name}`}
+                        >
                           <div className="h-8 w-8 flex items-center justify-center">
-                            <MoreHorizontal className="h-4 w-4" />
+                            {isRowPending ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <MoreHorizontal className="h-4 w-4" />
+                            )}
                           </div>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem>
+                          <DropdownMenuItem
+                            disabled={s.status === "active" || s.status === "archived"}
+                            onClick={() =>
+                              lifecycleMutation.mutate({ strategyId: s.id, action: "start" })
+                            }
+                          >
                             <Play className="mr-2 h-4 w-4" />
-                            {s.status === "active" ? "Restart" : "Start"}
+                            Mark Active
                           </DropdownMenuItem>
-                          <DropdownMenuItem>
+                          <DropdownMenuItem
+                            disabled={
+                              !["active", "paused"].includes(s.status) || s.status === "paused"
+                            }
+                            onClick={() =>
+                              lifecycleMutation.mutate({ strategyId: s.id, action: "pause" })
+                            }
+                          >
                             <Pause className="mr-2 h-4 w-4" />
-                            Pause
+                            Mark Paused
                           </DropdownMenuItem>
-                          <DropdownMenuItem>
+                          <DropdownMenuItem
+                            disabled={s.status === "stopped" || s.status === "archived"}
+                            onClick={() =>
+                              lifecycleMutation.mutate({ strategyId: s.id, action: "stop" })
+                            }
+                          >
                             <Square className="mr-2 h-4 w-4" />
-                            Stop
+                            Mark Stopped
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
-                          <DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => cloneMutation.mutate(s)}>
                             <Copy className="mr-2 h-4 w-4" />
                             Clone
                           </DropdownMenuItem>
@@ -268,8 +373,9 @@ export default function StrategiesPage() {
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </TableCell>
-                  </TableRow>
-                ))}
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </Card>

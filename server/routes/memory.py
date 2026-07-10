@@ -8,9 +8,20 @@ GET  /api/strategies/{id}/pre-trade-check      — pre-trade safety
 
 from __future__ import annotations
 
+import json
+import os
+import sqlite3
+
 from fastapi import APIRouter, HTTPException, Query
 
+from memory.service import DEFAULT_MEMORY_DB_PATH
+from memory.store import MemoryStore
+
 router = APIRouter(tags=["memory"])
+
+
+def _memory_store() -> MemoryStore:
+    return MemoryStore(os.getenv("MEMORY_DB_PATH", DEFAULT_MEMORY_DB_PATH))
 
 
 @router.get("/strategies/{strategy_id}/memory")
@@ -22,9 +33,7 @@ async def list_memories(
 ):
     """List memories for a strategy, ordered by OWM score."""
     try:
-        from memory.store import MemoryStore
-
-        store = MemoryStore("data/memory.db")
+        store = _memory_store()
         memories = store.recall(
             ticker=ticker,
             strategy_id=strategy_id,
@@ -35,25 +44,21 @@ async def list_memories(
             "memories": [m.model_dump() for m in memories],
             "total": len(memories),
         }
-    except Exception:
-        return {"memories": [], "total": 0}
+    except (json.JSONDecodeError, OSError, sqlite3.Error) as exc:
+        raise HTTPException(500, "Failed to read memory") from exc
 
 
 @router.get("/strategies/{strategy_id}/memory/{memory_id}")
 async def get_memory(strategy_id: str, memory_id: str):
     """Get a single memory record (all 5 layers)."""
     try:
-        from memory.store import MemoryStore
-
-        store = MemoryStore("data/memory.db")
+        store = _memory_store()
         record = store.get(memory_id)
-        if record is None:
+        if record is None or record.strategy_id != strategy_id:
             raise HTTPException(404, f"Memory {memory_id} not found")
         return record.model_dump()
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(500, "Failed to read memory")
+    except (json.JSONDecodeError, OSError, sqlite3.Error) as exc:
+        raise HTTPException(500, "Failed to read memory") from exc
 
 
 @router.get("/strategies/{strategy_id}/reflections")

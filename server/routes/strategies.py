@@ -7,9 +7,17 @@ No mock data — every response is computed from real stored data.
 from __future__ import annotations
 
 import uuid
+from typing import assert_never
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import JsonValue
 
+from server.routes.strategy_lifecycle import (
+    CloneStrategyRequest,
+    LifecycleAction,
+    StopStrategyRequest,
+    sanitize_clone_config,
+)
 from storage import get_store
 
 router = APIRouter(tags=["strategies"])
@@ -19,6 +27,41 @@ def _now() -> str:
     from datetime import datetime, timezone
 
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _transition_strategy(
+    strategy_id: str, action: LifecycleAction
+) -> dict[str, JsonValue]:
+    store = get_store()
+    strategy = store.get_strategy(strategy_id)
+    if strategy is None:
+        raise HTTPException(404, f"Strategy {strategy_id} not found")
+
+    current_status = str(strategy.get("status", "draft"))
+    match action:
+        case "start":
+            allowed_statuses = frozenset(("draft", "paused", "stopped"))
+            target_status = "active"
+        case "pause":
+            allowed_statuses = frozenset(("active",))
+            target_status = "paused"
+        case "stop":
+            allowed_statuses = frozenset(("draft", "active", "paused"))
+            target_status = "stopped"
+        case unreachable:
+            assert_never(unreachable)
+
+    if current_status == target_status:
+        return strategy
+    if current_status not in allowed_statuses:
+        raise HTTPException(
+            409, f"Cannot {action} strategy from status {current_status}"
+        )
+
+    updated = store.update_strategy(strategy_id, {"status": target_status})
+    if updated is None:
+        raise HTTPException(404, f"Strategy {strategy_id} not found")
+    return updated
 
 
 # ── CRUD ────────────────────────────────────────────────────
@@ -118,6 +161,48 @@ async def update_strategy(strategy_id: str, config: dict):
     if result is None:
         raise HTTPException(404, f"Strategy {strategy_id} not found")
     return result
+
+
+@router.post("/strategies/{strategy_id}/clone", status_code=201)
+async def clone_strategy(
+    strategy_id: str, request: CloneStrategyRequest
+) -> dict[str, JsonValue]:
+    store = get_store()
+    source = store.get_strategy(strategy_id)
+    if source is None:
+        raise HTTPException(404, f"Strategy {strategy_id} not found")
+
+    now = _now()
+    clone = {
+        **sanitize_clone_config(source),
+        "id": str(uuid.uuid4()),
+        "name": request.name,
+        "status": "draft",
+        "parent_strategy_id": strategy_id,
+        "created_at": now,
+        "updated_at": now,
+    }
+    store.register_strategy(clone)
+    return clone
+
+
+@router.post("/strategies/{strategy_id}/start")
+async def start_strategy(strategy_id: str) -> dict[str, JsonValue]:
+    return _transition_strategy(strategy_id, "start")
+
+
+@router.post("/strategies/{strategy_id}/pause")
+async def pause_strategy(strategy_id: str) -> dict[str, JsonValue]:
+    return _transition_strategy(strategy_id, "pause")
+
+
+@router.post("/strategies/{strategy_id}/stop")
+async def stop_strategy(
+    strategy_id: str, request: StopStrategyRequest
+) -> dict[str, JsonValue]:
+    if request.liquidate:
+        raise HTTPException(409, "Liquidation is not supported")
+    return _transition_strategy(strategy_id, "stop")
 
 
 @router.delete("/strategies/{strategy_id}")

@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Shell } from "@/components/layout/shell";
 import {
   Card,
@@ -38,10 +39,13 @@ import {
   Shield,
 } from "lucide-react";
 import { Markdown } from "@/components/markdown";
-import { createSSEStream } from "@/lib/api/client";
 import { analyzeApi } from "@/lib/api/analyze";
 import { HistoryPanel } from "@/components/quick-ask/history-panel";
 import { TickerPreview } from "@/components/quick-ask/ticker-preview";
+import {
+  DEFAULT_STRATEGY_ID,
+  useStrategyIdentity,
+} from "@/components/quick-ask/use-strategy-identity";
 import type {
   AnalysisMode,
   AnalysisSessionSnapshot,
@@ -86,6 +90,9 @@ const STAGE_LABELS: Record<number, string> = {
 
 const ACTIVE_SESSION_KEY = "quickAsk.activeSessionId";
 
+const isAnalysisMode = (value: string): value is AnalysisMode =>
+  value === "fast" || value === "standard" || value === "deep";
+
 const createInitialStatuses = () => {
   const statuses = new Map<string, AgentStatus>();
   AGENTS.forEach((agent) => {
@@ -112,24 +119,52 @@ const buildStatusesFromSnapshot = (snapshot: AnalysisSessionSnapshot) => {
   return statuses;
 };
 
-function parseReport(report: string): { direction?: string; timeframe?: string; confidence?: string; oneliner?: string; body: string } {
+type ParsedReport = {
+  readonly direction?: string;
+  readonly timeframe?: string;
+  readonly confidence?: string;
+  readonly oneliner?: string;
+  readonly body: string;
+};
+
+function parseReport(report: string): ParsedReport {
   const lines = report.split("\n");
-  const result: any = {};
+  let direction: string | undefined;
+  let timeframe: string | undefined;
+  let confidence: string | undefined;
+  let oneliner: string | undefined;
   let bodyStart = 0;
   for (let i = 0; i < Math.min(lines.length, 8); i++) {
     const line = lines[i].trim();
     const m = line.match(/^(方向|时间范围|置信度|一句话结论)[：:]\s*(.+)/);
     if (m) {
-      const keyMap: Record<string, string> = { "方向": "direction", "时间范围": "timeframe", "置信度": "confidence", "一句话结论": "oneliner" };
-      result[keyMap[m[1]] || m[1]] = m[2];
+      switch (m[1]) {
+        case "方向":
+          direction = m[2];
+          break;
+        case "时间范围":
+          timeframe = m[2];
+          break;
+        case "置信度":
+          confidence = m[2];
+          break;
+        case "一句话结论":
+          oneliner = m[2];
+          break;
+      }
       bodyStart = i + 1;
     } else if (line === "" && bodyStart > 0) {
       bodyStart = i + 1;
       break;
     }
   }
-  result.body = lines.slice(bodyStart).join("\n").trim();
-  return result;
+  return {
+    direction,
+    timeframe,
+    confidence,
+    oneliner,
+    body: lines.slice(bodyStart).join("\n").trim(),
+  };
 }
 
 function ReportCard({ result }: { result: SSEResultEvent }) {
@@ -220,7 +255,7 @@ function ReportCard({ result }: { result: SSEResultEvent }) {
           <CardContent>
             <div className="space-y-2">
               {news.map((a, i) => (
-                <div key={i} className="flex items-start gap-2 text-sm">
+                <div key={`${a.url}-${a.published_at}`} className="flex items-start gap-2 text-sm">
                   <span className="text-muted-foreground shrink-0 mt-0.5">{i + 1}.</span>
                   <div className="min-w-0">
                     <a href={a.url} target="_blank" rel="noopener noreferrer"
@@ -241,7 +276,17 @@ function ReportCard({ result }: { result: SSEResultEvent }) {
   );
 }
 
-export default function QuickAskPage() {
+function QuickAskContent() {
+  const queryClient = useQueryClient();
+  const {
+    strategies,
+    strategiesQuery,
+    selectedStrategyId,
+    selectedStrategyLabel,
+    historicalStrategyId,
+    selectStrategy,
+    restoreStrategy,
+  } = useStrategyIdentity();
   const [ticker, setTicker] = useState("");
   const [mode, setMode] = useState<"fast" | "standard" | "deep">("standard");
   const [analyzing, setAnalyzing] = useState(false);
@@ -260,12 +305,11 @@ export default function QuickAskPage() {
 
   const applySnapshot = useCallback((snapshot: AnalysisSessionSnapshot) => {
     setTicker(snapshot.ticker || "");
-    if (["fast", "standard", "deep"].includes(snapshot.mode)) {
-      setMode(snapshot.mode as AnalysisMode);
-    }
+    setMode(snapshot.mode);
     setAgentStatuses(buildStatusesFromSnapshot(snapshot));
     setStreamedReports(new Map(Object.entries(snapshot.agent_reports || {})));
     setDebates(snapshot.result?.debate_records || []);
+    restoreStrategy(snapshot.request.strategy_id ?? snapshot.result?.strategy_id);
 
     if (snapshot.status === "running") {
       setAnalyzing(true);
@@ -287,13 +331,12 @@ export default function QuickAskPage() {
       setResult(null);
       setError(snapshot.error || "Analysis failed");
     }
-  }, []);
+  }, [restoreStrategy]);
 
   useEffect(() => {
     const sessionId = sessionStorage.getItem(ACTIVE_SESSION_KEY);
     if (!sessionId) return;
 
-    setActiveSessionId(sessionId);
     analyzeApi
       .getHistory(sessionId)
       .then(applySnapshot)
@@ -330,10 +373,10 @@ export default function QuickAskPage() {
     // Immediately mark PM as "started" so user sees feedback
     setAgentStatuses(createInitialStatuses());
 
-    const controller = createSSEStream(
-      "/analyze",
+    const controller = analyzeApi.analyze(
       {
         ticker: ticker.toUpperCase(),
+        strategy_id: selectedStrategyId,
         mode,
         active_agents: AGENTS.map((a) => a.name),
         enable_debate: mode === "deep",
@@ -357,9 +400,10 @@ export default function QuickAskPage() {
             return next;
           });
           if (event.report) {
+            const report = event.report;
             setStreamedReports((prev) => {
               const next = new Map(prev);
-              next.set(event.agent, event.report!);
+              next.set(event.agent, report);
               return next;
             });
           }
@@ -372,6 +416,9 @@ export default function QuickAskPage() {
           setAnalyzing(false);
           setActiveSessionId(null);
           sessionStorage.removeItem(ACTIVE_SESSION_KEY);
+          void queryClient.invalidateQueries({
+            queryKey: ["memory", event.strategy_id ?? selectedStrategyId],
+          });
         },
         onError: (event) => {
           setAnalyzing(false);
@@ -402,7 +449,7 @@ export default function QuickAskPage() {
 
   return (
     <Shell>
-      <div className="p-6 max-w-6xl mx-auto space-y-6">
+      <div className="p-4 sm:p-6 max-w-6xl mx-auto space-y-6">
         {/* Input */}
         <Card>
           <CardHeader>
@@ -419,8 +466,32 @@ export default function QuickAskPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="flex gap-3">
-              <div className="flex-1">
+            <div className="flex gap-3 flex-wrap">
+              <Select
+                value={selectedStrategyId}
+                onValueChange={(value) => value && selectStrategy(value)}
+                disabled={analyzing || strategiesQuery.isLoading}
+              >
+                <SelectTrigger className="w-full sm:w-64 h-12" aria-label="Strategy">
+                  <span className="flex flex-1 truncate text-left">
+                    {selectedStrategyLabel}
+                  </span>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={DEFAULT_STRATEGY_ID}>Default</SelectItem>
+                  {historicalStrategyId ? (
+                    <SelectItem value={historicalStrategyId}>
+                      Deleted strategy ({historicalStrategyId})
+                    </SelectItem>
+                  ) : null}
+                  {strategies.map((strategy) => (
+                    <SelectItem key={strategy.id} value={strategy.id}>
+                      {strategy.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <div className="w-full min-w-[200px] sm:flex-1">
                 <Input
                   placeholder="Enter ticker symbol (e.g. AAPL, TSLA)"
                   value={ticker}
@@ -434,12 +505,12 @@ export default function QuickAskPage() {
               </div>
               <Select
                 value={mode}
-                onValueChange={(v) =>
-                  setMode(v as "fast" | "standard" | "deep")
-                }
+                onValueChange={(v) => {
+                  if (v && isAnalysisMode(v)) setMode(v);
+                }}
                 disabled={analyzing}
               >
-                <SelectTrigger className="w-32 h-12">
+                <SelectTrigger className="w-full sm:w-32 h-12" aria-label="Analysis mode">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -449,20 +520,33 @@ export default function QuickAskPage() {
                 </SelectContent>
               </Select>
               {analyzing ? (
-                <Button variant="destructive" onClick={handleCancel}>
+                <Button
+                  variant="destructive"
+                  className="h-12 w-full sm:w-auto"
+                  onClick={handleCancel}
+                >
                   Cancel
                 </Button>
               ) : (
                 <Button
                   onClick={handleAnalyze}
                   disabled={!ticker.trim()}
-                  className="h-12 px-6"
+                  className="h-12 w-full px-6 sm:w-auto"
                   title={!ticker.trim() ? "Enter a ticker symbol first" : "Start analysis"}
                 >
                   <Send className="mr-2 h-4 w-4" />
                   {!ticker.trim() ? "Enter Ticker" : "Analyze"}
                 </Button>
               )}
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <span>Strategy identity:</span>
+              <Badge variant="outline">{selectedStrategyLabel}</Badge>
+              {strategiesQuery.isError ? (
+                <span className="text-destructive" role="alert">
+                  Failed to load strategies; Default remains available.
+                </span>
+              ) : null}
             </div>
           </CardContent>
         </Card>
@@ -606,8 +690,8 @@ export default function QuickAskPage() {
                 <CardContent>
                   <ScrollArea className="h-80">
                     <div className="space-y-4">
-                      {debates.map((debate, i) => (
-                        <div key={i}>
+                      {debates.map((debate) => (
+                        <div key={JSON.stringify(debate)}>
                           <Badge variant="outline" className="mb-2">
                             {debate.type === "investment"
                               ? `Debate Round ${debate.round}`
@@ -725,5 +809,21 @@ export default function QuickAskPage() {
         )}
       </div>
     </Shell>
+  );
+}
+
+export default function QuickAskPage() {
+  return (
+    <Suspense
+      fallback={
+        <Shell>
+          <div className="flex h-64 items-center justify-center">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        </Shell>
+      }
+    >
+      <QuickAskContent />
+    </Suspense>
   );
 }

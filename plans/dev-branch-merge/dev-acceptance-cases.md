@@ -156,8 +156,10 @@ GET /api/analyze/history/{session_id}
 
 ### Watch Items
 
-- The Quick Ask UI currently does not expose a strategy/account selector; use
-  direct API requests for strategy/account acceptance.
+- The Quick Ask UI exposes an explicit Default option and persisted strategy
+  selector, sends the selected `strategy_id`, and preserves that identity while
+  an analysis is pending or restored. Account-specific acceptance still uses
+  direct API requests because the UI does not expose an account selector.
 - `SSEResultEvent` in `frontend/lib/types/models.ts` should be checked against
   the backend result payload if the UI starts displaying `memory_enabled` or
   `memory_record_id`.
