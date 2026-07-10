@@ -15,6 +15,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from storage.store import recover_interrupted_backtest_jobs
 
 # Ensure project root is on sys.path for imports
 _project_root = Path(__file__).resolve().parent.parent
@@ -34,6 +35,9 @@ logger = logging.getLogger("server")
 async def lifespan(app: FastAPI):
     """Startup / shutdown lifecycle."""
     logger.info("Agentic-Quant server starting...")
+    recovered_jobs = recover_interrupted_backtest_jobs()
+    if recovered_jobs:
+        logger.warning("Recovered %d interrupted backtest jobs", recovered_jobs)
 
     # Start data collector and monitor runner if enabled
     if os.getenv("START_COLLECTOR", "").lower() == "true":

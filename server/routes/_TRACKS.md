@@ -3,6 +3,7 @@
 | Route | Track | File | Notes |
 |-------|-------|------|-------|
 | `/api/agent/*` | **ACTIVE** | `agent.py` | ReAct agent terminal (main dev) |
+| `/api/agent/backtest*` | **ACTIVE** | `agent.py` | Persisted single-ticker backtest jobs and CSV exports |
 | `/api/analyze` | LEGACY | `analyze.py` | Old LangGraph pipeline (frozen) |
 | `/api/health` | SHARED | `health.py` | Health check |
 | `/api/market/*` | SHARED | `market.py` | Market data REST |

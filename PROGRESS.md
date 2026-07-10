@@ -1,6 +1,43 @@
 # Progress & Roadmap
 
-Last updated: 2026-07-10 22:17 | Branch: `dev`
+Last updated: 2026-07-11 | Branch: `dev`
+
+## Frontend Demo Integration: Phase 2 — Trusted Backtest ✅
+
+Completed on 2026-07-11 under
+`plans/frontend-demo-integration/frontend-demo-to-real-functionality-plan.md`.
+
+Delivered:
+
+- Replaced the BacktestRunner legacy-orchestrator default with an explicitly
+  injected ACTIVE AgentLoop adapter, an allowlisted backtest tool surface, and
+  an `as_of`-scoped data boundary that prevents future-bar lookahead.
+- Added canonical single-ticker, independent-benchmark backtest results with
+  exact daily/weekly/monthly decision frequency, typed failures, and persisted
+  SQLite job recovery. The ACTIVE `/api/agent/backtest*` routes expose create,
+  poll, and completed-job CSV download only.
+- Replaced the Backtest demo page with a real strategy/job flow: canonical
+  request fields, status polling, reload recovery, server-safe failure UI,
+  equity/drawdown/trades/metrics, and completed-job CSV export.
+
+Fresh independent final gate evidence:
+
+- The focused Phase 2 suite passed: `53 passed, 1` existing
+  Starlette/httpx deprecation warning. Scoped Ruff check/format, BasedPyright
+  baseline, frontend TypeScript, scoped lint, and `git diff --check` passed.
+- Two production `npm run build` executions passed (including the local API
+  configuration used by Chromium); both completed compilation, TypeScript,
+  and all 20 static pages.
+- A real mounted FastAPI + production Chromium run observed the exact
+  canonical `POST /api/agent/backtest` request, `202` job creation, persisted
+  GET polling through completion, reload without duplicate create, CSV
+  download, and a safe rendered failure state. Fresh 1280/768/375 visual
+  reviews passed. Full receipt:
+  `.omo/evidence/frontend-demo-integration/phase-2/phase-gate-final.md`.
+
+Next: begin only Phase 3 Todos 6–8 (tracked-universe Scanner engine, persisted
+rule/agent/belief runs, and truthful Scanner UI) after this Phase 2 commit is
+pushed and `origin/dev` parity is proved.
 
 ## Frontend Demo Integration: Phase 1 — Strategy Lifecycle & Scoped Memory ✅
 

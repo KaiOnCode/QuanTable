@@ -38,7 +38,7 @@ from .base import BaseTool, ToolMeta, emit_progress  # noqa: E402
 from .registry import ToolRegistry, get_registry, reset_registry  # noqa: E402
 
 # Import tool modules so their BaseTool subclasses are discovered
-from . import financial, workspace  # noqa: E402
+from . import backtest, financial, workspace  # noqa: E402
 
 __all__ = [
     "BaseTool",
@@ -48,5 +48,6 @@ __all__ = [
     "reset_registry",
     "emit_progress",
     "financial",
+    "backtest",
     "workspace",
 ]

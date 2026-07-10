@@ -57,6 +57,7 @@ class AgentConfig:
     temperature: float = 0.0
     max_tokens: int = 4096
     compress_threshold: int = TOKEN_THRESHOLD
+    allowed_tools: frozenset[str] | None = None
 
 
 @dataclass
@@ -103,7 +104,10 @@ class AgentLoop:
         if self._registry is None:
             from .tools.registry import get_registry
 
-            self._registry = get_registry(include_shell=self.config.include_shell_tools)
+            self._registry = get_registry(
+                include_shell=self.config.include_shell_tools,
+                allowed_tools=self.config.allowed_tools,
+            )
         return self._registry
 
     def _get_llm(self):

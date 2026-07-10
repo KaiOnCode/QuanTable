@@ -16,7 +16,7 @@ type SSEHandlers = {
 
 const DEFAULT_API_BASE = "http://localhost:8000/api";
 
-function apiUrl(path: string) {
+export function apiUrl(path: string) {
   const base = process.env.NEXT_PUBLIC_API_URL || DEFAULT_API_BASE;
   return `${base.replace(/\/$/, "")}/${path.replace(/^\//, "")}`;
 }

@@ -15,14 +15,30 @@ from queue import Empty, Queue
 from threading import Thread
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
+
+from agent.backtest_jobs import (
+    BacktestJobResponse,
+    BacktestJobService,
+    BacktestRequest,
+    default_backtest_job_service,
+)
+from storage import get_store
 
 router = APIRouter(tags=["agent"])
 logger = logging.getLogger(__name__)
 
 RUNS_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "agent-runs"
 RUNS_DIR.mkdir(parents=True, exist_ok=True)
+_backtest_job_service: BacktestJobService | None = None
+
+
+def get_backtest_job_service() -> BacktestJobService:
+    global _backtest_job_service
+    if _backtest_job_service is None:
+        _backtest_job_service = default_backtest_job_service(get_store())
+    return _backtest_job_service
 
 
 def _sse(event: str, data: dict) -> str:
@@ -216,6 +232,48 @@ async def delete_session(session_id: str):
         raise HTTPException(404, "Session not found")
     shutil.rmtree(d)
     return {"ok": True}
+
+
+@router.post(
+    "/agent/backtest",
+    status_code=202,
+    response_model=BacktestJobResponse,
+)
+async def create_backtest(request: BacktestRequest) -> BacktestJobResponse:
+    if get_store().get_strategy(request.strategy_id) is None:
+        raise HTTPException(404, f"Strategy {request.strategy_id} not found")
+    service = get_backtest_job_service()
+    if not service.can_start:
+        raise HTTPException(422, "LLM is not configured for backtests")
+    return service.create(request)
+
+
+@router.get("/agent/backtest/{backtest_id}", response_model=BacktestJobResponse)
+async def get_backtest(backtest_id: str) -> BacktestJobResponse:
+    job = get_backtest_job_service().get(backtest_id)
+    if job is None:
+        raise HTTPException(404, f"Backtest {backtest_id} not found")
+    return job
+
+
+@router.get("/agent/backtest/{backtest_id}/trades.csv")
+async def download_backtest_trades(backtest_id: str) -> Response:
+    service = get_backtest_job_service()
+    job = service.get(backtest_id)
+    if job is None:
+        raise HTTPException(404, f"Backtest {backtest_id} not found")
+    if job.status != "completed":
+        raise HTTPException(409, "Backtest is not completed")
+    csv_content = service.trades_csv(backtest_id)
+    if csv_content is None:
+        raise HTTPException(409, "Backtest trades are not available")
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="backtest-{backtest_id}-trades.csv"'
+        },
+    )
 
 
 # ── Skills ────────────────────────────────────────────────────

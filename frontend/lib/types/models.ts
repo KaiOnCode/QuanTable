@@ -346,24 +346,93 @@ export interface SystemConfig {
 }
 
 export interface BacktestRequest {
-  strategy_config?: Partial<StrategyConfig>;
-  tickers: string[]; date_from: string; date_to: string;
-  forward_days?: number; frequency?: "daily" | "weekly" | "monthly";
-  benchmark?: string;
+  strategy_id: string;
+  ticker: string;
+  date_from: string;
+  date_to: string;
+  frequency: "daily" | "weekly" | "monthly";
+  benchmark: string;
 }
 
-export interface BacktestResult {
-  status: "pending" | "running" | "completed" | "failed"; backtest_id: string;
-  summary?: {
-    total_predictions: number; accuracy_pct: number;
-    cumulative_return_pct: number; benchmark_return_pct: number;
-    excess_return_pct: number; information_ratio: number; sharpe_ratio: number;
-  };
-  results?: {
-    date: string; ticker: string; predicted_direction: string;
-    confidence: number; actual_direction: string; actual_return_pct: number;
-    benchmark_return_pct: number; was_correct: boolean;
-  }[];
+export interface PerformanceMetricsView {
+  cumulative_return_pct: number;
+  total_return_pct: number;
+  annualized_return_pct: number;
+  benchmark_return_pct: number;
+  excess_return_pct: number;
+  max_drawdown_pct: number;
+  max_drawdown_duration: number;
+  sharpe_ratio: number;
+  win_rate_pct: number;
+  profit_factor: number;
+  avg_win: number;
+  avg_loss: number;
+  payoff_ratio: number;
+  number_of_trades: number;
+  avg_holding_period_days: number;
+}
+
+export interface BacktestConfigView {
+  ticker: string;
+  start_date: string;
+  end_date: string;
+  frequency: "daily" | "weekly" | "monthly";
+  benchmark_symbol: string;
+  strategy_id: string;
+  account_id: string;
+}
+
+export interface BacktestSeriesPointView {
+  date: string;
+  strategy_equity: number;
+  benchmark_equity: number;
+  strategy_drawdown_pct: number;
+  benchmark_drawdown_pct: number;
+}
+
+export interface BacktestTradeView {
+  order_id: string;
+  timestamp: string;
+  ticker: string;
+  side: "buy" | "sell";
+  quantity: number;
+  price: number;
+  fee: number;
+  slippage: number;
+  trade_value: number;
+  realized_pnl: number;
+  cash_after: number;
+  equity_after: number;
+  shares_after: number;
+  avg_cost_after: number;
+  strategy_id: string;
+  account_id: string;
+  session_id: string;
+  decision_id: string;
+}
+
+export interface BacktestResultView {
+  status: "completed";
+  config: BacktestConfigView;
+  summary: PerformanceMetricsView;
+  series: BacktestSeriesPointView[];
+  trades: BacktestTradeView[];
+}
+
+export interface BacktestJobError {
+  code: "backtest_failed" | "interrupted" | "storage_corrupt";
+  message: string;
+}
+
+export interface BacktestJobResponse {
+  backtest_id: string;
+  status: "pending" | "running" | "completed" | "failed";
+  result: BacktestResultView | null;
+  error: BacktestJobError | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  updated_at: string;
 }
 
 export interface VarResponse {

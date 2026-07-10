@@ -20,10 +20,15 @@ logger = logging.getLogger(__name__)
 class ToolRegistry:
     """Central registry of all agent tools. Auto-discovers BaseTool subclasses."""
 
-    def __init__(self, include_shell: bool = False):
+    def __init__(
+        self,
+        include_shell: bool = False,
+        allowed_tools: frozenset[str] | None = None,
+    ):
         self._tools: dict[str, BaseTool] = {}
         self._meta: dict[str, ToolMeta] = {}
         self._include_shell = include_shell
+        self._allowed_tools = allowed_tools
         self._last_call: dict[str, float] = {}  # For cooldown tracking
 
     def discover(self):
@@ -49,6 +54,8 @@ class ToolRegistry:
                 return
             instance = tool_cls()
             name = instance.meta.name
+            if self._allowed_tools is not None and name not in self._allowed_tools:
+                return
             # Shell tools filtered unless explicitly enabled
             if (
                 name in ("bash", "background_run", "check_background")
@@ -62,6 +69,11 @@ class ToolRegistry:
 
     def register(self, tool: BaseTool):
         """Manually register a tool instance."""
+        if (
+            self._allowed_tools is not None
+            and tool.meta.name not in self._allowed_tools
+        ):
+            return
         self._tools[tool.meta.name] = tool
         self._meta[tool.meta.name] = tool.meta
 
@@ -163,9 +175,19 @@ class ToolRegistry:
 _registry: ToolRegistry | None = None
 
 
-def get_registry(include_shell: bool = False) -> ToolRegistry:
+def get_registry(
+    include_shell: bool = False,
+    allowed_tools: frozenset[str] | None = None,
+) -> ToolRegistry:
     """Get or create the global tool registry singleton."""
     global _registry
+    if allowed_tools is not None:
+        restricted_registry = ToolRegistry(
+            include_shell=include_shell,
+            allowed_tools=allowed_tools,
+        )
+        restricted_registry.discover()
+        return restricted_registry
     if _registry is None:
         _registry = ToolRegistry(include_shell=include_shell)
         _registry.discover()

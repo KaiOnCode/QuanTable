@@ -511,6 +511,7 @@ def test_multibar_backtest_result_renders_dashboard_for_explicit_date_range() ->
     result = runner.run(
         ticker="AAPL",
         price_df=price_df,
+        benchmark_df=price_df.copy(),
         start_date="2026-01-02",
         end_date="2026-01-04",
     )

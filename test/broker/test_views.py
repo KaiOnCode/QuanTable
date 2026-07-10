@@ -438,7 +438,7 @@ def test_backtest_result_view_serializes_completed_portfolio_contract() -> None:
 
     view = to_backtest_result_view(
         config=BacktestConfigView(
-            tickers=["AAPL", "MSFT"],
+            ticker="AAPL",
             start_date="2026-01-01",
             end_date="2026-01-31",
             benchmark_symbol="SPY",
@@ -452,7 +452,7 @@ def test_backtest_result_view_serializes_completed_portfolio_contract() -> None:
     assert isinstance(view, BacktestResultView)
     assert view.status == "completed"
     assert view.config.benchmark_symbol == "SPY"
-    assert view.config.tickers == ["AAPL", "MSFT"]
+    assert view.config.ticker == "AAPL"
     assert view.summary.cumulative_return_pct == pytest.approx(0.1)
     assert view.summary.benchmark_return_pct == pytest.approx(1.0)
     assert view.summary.excess_return_pct == pytest.approx(-0.9)

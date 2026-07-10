@@ -562,52 +562,70 @@ Test connection to external MCP server.
 
 ## 9. Backtest
 
-### `POST /api/backtest`
+### `POST /api/agent/backtest`
 
 **Request:**
 ```json
 {
-  "strategy_config": { "partial StrategyConfig or reference existing" },
-  "tickers": ["AAPL", "MSFT"],
-  "date_from": "2023-01-01",
-  "date_to": "2023-12-31",
-  "forward_days": 30,
+  "strategy_id": "strategy-uuid",
+  "ticker": "AAPL",
+  "date_from": "2025-01-02",
+  "date_to": "2025-03-31",
   "frequency": "weekly",
   "benchmark": "SPY"
 }
 ```
 
-**Response:** `{ "backtest_id": "uuid" }` (processing is async; poll for results)
+**Response (202):** `{ "backtest_id": "uuid", "status": "pending" }`.
+Each request creates an independent persisted job. `strategy_id` must refer to an
+existing strategy. Invalid dates/ticker/frequency return `422`; an unknown
+strategy returns `404`; a missing LLM configuration returns `422` before a job
+is created. The ACTIVE route never invokes a legacy analysis pipeline.
 
-### `GET /api/backtest/{backtest_id}`
+### `GET /api/agent/backtest/{backtest_id}`
 
 **Response:**
 ```json
 {
   "status": "completed",
-  "summary": {
-    "total_predictions": 52,
-    "accuracy_pct": 62.5,
-    "cumulative_return_pct": 15.3,
-    "benchmark_return_pct": 9.1,
-    "excess_return_pct": 6.2,
-    "information_ratio": 0.85,
-    "sharpe_ratio": 1.2
-  },
-  "results": [
-    {
-      "date": "2023-01-06",
+  "backtest_id": "uuid",
+  "result": {
+    "status": "completed",
+    "config": {
       "ticker": "AAPL",
-      "predicted_direction": "Bullish",
-      "confidence": 0.8,
-      "actual_direction": "Bullish",
-      "actual_return_pct": 3.2,
-      "benchmark_return_pct": 1.5,
-      "was_correct": true
-    }
-  ]
+      "start_date": "2025-01-02",
+      "end_date": "2025-03-31",
+      "frequency": "weekly",
+      "benchmark_symbol": "SPY",
+      "strategy_id": "strategy-uuid"
+    },
+    "summary": {
+      "cumulative_return_pct": 15.3,
+      "benchmark_return_pct": 9.1,
+      "excess_return_pct": 6.2,
+      "max_drawdown_pct": -7.1,
+      "sharpe_ratio": 1.2
+    },
+    "series": [],
+    "trades": []
+  },
+  "error": null,
+  "created_at": "2025-01-02T00:00:00+00:00",
+  "started_at": "2025-01-02T00:00:01+00:00",
+  "completed_at": "2025-01-02T00:00:10+00:00",
+  "updated_at": "2025-01-02T00:00:10+00:00"
 }
 ```
+
+Pending/running jobs have `result: null`. Failed jobs have `result: null` and
+a safe `{ "code", "message" }` error. Results live in `system.db`; startup
+marks abandoned pending/running jobs as failed with `code: "interrupted"`.
+
+### `GET /api/agent/backtest/{backtest_id}/trades.csv`
+
+Returns a generated `text/csv` attachment only when the persisted job is
+completed. Unknown jobs return `404`; pending, running, failed, or malformed
+results return `409` and never expose prompts, credentials, paths, or stacks.
 
 ---
 

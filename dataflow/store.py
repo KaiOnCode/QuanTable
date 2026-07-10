@@ -366,6 +366,24 @@ class MarketDataStore:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_news_as_of(
+        self,
+        ticker: str,
+        start_date: str,
+        as_of_date: str,
+    ) -> list[dict]:
+        with self._conn() as db:
+            rows = db.execute(
+                "SELECT * FROM news WHERE ticker = ? AND published_at >= ? "
+                "AND published_at <= ? ORDER BY published_at DESC LIMIT 50",
+                (
+                    ticker.upper(),
+                    start_date[:10],
+                    as_of_date[:10] + "T23:59:59Z",
+                ),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     # ── Freshness ───────────────────────────────────────────
 
     def _touch_freshness(self, ticker: str, data_type: str, success: bool) -> None:

@@ -189,9 +189,10 @@ class PerformanceMetricsView(BaseModel):
 
 
 class BacktestConfigView(BaseModel):
-    tickers: list[str] = Field(default_factory=list)
+    ticker: str = ""
     start_date: str = ""
     end_date: str = ""
+    frequency: Literal["daily", "weekly", "monthly"] = "daily"
     benchmark_symbol: str = "SPY"
     strategy_id: str = ""
     account_id: str = "default"

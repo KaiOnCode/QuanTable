@@ -13,10 +13,27 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 
 DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+
+type BacktestJobStatus = Literal["pending", "running", "completed", "failed"]
+
+
+@dataclass(frozen=True, slots=True)
+class BacktestJobRecord:
+    id: str
+    request_json: str
+    status: BacktestJobStatus
+    result_json: str | None
+    error_json: str | None
+    created_at: str
+    started_at: str | None
+    completed_at: str | None
+    updated_at: str
 
 
 def _now() -> str:
@@ -935,6 +952,112 @@ class ContextStore:
         db.commit()
         return cursor.rowcount > 0
 
+    def create_backtest_job(self, job_id: str, request_json: str) -> BacktestJobRecord:
+        self._init_backtest_jobs_db()
+        now = _now()
+        db = self._system_db()
+        db.execute(
+            """INSERT INTO backtest_jobs
+               (id, request_json, status, result_json, error_json,
+                created_at, started_at, completed_at, updated_at)
+               VALUES (?, ?, 'pending', NULL, NULL, ?, NULL, NULL, ?)""",
+            (job_id, request_json, now, now),
+        )
+        db.commit()
+        job = self.get_backtest_job(job_id)
+        if job is None:
+            raise RuntimeError("backtest job was not persisted")
+        return job
+
+    def get_backtest_job(self, job_id: str) -> BacktestJobRecord | None:
+        self._init_backtest_jobs_db()
+        row = (
+            self._system_db()
+            .execute(
+                """SELECT id, request_json, status, result_json, error_json,
+                      created_at, started_at, completed_at, updated_at
+               FROM backtest_jobs WHERE id = ?""",
+                (job_id,),
+            )
+            .fetchone()
+        )
+        return _backtest_job_from_row(row) if row is not None else None
+
+    def mark_backtest_job_running(self, job_id: str) -> bool:
+        self._init_backtest_jobs_db()
+        now = _now()
+        cursor = self._system_db().execute(
+            """UPDATE backtest_jobs
+               SET status = 'running', started_at = ?, updated_at = ?
+               WHERE id = ? AND status = 'pending'""",
+            (now, now, job_id),
+        )
+        self._system_db().commit()
+        return cursor.rowcount == 1
+
+    def complete_backtest_job(self, job_id: str, result_json: str) -> bool:
+        self._init_backtest_jobs_db()
+        now = _now()
+        cursor = self._system_db().execute(
+            """UPDATE backtest_jobs
+               SET status = 'completed', result_json = ?, error_json = NULL,
+                   completed_at = ?, updated_at = ?
+               WHERE id = ? AND status = 'running'""",
+            (result_json, now, now, job_id),
+        )
+        self._system_db().commit()
+        return cursor.rowcount == 1
+
+    def fail_backtest_job(self, job_id: str, error_json: str) -> bool:
+        self._init_backtest_jobs_db()
+        now = _now()
+        cursor = self._system_db().execute(
+            """UPDATE backtest_jobs
+               SET status = 'failed', error_json = ?, completed_at = ?, updated_at = ?
+               WHERE id = ? AND status IN ('pending', 'running')""",
+            (error_json, now, now, job_id),
+        )
+        self._system_db().commit()
+        return cursor.rowcount == 1
+
+    def recover_interrupted_backtest_jobs(self) -> int:
+        self._init_backtest_jobs_db()
+        now = _now()
+        error_json = json.dumps(
+            {
+                "code": "interrupted",
+                "message": "Backtest interrupted by server restart",
+            }
+        )
+        cursor = self._system_db().execute(
+            """UPDATE backtest_jobs
+               SET status = 'failed', error_json = ?, completed_at = ?, updated_at = ?
+               WHERE status IN ('pending', 'running')""",
+            (error_json, now, now),
+        )
+        self._system_db().commit()
+        return cursor.rowcount
+
+    def _init_backtest_jobs_db(self) -> None:
+        db = self._system_db()
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS backtest_jobs (
+                id TEXT PRIMARY KEY,
+                request_json TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed')),
+                result_json TEXT,
+                error_json TEXT,
+                created_at TEXT NOT NULL,
+                started_at TEXT,
+                completed_at TEXT,
+                updated_at TEXT NOT NULL
+            )"""
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_backtest_jobs_status ON backtest_jobs(status)"
+        )
+        db.commit()
+
     # ── Storage management ──────────────────────────────────
 
     def _get_conn(self, db_name: str) -> sqlite3.Connection:
@@ -987,6 +1110,32 @@ def _monitor_row_to_dict(row) -> dict:
     return d
 
 
+def _backtest_job_from_row(row: sqlite3.Row) -> BacktestJobRecord:
+    status = str(row["status"])
+    match status:
+        case "pending":
+            normalized_status: BacktestJobStatus = "pending"
+        case "running":
+            normalized_status = "running"
+        case "completed":
+            normalized_status = "completed"
+        case "failed":
+            normalized_status = "failed"
+        case _:
+            raise RuntimeError("invalid persisted backtest job status")
+    return BacktestJobRecord(
+        id=str(row["id"]),
+        request_json=str(row["request_json"]),
+        status=normalized_status,
+        result_json=(str(row["result_json"]) if row["result_json"] else None),
+        error_json=(str(row["error_json"]) if row["error_json"] else None),
+        created_at=str(row["created_at"]),
+        started_at=(str(row["started_at"]) if row["started_at"] else None),
+        completed_at=(str(row["completed_at"]) if row["completed_at"] else None),
+        updated_at=str(row["updated_at"]),
+    )
+
+
 def _report_row_to_dict(row) -> dict:
     d = dict(row)
     for k in (
@@ -1031,3 +1180,7 @@ def get_store(data_dir: str | Path = DEFAULT_DATA_DIR) -> ContextStore:
     if _store is None:
         _store = ContextStore(data_dir)
     return _store
+
+
+def recover_interrupted_backtest_jobs() -> int:
+    return get_store().recover_interrupted_backtest_jobs()

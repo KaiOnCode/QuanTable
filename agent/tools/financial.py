@@ -8,10 +8,31 @@ auto-registration with the agent's ToolRegistry.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 
 from .base import BaseTool, ToolMeta, emit_progress
 
 logger = logging.getLogger(__name__)
+
+
+def _data_service():
+    from agent.run_context import current_agent_run_context
+
+    context = current_agent_run_context()
+    if context is not None:
+        return context.data_service
+    from dataflow.service import DataService
+
+    return DataService()
+
+
+def _data_cutoff() -> datetime:
+    from agent.run_context import current_agent_run_context
+
+    context = current_agent_run_context()
+    if context is None:
+        return datetime.now(timezone.utc)
+    return datetime.fromisoformat(context.as_of.replace("Z", "+00:00"))
 
 
 class GetPriceTool(BaseTool):
@@ -53,14 +74,10 @@ class GetPriceTool(BaseTool):
         except (ValueError, TypeError):
             days = 30
         emit_progress("fetching", message=f"Getting price data for {ticker}...")
-        from dataflow.service import DataService
-        from datetime import datetime, timezone, timedelta
-
-        svc = DataService()
-        end = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        start = (datetime.now(timezone.utc) - timedelta(days=int(days))).strftime(
-            "%Y-%m-%d"
-        )
+        svc = _data_service()
+        cutoff = _data_cutoff()
+        end = cutoff.strftime("%Y-%m-%d")
+        start = (cutoff - timedelta(days=int(days))).strftime("%Y-%m-%d")
         bars = svc.get_prices(ticker.upper(), start, end)
 
         if not bars:
@@ -121,9 +138,7 @@ class GetIndicatorsTool(BaseTool):
 
     def execute(self, ticker: str = "") -> str:
         emit_progress("computing", message=f"Computing indicators for {ticker}...")
-        from dataflow.service import DataService
-
-        svc = DataService()
+        svc = _data_service()
         result = svc.get_indicators(ticker.upper())
         if not result:
             return self._error(f"No indicator data for {ticker}")
@@ -188,9 +203,7 @@ class GetNewsTool(BaseTool):
         except Exception:
             days = 7
         emit_progress("fetching", message=f"Fetching news for {ticker}...")
-        from dataflow.service import DataService
-
-        svc = DataService()
+        svc = _data_service()
         articles = svc.get_news(ticker.upper(), window_days=days)
         if not articles:
             return self._ok({"ticker": ticker.upper(), "count": 0, "articles": []})
@@ -238,9 +251,7 @@ class GetFundamentalsTool(BaseTool):
 
     def execute(self, ticker: str = "") -> str:
         emit_progress("fetching", message=f"Fetching fundamentals for {ticker}...")
-        from dataflow.service import DataService
-
-        svc = DataService()
+        svc = _data_service()
         data = svc.get_fundamentals(ticker.upper())
         if not data:
             return self._error(f"No fundamentals data for {ticker}")

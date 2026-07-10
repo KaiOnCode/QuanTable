@@ -4,9 +4,10 @@ import pandas as pd
 import pytest
 
 from agentgraph.execution_node import create_execution_node
-from broker.backtest_runner import BacktestRunner
+from broker.backtest_runner import BacktestRunError, BacktestRunner
 from broker.config import BrokerConfig
 from broker.engine import MockBrokerEngine
+from broker.views import BacktestConfigView
 
 
 class StubAgent:
@@ -92,19 +93,26 @@ class BuyThenHoldAgent:
         }
 
 
+def _benchmark_prices(price_df: pd.DataFrame) -> pd.DataFrame:
+    benchmark = price_df.copy()
+    for column in ("Open", "High", "Low", "Close"):
+        benchmark[column] = benchmark[column] * 2.0
+    return benchmark
+
+
 def test_backtest_runner_returns_empty_exports_for_an_empty_price_window() -> None:
     runner = BacktestRunner(BrokerConfig(), agent=StubAgent())
 
-    result = runner.run(
-        ticker="AAPL",
-        price_df=pd.DataFrame(columns=pd.Index(["Open", "High", "Low", "Close"])),
-        start_date="2026-01-01",
-        end_date="2026-01-31",
-    )
-
-    assert result.trades.empty
-    assert result.portfolio.empty
-    assert result.metrics["number_of_trades"] == 0
+    with pytest.raises(BacktestRunError, match="non-empty"):
+        runner.run(
+            ticker="AAPL",
+            price_df=pd.DataFrame(columns=pd.Index(["Open", "High", "Low", "Close"])),
+            benchmark_df=pd.DataFrame(
+                columns=pd.Index(["Open", "High", "Low", "Close"])
+            ),
+            start_date="2026-01-01",
+            end_date="2026-01-31",
+        )
 
 
 def test_backtest_runner_passes_as_of_to_each_agent_call() -> None:
@@ -121,6 +129,7 @@ def test_backtest_runner_passes_as_of_to_each_agent_call() -> None:
     runner.run(
         ticker="AAPL",
         price_df=price_df,
+        benchmark_df=_benchmark_prices(price_df),
         start_date="2026-01-02",
         end_date="2026-01-03",
     )
@@ -169,6 +178,7 @@ def test_backtest_runner_builds_scoped_agent_for_each_as_of_boundary() -> None:
     runner.run(
         ticker="AAPL",
         price_df=price_df,
+        benchmark_df=_benchmark_prices(price_df),
         start_date="2026-01-02",
         end_date="2026-01-03",
     )
@@ -191,6 +201,7 @@ def test_backtest_runner_propagates_strategy_and_account_identity() -> None:
     result = runner.run(
         ticker="AAPL",
         price_df=price_df,
+        benchmark_df=_benchmark_prices(price_df),
         start_date="2026-01-02",
         end_date="2026-01-02",
         strategy_id="strategy-backtest",
@@ -237,6 +248,7 @@ def test_backtest_runner_returns_structured_trade_and_portfolio_exports() -> Non
     result = runner.run(
         ticker="AAPL",
         price_df=price_df,
+        benchmark_df=_benchmark_prices(price_df),
         start_date="2026-01-01",
         end_date="2026-01-31",
     )
@@ -293,6 +305,7 @@ def test_backtest_runner_adds_strategy_and_benchmark_performance_columns() -> No
     result = runner.run(
         ticker="AAPL",
         price_df=price_df,
+        benchmark_df=_benchmark_prices(price_df),
         start_date="2026-01-02",
         end_date="2026-01-04",
     )
@@ -353,12 +366,13 @@ def test_backtest_runner_returns_completed_backtest_result_view_contract() -> No
     result = runner.run(
         ticker="AAPL",
         price_df=price_df,
+        benchmark_df=_benchmark_prices(price_df),
         start_date="2026-01-02",
         end_date="2026-01-03",
     )
 
     assert result.view.status == "completed"
-    assert result.view.config.tickers == ["AAPL"]
+    assert result.view.config.ticker == "AAPL"
     assert result.view.config.benchmark_symbol == "SPY"
     assert result.view.summary.cumulative_return_pct == pytest.approx(5.0)
     assert result.view.summary.benchmark_return_pct == pytest.approx(10.0)
@@ -421,12 +435,14 @@ def test_backtest_runner_view_is_scoped_to_current_session_when_runner_is_reused
     first_result = runner.run(
         ticker="AAPL",
         price_df=first_price_df,
+        benchmark_df=_benchmark_prices(first_price_df),
         start_date="2026-01-02",
         end_date="2026-01-03",
     )
     second_result = runner.run(
         ticker="AAPL",
         price_df=second_price_df,
+        benchmark_df=_benchmark_prices(second_price_df),
         start_date="2026-02-02",
         end_date="2026-02-02",
     )
@@ -438,3 +454,44 @@ def test_backtest_runner_view_is_scoped_to_current_session_when_runner_is_reused
         trade.session_id != first_result.view.trades[0].session_id
         for trade in second_result.view.trades
     )
+
+
+def test_backtest_runner_rebalances_weekly_but_records_daily_equity() -> None:
+    agent = RecordingBacktestAgent()
+    runner = BacktestRunner(BrokerConfig(), agent=agent)
+    price_df = pd.DataFrame(
+        [
+            {"Open": 99.0, "High": 101.0, "Low": 98.0, "Close": 100.0},
+            {"Open": 100.0, "High": 102.0, "Low": 99.0, "Close": 101.0},
+            {"Open": 101.0, "High": 103.0, "Low": 100.0, "Close": 102.0},
+            {"Open": 102.0, "High": 104.0, "Low": 101.0, "Close": 103.0},
+        ],
+        index=pd.to_datetime(["2026-01-02", "2026-01-05", "2026-01-06", "2026-01-07"]),
+    )
+
+    result = runner.run(
+        ticker="AAPL",
+        price_df=price_df,
+        benchmark_df=_benchmark_prices(price_df),
+        start_date="2026-01-02",
+        end_date="2026-01-07",
+        frequency="weekly",
+    )
+
+    assert len(agent.calls) == 2
+    assert len(result.view.series) == 4
+    assert result.view.config.frequency == "weekly"
+
+
+def test_backtest_config_view_frequency_round_trips_as_canonical_json() -> None:
+    view = BacktestConfigView(
+        ticker="AAPL",
+        start_date="2026-01-02",
+        end_date="2026-01-03",
+        frequency="monthly",
+        benchmark_symbol="SPY",
+    )
+
+    restored = BacktestConfigView.model_validate_json(view.model_dump_json())
+
+    assert restored == view
