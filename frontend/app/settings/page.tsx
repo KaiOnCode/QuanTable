@@ -32,7 +32,11 @@ import {
   DEFAULT_QUICK_THINK_MODEL,
   QUICK_THINK_MODEL_OPTIONS,
 } from "@/lib/llm-defaults";
-import type { HealthResponse, SystemConfig } from "@/lib/types/models";
+import type {
+  HealthResponse,
+  NotificationChannelName,
+  SystemConfig,
+} from "@/lib/types/models";
 import {
   Settings,
   Brain,
@@ -45,6 +49,7 @@ import {
   Cpu,
   Loader2,
   CheckCircle2,
+  ExternalLink,
 } from "lucide-react";
 
 const DEFAULT_SETTINGS: SystemConfig = {
@@ -76,9 +81,34 @@ const DEFAULT_SETTINGS: SystemConfig = {
   llm_api_key_configured: false,
   llm_api_key_source: "missing",
   llm_api_key_length: 0,
+  notification_status: {
+    email: { configured: false, missing_fields: ["email_smtp_host", "email_sender", "email_recipients"] },
+    telegram: { configured: false, missing_fields: ["telegram_bot_token", "telegram_chat_ids"] },
+    wechat: { configured: false, missing_fields: ["wechat_webhook_url"] },
+    whatsapp: { configured: false, missing_fields: ["whatsapp_access_token", "whatsapp_phone_number_id", "whatsapp_recipients"] },
+  },
 };
 
 type ProviderStatus = { name: string; status: string };
+type TestState = { kind: "success" | "failure"; message: string };
+
+const NOTIFICATION_FIELD_CHANNELS: Partial<
+  Record<keyof SystemConfig, NotificationChannelName>
+> = {
+  email_smtp_host: "email",
+  email_smtp_port: "email",
+  email_username: "email",
+  email_password: "email",
+  email_sender: "email",
+  email_use_tls: "email",
+  email_recipients: "email",
+  telegram_bot_token: "telegram",
+  telegram_chat_ids: "telegram",
+  wechat_webhook_url: "wechat",
+  whatsapp_access_token: "whatsapp",
+  whatsapp_phone_number_id: "whatsapp",
+  whatsapp_recipients: "whatsapp",
+};
 
 const toCsv = (items: string[]) => items.join(", ");
 const fromCsv = (value: string) =>
@@ -93,6 +123,7 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [testingChannel, setTestingChannel] = useState<string | null>(null);
+  const [testStates, setTestStates] = useState<Partial<Record<NotificationChannelName, TestState>>>({});
   const [dataSources, setDataSources] = useState<ProviderStatus[]>([]);
 
   useEffect(() => {
@@ -135,6 +166,14 @@ export default function SettingsPage() {
   ) => {
     setSaved(false);
     setConfig((current) => ({ ...current, [key]: value }));
+    const channel = NOTIFICATION_FIELD_CHANNELS[key];
+    if (channel) {
+      setTestStates((current) => {
+        const next = { ...current };
+        delete next[channel];
+        return next;
+      });
+    }
   };
 
   const saveSettings = async () => {
@@ -154,21 +193,30 @@ export default function SettingsPage() {
   };
 
   const handleTest = async (
-    channel: string,
+    channel: NotificationChannelName,
+    label: string,
     run: () => Promise<NotificationTestResult>
   ) => {
-    setTestingChannel(channel);
+    setTestingChannel(label);
+    setTestStates((current) => ({ ...current, [channel]: undefined }));
     try {
-      await settingsApi.update(config);
+      const updated = await settingsApi.update(config);
+      setConfig({ ...DEFAULT_SETTINGS, ...updated });
       const result = await run();
+      setTestStates((current) => ({
+        ...current,
+        [channel]: { kind: result.ok ? "success" : "failure", message: result.message },
+      }));
       if (result.ok) {
-        toast.success(`${channel} test sent`, { description: result.message });
+        toast.success(`${label} test sent`, { description: result.message });
       } else {
-        toast.error(`${channel} test failed`, { description: result.message });
+        toast.error(`${label} test failed`, { description: result.message });
       }
     } catch (error: unknown) {
-      toast.error(`${channel} test failed`, {
-        description: error instanceof Error ? error.message : String(error),
+      const message = error instanceof Error ? error.message : String(error);
+      setTestStates((current) => ({ ...current, [channel]: { kind: "failure", message } }));
+      toast.error(`${label} test failed`, {
+        description: message,
       });
     } finally {
       setTestingChannel(null);
@@ -402,13 +450,24 @@ export default function SettingsPage() {
               Notifications
             </CardTitle>
             <CardDescription>Configure channels used by analysis, approval, and watchlist events.</CardDescription>
+            <a
+              className="inline-flex items-center gap-1 text-xs text-primary underline underline-offset-4"
+              href="https://github.com/DrEden33773/COMP7705-Agent-Quant/blob/dev/docs/notifications.md"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Full notification setup guide <ExternalLink className="h-3 w-3" />
+            </a>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-3">
               <h4 className="text-sm font-medium flex items-center gap-2">
                 <Mail className="h-4 w-4" /> Email (SMTP)
               </h4>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <NotificationStatus status={config.notification_status.email} testState={testStates.email} pending={testingChannel === "Email"} />
+              <p className="text-xs text-muted-foreground">Required: SMTP host, sender, and recipients. Authentication and app-password requirements vary by provider.</p>
+              <a className="text-xs text-primary underline" href="https://www.rfc-editor.org/info/rfc5321/" target="_blank" rel="noreferrer">SMTP reference</a>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                 <Input placeholder="SMTP Host" value={config.email_smtp_host} onChange={(event) => updateField("email_smtp_host", event.target.value)} />
                 <Input placeholder="Port" type="number" value={config.email_smtp_port} onChange={(event) => updateField("email_smtp_port", Number(event.target.value))} />
                 <Input placeholder="Sender" value={config.email_sender} onChange={(event) => updateField("email_sender", event.target.value)} />
@@ -420,7 +479,7 @@ export default function SettingsPage() {
                 <Switch checked={config.email_use_tls} onCheckedChange={(checked) => updateField("email_use_tls", Boolean(checked))} />
                 <Label className="text-sm">Use TLS</Label>
               </div>
-              <Button variant="outline" size="sm" disabled={testingChannel === "Email"} onClick={() => handleTest("Email", settingsApi.testEmail)}>
+              <Button variant="outline" size="sm" disabled={testingChannel === "Email"} onClick={() => handleTest("email", "Email", settingsApi.testEmail)}>
                 Test Email
               </Button>
             </div>
@@ -429,20 +488,25 @@ export default function SettingsPage() {
               <h4 className="text-sm font-medium flex items-center gap-2">
                 <MessageCircle className="h-4 w-4" /> Telegram
               </h4>
+              <NotificationStatus status={config.notification_status.telegram} testState={testStates.telegram} pending={testingChannel === "Telegram"} />
+              <p className="text-xs text-muted-foreground">Create a bot with BotFather, start a chat or add it to a group, then enter the token and chat IDs.</p>
+              <a className="text-xs text-primary underline" href="https://core.telegram.org/bots/tutorial" target="_blank" rel="noreferrer">Telegram setup guide</a>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <Input placeholder="Bot Token" type="password" value={config.telegram_bot_token} onChange={(event) => updateField("telegram_bot_token", event.target.value)} />
                 <Input placeholder="Chat IDs, comma-separated" value={toCsv(config.telegram_chat_ids)} onChange={(event) => updateField("telegram_chat_ids", fromCsv(event.target.value))} />
               </div>
-              <Button variant="outline" size="sm" disabled={testingChannel === "Telegram"} onClick={() => handleTest("Telegram", settingsApi.testTelegram)}>
+              <Button variant="outline" size="sm" disabled={testingChannel === "Telegram"} onClick={() => handleTest("telegram", "Telegram", settingsApi.testTelegram)}>
                 Test Telegram
               </Button>
             </div>
             <Separator />
             <WebhookInput
               label="Enterprise WeChat"
+              status={config.notification_status.wechat}
+              testState={testStates.wechat}
               value={config.wechat_webhook_url}
               onChange={(value) => updateField("wechat_webhook_url", value)}
-              onTest={() => handleTest("WeChat", settingsApi.testWechat)}
+              onTest={() => handleTest("wechat", "WeChat", settingsApi.testWechat)}
               disabled={testingChannel === "WeChat"}
             />
             <Separator />
@@ -450,12 +514,15 @@ export default function SettingsPage() {
               <h4 className="text-sm font-medium flex items-center gap-2">
                 <MessageCircle className="h-4 w-4" /> WhatsApp Cloud API
               </h4>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <NotificationStatus status={config.notification_status.whatsapp} testState={testStates.whatsapp} pending={testingChannel === "WhatsApp"} />
+              <p className="text-xs text-muted-foreground">Required: Cloud API token, phone number ID, and E.164 recipients. Templates/session rules still apply.</p>
+              <a className="text-xs text-primary underline" href="https://developers.facebook.com/documentation/business-messaging/whatsapp/messages/send-messages" target="_blank" rel="noreferrer">WhatsApp Cloud API guide</a>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                 <Input placeholder="Access Token" type="password" value={config.whatsapp_access_token} onChange={(event) => updateField("whatsapp_access_token", event.target.value)} />
                 <Input placeholder="Phone Number ID" value={config.whatsapp_phone_number_id} onChange={(event) => updateField("whatsapp_phone_number_id", event.target.value)} />
                 <Input placeholder="Recipients, comma-separated" value={toCsv(config.whatsapp_recipients)} onChange={(event) => updateField("whatsapp_recipients", fromCsv(event.target.value))} />
               </div>
-              <Button variant="outline" size="sm" disabled={testingChannel === "WhatsApp"} onClick={() => handleTest("WhatsApp", settingsApi.testWhatsApp)}>
+              <Button variant="outline" size="sm" disabled={testingChannel === "WhatsApp"} onClick={() => handleTest("whatsapp", "WhatsApp", settingsApi.testWhatsApp)}>
                 Test WhatsApp
               </Button>
             </div>
@@ -555,12 +622,16 @@ function WebhookInput({
   onChange,
   onTest,
   disabled,
+  status,
+  testState,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   onTest: () => void;
   disabled?: boolean;
+  status: SystemConfig["notification_status"]["wechat"];
+  testState?: TestState;
 }) {
   return (
     <div className="space-y-3">
@@ -568,10 +639,38 @@ function WebhookInput({
         <MessageCircle className="h-4 w-4" />
         {label}
       </h4>
+      <NotificationStatus status={status} testState={testState} pending={Boolean(disabled)} />
+      <p className="text-xs text-muted-foreground">Add an Enterprise WeChat group bot and paste its webhook URL.</p>
+      <a className="text-xs text-primary underline" href="https://developer.work.weixin.qq.com/document/path/91770" target="_blank" rel="noreferrer">Enterprise WeChat bot guide</a>
       <Input placeholder="Webhook URL" value={value} onChange={(event) => onChange(event.target.value)} />
       <Button variant="outline" size="sm" disabled={disabled} onClick={onTest}>
         Test {label}
       </Button>
+    </div>
+  );
+}
+
+function NotificationStatus({
+  status,
+  testState,
+  pending,
+}: {
+  status: SystemConfig["notification_status"][NotificationChannelName];
+  testState?: TestState;
+  pending: boolean;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs" aria-live="polite">
+      <Badge variant={status.configured ? "secondary" : "destructive"}>
+        {status.configured ? "Configured" : "Incomplete"}
+      </Badge>
+      {!status.configured && <span className="text-muted-foreground">Missing: {status.missing_fields.join(", ")}</span>}
+      {pending && <span>Test pending…</span>}
+      {!pending && testState && (
+        <span className={testState.kind === "success" ? "text-green-700" : "text-destructive"}>
+          Test {testState.kind}: {testState.message}
+        </span>
+      )}
     </div>
   );
 }

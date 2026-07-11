@@ -5,6 +5,7 @@ from .channels import (
     NotificationChannel,
     NotificationManager,
     build_manager,
+    notification_status,
 )
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "NotificationChannel",
     "NotificationManager",
     "build_manager",
+    "notification_status",
 ]

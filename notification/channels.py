@@ -16,6 +16,17 @@ from typing import Any
 
 logger = logging.getLogger("notification.channels")
 
+CHANNEL_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
+    "email": ("email_smtp_host", "email_sender", "email_recipients"),
+    "telegram": ("telegram_bot_token", "telegram_chat_ids"),
+    "wechat": ("wechat_webhook_url",),
+    "whatsapp": (
+        "whatsapp_access_token",
+        "whatsapp_phone_number_id",
+        "whatsapp_recipients",
+    ),
+}
+
 
 @dataclass
 class ChannelResult:
@@ -75,6 +86,23 @@ def _format_text(title: str, message: str, priority: str) -> str:
     return f"{prefix}{title}\n\n{message}" if title else f"{prefix}{message}"
 
 
+def _transport_failure(channel: str, status_code: int | None = None) -> ChannelResult:
+    category = (
+        "provider rejected the request" if status_code else "provider unavailable"
+    )
+    logger.warning(
+        "notification_send_failed channel=%s category=%s status_code=%s",
+        channel,
+        category.replace(" ", "_"),
+        status_code,
+    )
+    return ChannelResult(
+        channel,
+        False,
+        f"{channel.title()} provider unavailable. Check configuration and try again.",
+    )
+
+
 class EmailChannel(NotificationChannel):
     name = "email"
 
@@ -129,8 +157,8 @@ class EmailChannel(NotificationChannel):
             return ChannelResult(
                 self.name, True, f"Email sent to {len(self.recipients)} recipient(s)."
             )
-        except Exception as exc:  # pragma: no cover - depends on external SMTP service
-            return ChannelResult(self.name, False, f"Email send failed: {exc}")
+        except Exception:  # pragma: no cover - external boundary
+            return _transport_failure(self.name)
 
 
 class TelegramChannel(NotificationChannel):
@@ -143,12 +171,6 @@ class TelegramChannel(NotificationChannel):
     def is_configured(self) -> bool:
         return bool(self.bot_token and self.chat_ids)
 
-    def _token_hint(self) -> str:
-        if not self.bot_token:
-            return "missing"
-        prefix = self.bot_token.split(":", 1)[0]
-        return f"{prefix}:***"
-
     async def send(
         self,
         message: str,
@@ -156,11 +178,9 @@ class TelegramChannel(NotificationChannel):
         priority: str = "normal",
     ) -> ChannelResult:
         logger.info(
-            "telegram_send_start configured=%s token_hint=%s chat_count=%s title=%s priority=%s message_chars=%s",
+            "telegram_send_start configured=%s chat_count=%s priority=%s message_chars=%s",
             self.is_configured(),
-            self._token_hint(),
             len(self.chat_ids),
-            title,
             priority,
             len(message),
         )
@@ -180,17 +200,15 @@ class TelegramChannel(NotificationChannel):
             for index, chat_id in enumerate(self.chat_ids, start=1):
                 payload = {"chat_id": chat_id, "text": text}
                 logger.info(
-                    "telegram_send_chat_start index=%s chat_id=%s text_chars=%s",
+                    "telegram_send_chat_start index=%s text_chars=%s",
                     index,
-                    chat_id,
                     len(text),
                 )
                 response_info = await asyncio.to_thread(_post_json, url, payload)
                 body = response_info.get("body", {})
                 logger.info(
-                    "telegram_send_chat_done index=%s chat_id=%s status_code=%s telegram_ok=%s response_keys=%s content_length=%s",
+                    "telegram_send_chat_done index=%s status_code=%s telegram_ok=%s response_keys=%s content_length=%s",
                     index,
-                    chat_id,
                     response_info.get("status_code"),
                     body.get("ok") if isinstance(body, dict) else None,
                     sorted(body.keys()) if isinstance(body, dict) else [],
@@ -205,19 +223,9 @@ class TelegramChannel(NotificationChannel):
             return ChannelResult(
                 self.name, True, f"Telegram sent to {len(self.chat_ids)} chat(s)."
             )
-        except Exception as exc:  # pragma: no cover - depends on external API
+        except Exception as exc:  # pragma: no cover - external boundary
             status_code = getattr(getattr(exc, "response", None), "status_code", None)
-            response_text = getattr(getattr(exc, "response", None), "text", "")
-            logger.exception(
-                "telegram_send_failed status_code=%s response_text=%s token_hint=%s chat_count=%s title=%s priority=%s",
-                status_code,
-                response_text[:500] if response_text else "",
-                self._token_hint(),
-                len(self.chat_ids),
-                title,
-                priority,
-            )
-            return ChannelResult(self.name, False, f"Telegram send failed: {exc}")
+            return _transport_failure(self.name, status_code)
 
 
 class WebhookChannel(NotificationChannel):
@@ -255,8 +263,9 @@ class WebhookChannel(NotificationChannel):
                 self._payload(message, title, priority),
             )
             return ChannelResult(self.name, True, f"{self.name} webhook sent.")
-        except Exception as exc:  # pragma: no cover - depends on external webhook
-            return ChannelResult(self.name, False, f"{self.name} send failed: {exc}")
+        except Exception as exc:  # pragma: no cover - external boundary
+            status_code = getattr(getattr(exc, "response", None), "status_code", None)
+            return _transport_failure(self.name, status_code)
 
 
 class WhatsAppChannel(NotificationChannel):
@@ -302,8 +311,28 @@ class WhatsAppChannel(NotificationChannel):
                 True,
                 f"WhatsApp sent to {len(self.recipients)} recipient(s).",
             )
-        except Exception as exc:  # pragma: no cover - depends on external API
-            return ChannelResult(self.name, False, f"WhatsApp send failed: {exc}")
+        except Exception as exc:  # pragma: no cover - external boundary
+            status_code = getattr(getattr(exc, "response", None), "status_code", None)
+            return _transport_failure(self.name, status_code)
+
+
+def notification_status(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Return channel readiness without exposing configuration values."""
+    statuses: dict[str, dict[str, Any]] = {}
+    for channel, fields in CHANNEL_REQUIRED_FIELDS.items():
+        missing = [
+            field for field in fields if not _configured_value(config.get(field))
+        ]
+        statuses[channel] = {"configured": not missing, "missing_fields": missing}
+    return statuses
+
+
+def _configured_value(value: Any) -> bool:
+    if isinstance(value, list):
+        return bool(_csv(value))
+    if isinstance(value, str):
+        return bool(value.strip())
+    return bool(value)
 
 
 class NotificationManager:

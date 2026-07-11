@@ -453,6 +453,11 @@ export interface SystemEvent {
 }
 
 export type LlmApiKeySource = "settings" | "properties.env" | "missing";
+export type NotificationChannelName = "email" | "telegram" | "wechat" | "whatsapp";
+export type NotificationChannelStatus = {
+  readonly configured: boolean;
+  readonly missing_fields: readonly string[];
+};
 
 export interface SystemConfig {
   llm_api_key: string; llm_base_url: string; llm_model: string;
@@ -470,6 +475,7 @@ export interface SystemConfig {
   llm_api_key_configured?: boolean;
   llm_api_key_source?: LlmApiKeySource;
   llm_api_key_length?: number;
+  notification_status: Record<NotificationChannelName, NotificationChannelStatus>;
 }
 
 export interface BacktestRequest {

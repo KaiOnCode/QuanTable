@@ -1,6 +1,61 @@
 # Progress & Roadmap
 
-Last updated: 2026-07-11 | Branch: `dev`
+Last updated: 2026-07-12 | Branch: `dev`
+
+## Frontend Demo Integration: Phase 6 — Notification Setup & Status ✅
+
+Completed on 2026-07-12 under
+`plans/frontend-demo-integration/frontend-demo-to-real-functionality-plan.md`.
+
+Delivered:
+
+- Added accurate configured/incomplete state and exact missing-field guidance
+  for the four existing Email, Telegram, WeChat, and WhatsApp channels,
+  including partial and whitespace-only configuration handling.
+- Added stable, actionable local test feedback and safe transport-error
+  categories. Notification secrets, tokenized URLs, chat IDs, recipients,
+  webhook URLs, access tokens, and provider response bodies are redacted from
+  API responses and logs.
+- Replaced the Settings notification demo guidance with typed four-channel
+  status, required-field help, official provider links, and truthful pending,
+  success, and failure states. Editing a channel configuration clears only
+  that channel's stale test result.
+- Added `docs/notifications.md` with provider-specific setup and trigger-point
+  guidance, and aligned the API contract with the four implemented channels;
+  the former unimplemented Feishu reference was removed.
+
+Fresh independent final gate evidence:
+
+- `uv run pytest test/test_notification_channels.py
+  test/server/test_notification_settings.py test/test_watchlist_alerts.py -q`
+  passed: `22 passed, 1 warning`; the warning is the existing Starlette/httpx
+  deprecation warning.
+- Strict changed-path and baseline BasedPyright passed with zero diagnostics.
+  Scoped Ruff check/format, frontend TypeScript, ESLint, `git diff --check`,
+  and the no-suppression scan passed. Frontend lint retained 69 documented
+  pre-existing warnings outside the Phase 6 Settings changes.
+- The final escalated `cd frontend && npm run build` passed compilation,
+  TypeScript, page collection, and all 20 Next.js routes.
+- An isolated live FastAPI matrix drove all four configured successes via
+  monkeypatched local transports, all four unconfigured responses,
+  whitespace-only and partial configurations, timeout, HTTP 429, and invalid-
+  recipient-style HTTP 400 failures. No real provider or recipient was
+  contacted, and generated secret markers were absent from API responses and
+  captured logs.
+- Production Chromium QA at 1280, 768, and 375 widths proved all four channel
+  states, official help, pending/success/failure feedback, and stale-success
+  clearing after a configuration edit, with no horizontal overflow, console
+  error, or secret exposure. Two independent visual reviewers returned PASS.
+  A three-hypothesis runtime audit rejected logger/API leakage, whitespace
+  false-positive configuration, and stale per-channel success. Full receipt:
+  `.omo/evidence/frontend-demo-integration/phase-6/phase-gate-final.md`.
+- Official Telegram, SMTP/RFC and provider app-password, Enterprise WeChat,
+  and Meta WhatsApp Cloud documentation links were verified reachable during
+  execution.
+
+Next: begin only Phase 7 Todo 14 (cross-page real acceptance, final runtime
+debugging/review, issue-truth update, and final push) after this Phase 6 commit
+is pushed and `origin/dev` parity is proved.
 
 ## Frontend Demo Integration: Phase 5 — Source-Driven Reports ✅
 

@@ -980,9 +980,16 @@ Partial update supported.
 
 Send test WeChat message.
 
-### `POST /api/settings/test-feishu`
+### `POST /api/settings/test-whatsapp`
 
-Send test Feishu message.
+Each test route returns `{ "channel": string, "ok": boolean, "message": string }`.
+When configuration is incomplete, `message` lists missing field names only.
+Transport failures return stable provider/configuration guidance without raw
+URLs, response bodies, tokens, recipients, or provider exceptions.
+
+`GET` and `PUT /api/settings` include `notification_status` for `email`,
+`telegram`, `wechat`, and `whatsapp`, each with `configured` and
+`missing_fields`. Secret fields remain masked.
 
 ---
 
