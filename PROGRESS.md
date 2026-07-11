@@ -2,6 +2,58 @@
 
 Last updated: 2026-07-11 | Branch: `dev`
 
+## Frontend Demo Integration: Phase 5 — Source-Driven Reports ✅
+
+Completed on 2026-07-11 under
+`plans/frontend-demo-integration/frontend-demo-to-real-functionality-plan.md`.
+
+Delivered:
+
+- Added validated Stock and Sector report sources over completed persisted
+  analysis and Scanner runs, with explicit provenance, selected-section
+  allowlisting, data-gap reporting, and no analysis, LLM, or provider reruns.
+- Added durable SQLite report jobs, restart recovery, bounded background
+  rendering, CJK preflight, atomic PDF publication, safe basename-only artifact
+  resolution, sanitized downloads, and stable failure cleanup.
+- Replaced the Reports demo with typed Stock generation, the required Scanner
+  then persisted Sector-report flow, durable status/history polling, completed-
+  only PDF downloads, and actionable missing-source, empty, and failure states.
+
+Fresh independent final gate evidence:
+
+- `uv run pytest test/reporting test/server/test_reports_api.py -q` passed:
+  `18 passed, 1 warning`; separately run Scanner regressions passed `24` tests
+  and analysis run-state/memory regressions passed `4` tests. The warning is
+  the existing Starlette/httpx deprecation warning.
+- `uv run basedpyright --baselinefile bugs/basedpyright/baseline.json` passed
+  with zero diagnostics. Scoped Ruff check/format, frontend TypeScript,
+  ESLint quiet, and `git diff --check` passed; the authoritative BasedPyright
+  baseline was restored after the tool pruned obsolete entries.
+- The final default `cd frontend && npm run build` passed compilation,
+  TypeScript, page collection, and all 20/20 Next routes.
+- Isolated seeded FastAPI and production Chromium QA created, polled, reloaded,
+  downloaded, and inspected a source-driven Stock PDF; proved the Sector
+  request order `POST /api/agent/scanner` then `POST /api/reports/sector`;
+  exercised missing analysis, zero-match/compilation, renderer, history 500,
+  pending 409, missing 404, and restart-recovery paths. The downloaded PDF had
+  valid PDF magic, one page, safe filename, selected Decision/Risk content,
+  and no deselected sections.
+- Thirteen fresh captures covered Reports at 1280, 768, and 375 widths,
+  including the tablet table's rightmost Status/Updated/Download columns and
+  responsive mobile history cards. Two independent visual reviewers returned
+  PASS/HIGH. A three-hypothesis runtime audit rejected unsafe or pending
+  downloads, non-durable job status, and Sector Scanner bypass/ticker
+  fabrication. Full receipt:
+  `.omo/evidence/frontend-demo-integration/phase-5/phase-gate-final.md`.
+
+Existing out-of-scope observations retained: the repository-wide Ruff probe
+finds only `.omo` QA-harness E402/format findings, and the global Header still
+contains its pre-existing fixed `Market Open` placeholder.
+
+Next: begin only Phase 6 Todo 13 (safe configured-state and guidance for the
+four existing notification channels) after this Phase 5 commit is pushed and
+`origin/dev` parity is proved.
+
 ## Frontend Demo Integration: Phase 4 — Decision-Target Risk Analytics ✅
 
 Completed on 2026-07-11 under

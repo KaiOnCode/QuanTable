@@ -902,13 +902,51 @@ rejected with `422`.
 
 ### `POST /api/reports/stock`
 
+Creates a bounded background PDF job from one completed analysis snapshot. The
+server validates that `ticker`, `strategy_id`, and optional `session_id` match
+the persisted snapshot. Supported sections are `decision`, `market`, `news`,
+`fundamentals`, and `risk`.
+
+```json
+{
+  "ticker": "AAPL",
+  "strategy_id": "strategy-id",
+  "session_id": "completed-analysis-session-id",
+  "sections": ["decision", "market", "risk"]
+}
+```
+
 ### `POST /api/reports/sector`
+
+Creates a report from an already completed persisted Scanner run. Tickers are
+derived exclusively from the run; the request never accepts a ticker list.
+Supported sections are `overview`, `constituents`, `decision`, `data_gaps`, and
+`sources`.
+
+```json
+{
+  "scan_run_id": "completed-scan-run-id",
+  "sections": ["overview", "constituents", "data_gaps", "sources"]
+}
+```
 
 ### `GET /api/reports`
 
+Returns `{ "items": ReportJob[], "total": number }` in newest-first order.
+Jobs expose source IDs, parameters, safe status/error metadata, and timestamps;
+they never expose an artifact path or basename.
+
+### `GET /api/reports/{report_id}`
+
+Returns one persisted job. Status is `pending`, `running`, `completed`, or
+`failed`. Clients poll only unfinished jobs and show downloads only for
+`completed` jobs.
+
 ### `GET /api/reports/{report_id}/download`
 
-Returns PDF binary (`application/pdf`).
+Returns PDF binary (`application/pdf`) with a metadata-derived sanitized
+filename. Missing jobs/artifacts return `404`; unfinished or failed jobs return
+`409`. File paths are never accepted from clients.
 
 ---
 

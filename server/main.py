@@ -124,6 +124,7 @@ from server.routes import (  # noqa: E402
     memory,
     monitor,
     risk,
+    reports,
     scanner,
     settings,
     strategies,
@@ -141,5 +142,6 @@ app.include_router(watchlist.router, prefix="/api")
 app.include_router(monitor.router, prefix="/api")
 app.include_router(insights.router, prefix="/api")
 app.include_router(risk.router, prefix="/api")
+app.include_router(reports.router, prefix="/api")
 app.include_router(scanner.router, prefix="/api")
 app.include_router(agent.router, prefix="/api")

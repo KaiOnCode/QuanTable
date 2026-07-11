@@ -22,6 +22,7 @@ DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 type BacktestJobStatus = Literal["pending", "running", "completed", "failed"]
 type ScanRunStatus = Literal["running", "completed", "failed"]
+type ReportJobStatus = Literal["pending", "running", "completed", "failed"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +49,24 @@ class ScanRunRecord:
     mode: str
     strategy_id: str | None
     created_at: str
+    completed_at: str | None
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class ReportJobRecord:
+    id: str
+    report_type: str
+    title: str
+    tickers_json: str
+    source_type: str
+    source_ids_json: str
+    parameters_json: str
+    status: ReportJobStatus
+    artifact_name: str | None
+    error: str | None
+    created_at: str
+    started_at: str | None
     completed_at: str | None
     updated_at: str
 
@@ -1226,6 +1245,137 @@ class ContextStore:
         )
         db.commit()
 
+    def create_report_job(
+        self,
+        job_id: str,
+        report_type: str,
+        title: str,
+        tickers_json: str,
+        source_type: str,
+        source_ids_json: str,
+        parameters_json: str,
+    ) -> ReportJobRecord:
+        self._init_report_jobs_db()
+        now = _now()
+        db = self._system_db()
+        db.execute(
+            """INSERT INTO report_jobs
+               (id, report_type, title, tickers_json, source_type, source_ids_json,
+                parameters_json, status, artifact_name, error, created_at,
+                started_at, completed_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, ?, NULL, NULL, ?)""",
+            (
+                job_id,
+                report_type,
+                title,
+                tickers_json,
+                source_type,
+                source_ids_json,
+                parameters_json,
+                now,
+                now,
+            ),
+        )
+        db.commit()
+        job = self.get_report_job(job_id)
+        if job is None:
+            raise RuntimeError("report job was not persisted")
+        return job
+
+    def get_report_job(self, job_id: str) -> ReportJobRecord | None:
+        self._init_report_jobs_db()
+        row = (
+            self._system_db()
+            .execute("SELECT * FROM report_jobs WHERE id = ?", (job_id,))
+            .fetchone()
+        )
+        return _report_job_from_row(row) if row is not None else None
+
+    def list_report_jobs(self, limit: int = 50) -> list[ReportJobRecord]:
+        self._init_report_jobs_db()
+        rows = (
+            self._system_db()
+            .execute(
+                "SELECT * FROM report_jobs ORDER BY created_at DESC LIMIT ?", (limit,)
+            )
+            .fetchall()
+        )
+        return [_report_job_from_row(row) for row in rows]
+
+    def mark_report_job_running(self, job_id: str) -> bool:
+        self._init_report_jobs_db()
+        now = _now()
+        cursor = self._system_db().execute(
+            """UPDATE report_jobs SET status='running', started_at=?, updated_at=?
+               WHERE id=? AND status='pending'""",
+            (now, now, job_id),
+        )
+        self._system_db().commit()
+        return cursor.rowcount == 1
+
+    def complete_report_job(self, job_id: str, artifact_name: str) -> bool:
+        self._init_report_jobs_db()
+        now = _now()
+        cursor = self._system_db().execute(
+            """UPDATE report_jobs SET status='completed', artifact_name=?, error=NULL,
+               completed_at=?, updated_at=? WHERE id=? AND status='running'""",
+            (artifact_name, now, now, job_id),
+        )
+        self._system_db().commit()
+        return cursor.rowcount == 1
+
+    def fail_report_job(self, job_id: str, error: str) -> bool:
+        self._init_report_jobs_db()
+        now = _now()
+        cursor = self._system_db().execute(
+            """UPDATE report_jobs SET status='failed', artifact_name=NULL, error=?,
+               completed_at=?, updated_at=?
+               WHERE id=? AND status IN ('pending', 'running')""",
+            (error, now, now, job_id),
+        )
+        self._system_db().commit()
+        return cursor.rowcount == 1
+
+    def recover_interrupted_report_jobs(self) -> int:
+        self._init_report_jobs_db()
+        now = _now()
+        cursor = self._system_db().execute(
+            """UPDATE report_jobs SET status='failed', artifact_name=NULL,
+               error='Report interrupted by server restart', completed_at=?, updated_at=?
+               WHERE status IN ('pending', 'running')""",
+            (now, now),
+        )
+        self._system_db().commit()
+        return cursor.rowcount
+
+    def _init_report_jobs_db(self) -> None:
+        db = self._system_db()
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS report_jobs (
+                id TEXT PRIMARY KEY,
+                report_type TEXT NOT NULL CHECK (report_type IN ('stock', 'sector')),
+                title TEXT NOT NULL,
+                tickers_json TEXT NOT NULL,
+                source_type TEXT NOT NULL,
+                source_ids_json TEXT NOT NULL,
+                parameters_json TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed')),
+                artifact_name TEXT,
+                error TEXT,
+                created_at TEXT NOT NULL,
+                started_at TEXT,
+                completed_at TEXT,
+                updated_at TEXT NOT NULL
+            )"""
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_report_jobs_created_at ON report_jobs(created_at DESC)"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_report_jobs_status ON report_jobs(status)"
+        )
+        db.commit()
+
     # ── Storage management ──────────────────────────────────
 
     def _get_conn(self, db_name: str) -> sqlite3.Connection:
@@ -1330,6 +1480,37 @@ def _scan_run_from_row(row: sqlite3.Row) -> ScanRunRecord:
         strategy_id=str(row["strategy_id"]) if row["strategy_id"] else None,
         created_at=str(row["created_at"]),
         completed_at=str(row["completed_at"]) if row["completed_at"] else None,
+        updated_at=str(row["updated_at"]),
+    )
+
+
+def _report_job_from_row(row: sqlite3.Row) -> ReportJobRecord:
+    status = str(row["status"])
+    match status:
+        case "pending":
+            normalized_status: ReportJobStatus = "pending"
+        case "running":
+            normalized_status = "running"
+        case "completed":
+            normalized_status = "completed"
+        case "failed":
+            normalized_status = "failed"
+        case _:
+            raise RuntimeError("invalid persisted report job status")
+    return ReportJobRecord(
+        id=str(row["id"]),
+        report_type=str(row["report_type"]),
+        title=str(row["title"]),
+        tickers_json=str(row["tickers_json"]),
+        source_type=str(row["source_type"]),
+        source_ids_json=str(row["source_ids_json"]),
+        parameters_json=str(row["parameters_json"]),
+        status=normalized_status,
+        artifact_name=str(row["artifact_name"]) if row["artifact_name"] else None,
+        error=str(row["error"]) if row["error"] else None,
+        created_at=str(row["created_at"]),
+        started_at=str(row["started_at"]) if row["started_at"] else None,
+        completed_at=(str(row["completed_at"]) if row["completed_at"] else None),
         updated_at=str(row["updated_at"]),
     )
 

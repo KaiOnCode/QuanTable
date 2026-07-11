@@ -1,22 +1,29 @@
-import { api } from "./client";
-import type { Report } from "@/lib/types/models";
-
-const BASE_API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+import { api, apiUrl } from "./client";
+import type {
+  ReportJob,
+  ReportListResponse,
+  SectorReportRequest,
+  StockReportRequest,
+} from "@/lib/types/models";
 
 export const reportsApi = {
-  createStock(ticker: string, sections?: string[]): Promise<Report> {
-    return api.post("/reports/stock", { ticker, sections });
+  createStock(request: StockReportRequest): Promise<ReportJob> {
+    return api.post("/reports/stock", request);
   },
 
-  createSector(description: string): Promise<Report> {
-    return api.post("/reports/sector", { description });
+  createSector(request: SectorReportRequest): Promise<ReportJob> {
+    return api.post("/reports/sector", request);
   },
 
-  list(): Promise<Report[]> {
+  list(): Promise<ReportListResponse> {
     return api.get("/reports");
   },
 
+  get(reportId: string): Promise<ReportJob> {
+    return api.get(`/reports/${reportId}`);
+  },
+
   getDownloadUrl(reportId: string): string {
-    return `${BASE_API}/reports/${reportId}/download`;
+    return apiUrl(`/reports/${reportId}/download`);
   },
 };

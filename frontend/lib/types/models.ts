@@ -408,11 +408,43 @@ export interface Watchlist {
   notes: Record<string, string>; created_at: string; updated_at: string;
 }
 
-export interface Report {
-  id: string; type: "stock_deep_dive" | "sector_analysis";
-  title: string; tickers: string[]; content_path: string;
-  generated_at: string; parameters: Record<string, unknown>;
+export type ReportType = "stock" | "sector";
+export type ReportStatus = "pending" | "running" | "completed" | "failed";
+export type StockReportSection = "decision" | "market" | "news" | "fundamentals" | "risk";
+export type SectorReportSection = "overview" | "constituents" | "decision" | "data_gaps" | "sources";
+
+export interface ReportJob {
+  readonly id: string;
+  readonly report_type: ReportType;
+  readonly title: string;
+  readonly tickers: readonly string[];
+  readonly source_type: string;
+  readonly source_ids: readonly string[];
+  readonly parameters: Readonly<Record<string, object>>;
+  readonly status: ReportStatus;
+  readonly error: string | null;
+  readonly created_at: string;
+  readonly started_at: string | null;
+  readonly completed_at: string | null;
+  readonly updated_at: string;
 }
+
+export type StockReportRequest = {
+  readonly ticker: string;
+  readonly strategy_id: string;
+  readonly session_id?: string;
+  readonly sections: readonly StockReportSection[];
+};
+
+export type SectorReportRequest = {
+  readonly scan_run_id: string;
+  readonly sections: readonly SectorReportSection[];
+};
+
+export type ReportListResponse = {
+  readonly items: readonly ReportJob[];
+  readonly total: number;
+};
 
 export interface SystemEvent {
   id: string; session_id: string; strategy_id: string | null;

@@ -224,6 +224,7 @@ properties.env
 
 # Runtime data
 data/history/
+data/generated-reports/
 data/*.db
 data/*.db-journal
 data/*.db-shm
