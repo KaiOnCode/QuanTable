@@ -1,28 +1,19 @@
 import { api } from "./client";
-import type { VarResponse, StressTestRequest } from "@/lib/types/models";
+import type {
+  RiskOverview,
+  StressResult,
+  StressTestRequest,
+} from "@/lib/types/models";
 
 export const riskApi = {
-  getVar(
-    strategyId: string,
-    confidence = 0.95
-  ): Promise<VarResponse> {
-    return api.get(
-      `/risk/${strategyId}/var?confidence=${confidence}`
-    );
+  overview(strategyId: string, lookbackDays = 252): Promise<RiskOverview> {
+    return api.get(`/risk/${strategyId}/overview?lookback_days=${lookbackDays}`);
   },
 
-  stressTest(
+  stress(
     strategyId: string,
     data: StressTestRequest
-  ): Promise<unknown> {
+  ): Promise<StressResult> {
     return api.post(`/risk/${strategyId}/stress`, data);
-  },
-
-  getCorrelation(strategyId: string): Promise<unknown> {
-    return api.get(`/risk/${strategyId}/correlation`);
-  },
-
-  getConcentration(strategyId: string): Promise<unknown> {
-    return api.get(`/risk/${strategyId}/concentration`);
   },
 };

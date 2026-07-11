@@ -865,36 +865,36 @@ persisted without chain-of-thought.
 
 ## 15. Risk Analytics
 
-### `GET /api/risk/{strategy_id}/var`
+Risk is a deterministic SHARED domain. It reads the latest persisted decision
+target per ticker and cached market history. It does not represent executed or
+live holdings, invoke an LLM, normalize exposure above 100%, or fabricate equal
+weights.
 
-**Query params:** `?confidence=0.95`
+### `GET /api/risk/{strategy_id}/overview?lookback_days=252`
 
-**Response:**
-```json
-{
-  "var_95": -0.023,
-  "cvar_95": -0.031,
-  "var_99": -0.045,
-  "method": "historical",
-  "lookback_days": 252
-}
-```
+Returns one coherent snapshot with `source="decision_target"`, decision
+IDs/timestamps, decimal weights, cash, market `as_of`, daily portfolio returns,
+cumulative and drawdown curves, historical VaR/CVaR, correlation, and
+ticker/sector concentration. `lookback_days` must be 60..252. Tail metrics keep
+their negative decimal sign; for example `-0.023` means `-2.3%`.
+
+`status` is `complete`, `partial` for insufficient common history,
+`unavailable` for no/non-zero targets, or `invalid` for an out-of-range target
+or total exposure above 100%. Unavailable fields are `null` or empty, never
+zero-valued sample data. Missing strategies return `404`.
 
 ### `POST /api/risk/{strategy_id}/stress`
 
 **Request:**
 ```json
-{
-  "scenario": "custom",
-  "market_shock_pct": -10.0,
-  "vix_spike": 40.0,
-  "rate_change_bps": 100
-}
+{ "uniform_market_shock": -0.1, "lookback_days": 252 }
 ```
 
-### `GET /api/risk/{strategy_id}/correlation`
-
-### `GET /api/risk/{strategy_id}/concentration`
+Both request and response use decimal returns. Modeled impact is
+`uniform_market_shock * gross_exposure`, labeled with the
+`uniform_market_shock` assumption. The actual worst day is returned from the
+overview series when available. VIX/rate factor inputs are unsupported and
+rejected with `422`.
 
 ---
 

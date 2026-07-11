@@ -530,15 +530,95 @@ export interface BacktestJobResponse {
   updated_at: string;
 }
 
-export interface VarResponse {
-  var_95: number; cvar_95: number; var_99: number;
-  method: string; lookback_days: number;
-}
+export type RiskStatus = "unavailable" | "invalid" | "partial" | "complete";
 
-export interface StressTestRequest {
-  scenario?: string; market_shock_pct?: number;
-  vix_spike?: number; rate_change_bps?: number;
-}
+export type DecisionTarget = {
+  readonly decision_id: string;
+  readonly ticker: string;
+  readonly target_position_pct: number;
+  readonly weight: number;
+  readonly created_at: string;
+};
+
+export type DecisionTargetExposure = {
+  readonly status: RiskStatus;
+  readonly source: "decision_target";
+  readonly strategy_id: string;
+  readonly as_of: string | null;
+  readonly decision_ids: readonly string[];
+  readonly decisions: readonly DecisionTarget[];
+  readonly weights: Readonly<Record<string, number>>;
+  readonly cash_weight: number | null;
+  readonly gross_exposure: number | null;
+  readonly warnings: readonly string[];
+};
+
+export type DatedReturn = {
+  readonly date: string;
+  readonly value: number;
+};
+
+export type CorrelationResult = {
+  readonly status: RiskStatus;
+  readonly labels: readonly string[];
+  readonly matrix: readonly (readonly (number | null)[])[];
+  readonly warnings: readonly string[];
+};
+
+export type ConcentrationResult = {
+  readonly weights: Readonly<Record<string, number>>;
+  readonly herfindahl_index: number;
+  readonly largest_label: string | null;
+  readonly largest_weight: number;
+};
+
+export type RiskOverview = {
+  readonly status: RiskStatus;
+  readonly source: "decision_target";
+  readonly strategy_id: string;
+  readonly as_of: string | null;
+  readonly return_unit: "decimal";
+  readonly exposure: DecisionTargetExposure;
+  readonly observation_count: number;
+  readonly common_dates: readonly string[];
+  readonly portfolio_returns: readonly number[];
+  readonly cumulative_curve: readonly DatedReturn[];
+  readonly drawdown_curve: readonly DatedReturn[];
+  readonly var_95: number | null;
+  readonly var_99: number | null;
+  readonly cvar_95: number | null;
+  readonly max_drawdown: number | null;
+  readonly correlation: CorrelationResult;
+  readonly ticker_concentration: ConcentrationResult;
+  readonly sector_concentration: ConcentrationResult;
+  readonly warnings: readonly string[];
+};
+
+export type StressTestRequest = {
+  readonly uniform_market_shock: number;
+  readonly lookback_days?: number;
+};
+
+export type StressResult = {
+  readonly status: RiskStatus;
+  readonly source: "decision_target";
+  readonly strategy_id: string;
+  readonly as_of: string | null;
+  readonly return_unit: "decimal";
+  readonly decision_ids: readonly string[];
+  readonly historical_worst_day: {
+    readonly date: string | null;
+    readonly impact: number | null;
+    readonly source: "historical_portfolio_returns";
+  };
+  readonly uniform_market_shock: {
+    readonly shock: number;
+    readonly gross_exposure: number | null;
+    readonly impact: number | null;
+    readonly assumption: "uniform_market_shock";
+  };
+  readonly warnings: readonly string[];
+};
 
 export interface CreateSkillRequest {
   name: string; category: SkillCategory; description: string;

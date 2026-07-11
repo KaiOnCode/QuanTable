@@ -2,6 +2,53 @@
 
 Last updated: 2026-07-11 | Branch: `dev`
 
+## Frontend Demo Integration: Phase 4 — Decision-Target Risk Analytics ✅
+
+Completed on 2026-07-11 under
+`plans/frontend-demo-integration/frontend-demo-to-real-functionality-plan.md`.
+
+Delivered:
+
+- Added deterministic Risk analytics over each strategy's latest persisted
+  decision targets and cached market history. The response identifies
+  `source="decision_target"`, preserves decision IDs/timestamps and residual
+  cash, rejects exposure above 100% without normalization, and never treats
+  targets as executed holdings.
+- Added typed overview and uniform-market-shock APIs with decimal return units,
+  historical VaR95/VaR99/CVaR95, drawdown, correlation, ticker/sector
+  concentration, actual worst-day stress, and distinct complete, partial,
+  unavailable, and invalid states.
+- Replaced the Risk demo with a real strategy selector, strategy-keyed server
+  state, accessible return/drawdown charts, correlation and exposure tables,
+  concentration results, explainable stress execution, and truthful error and
+  insufficient-data states without stale cross-strategy results.
+
+Fresh independent final gate evidence:
+
+- `uv run pytest test/risk test/server/test_risk_api.py test/server/test_strategies_lifecycle.py test/server/test_scanner_api.py test/server/test_backtest_api.py test/dataflow/test_data_service.py -q`
+  passed: `54 passed, 1 warning in 3.84s`; the warning is the existing
+  Starlette/httpx deprecation warning.
+- `uv run basedpyright --baselinefile bugs/basedpyright/baseline.json` passed
+  with zero diagnostics. Scoped `uv run ruff check` and
+  `uv run ruff format --check`, `cd frontend && npx tsc --noEmit`,
+  `cd frontend && npm run lint -- --quiet`, and `git diff --check` passed.
+- The required escalated `cd frontend && npm run build` passed against the
+  final Risk source: compilation, TypeScript, page collection, and all 20/20
+  Next routes completed.
+- A seeded isolated FastAPI service and production Chromium QA proved distinct
+  Alpha/Beta targets and metrics, a real `-10%` stress request rendering
+  `-8.50%` for 85% gross exposure, and separate unavailable, invalid, partial,
+  and deliberate HTTP 500 states. Fourteen fresh captures covered the full
+  Risk surface at 1280, 768, and 375 widths with zero horizontal overflow;
+  two independent visual reviewers returned PASS/HIGH. A three-hypothesis
+  runtime audit refuted cross-strategy stale data, decimal conversion errors,
+  and provider/agent/equal-weight fallback. Full receipt:
+  `.omo/evidence/frontend-demo-integration/phase-4/phase-gate-final.md`.
+
+Next: begin only Phase 5 Todos 11–13 (validated report sources, durable report
+jobs and safe artifacts, real report API/page) after this Phase 4 commit is
+pushed and `origin/dev` parity is proved.
+
 ## Frontend Demo Integration: Phase 3 — Tracked-Universe Scanner ✅
 
 Completed on 2026-07-11 under
