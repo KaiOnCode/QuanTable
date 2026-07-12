@@ -29,6 +29,7 @@ from agent.backtest_jobs import (
     BacktestRequest,
     default_backtest_job_service,
 )
+from agent.backtest_policy import StrategyEligibilityError
 from agent.scanner_adapter import ScannerCompilationError, ScannerCompilationService
 from server.routes.scanner import ScanRunError, ScanRunResponse, _response_from_record
 from storage import get_store
@@ -304,12 +305,13 @@ async def delete_session(session_id: str):
     response_model=BacktestJobResponse,
 )
 async def create_backtest(request: BacktestRequest) -> BacktestJobResponse:
-    if get_store().get_strategy(request.strategy_id) is None:
-        raise HTTPException(404, f"Strategy {request.strategy_id} not found")
     service = get_backtest_job_service()
-    if not service.can_start:
-        raise HTTPException(422, "LLM is not configured for backtests")
-    return service.create(request)
+    try:
+        return service.create(request)
+    except StrategyEligibilityError as exc:
+        raise HTTPException(
+            exc.http_status, detail={"code": exc.code, "message": exc.message}
+        ) from exc
 
 
 @router.get("/agent/backtest/{backtest_id}", response_model=BacktestJobResponse)

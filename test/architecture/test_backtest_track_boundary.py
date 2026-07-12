@@ -55,3 +55,29 @@ def test_shared_server_main_does_not_import_active_route_or_agent_code() -> None
         for module in imported_modules
         if module == "agent" or module.startswith("agent.")
     }
+
+
+def test_shared_strategies_route_does_not_import_active_or_legacy_code() -> None:
+    # Given: the SHARED strategy configuration route.
+    source = Path("server/routes/strategies.py").read_text(encoding="utf-8")
+
+    # When: direct imports are inspected at the track boundary.
+    imported_modules = {
+        alias.name
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    } | {
+        node.module or ""
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.ImportFrom)
+    }
+
+    # Then: SHARED strategy configuration cannot load ACTIVE or LEGACY agents.
+    forbidden = ("agent", "quick_ask")
+    assert not {
+        module
+        for module in imported_modules
+        if module == "agent"
+        or module.startswith(tuple(f"{name}." for name in forbidden))
+    }, "SHARED strategies route must not import ACTIVE/LEGACY agent code"

@@ -88,6 +88,16 @@ def test_backtest_data_service_hides_future_sentinel_from_all_scoped_reads(
     assert indicators["as_of"] == "2026-01-03"
 
 
+def test_characterizes_current_early_sma_as_shortened_window(tmp_path) -> None:
+    store = MarketDataStore(str(tmp_path / "market.db"))
+    _seed_prices(store, "AAPL", [("2026-01-02", 100.0), ("2026-01-03", 110.0)])
+    service = BacktestDataService(as_of="2026-01-03", market_store=store)
+
+    indicators = service.get_indicators("AAPL")
+
+    assert indicators["ma"] == {"sma20": 105.0, "sma50": 105.0}
+
+
 def test_backtest_data_service_fails_when_history_is_not_available(tmp_path) -> None:
     # Given: only a future price exists for the requested ticker.
     store = MarketDataStore(str(tmp_path / "market.db"))

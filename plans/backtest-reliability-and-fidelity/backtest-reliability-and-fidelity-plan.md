@@ -331,7 +331,7 @@ Phase 内仅并行互不写同一 owner 的 research/test lanes；`agent/backtes
 
 ## 6. Todos
 
-- [ ] 1. 固化 current-behavior characterization 与诊断 evidence
+- [x] 1. 固化 current-behavior characterization 与诊断 evidence
 
   **问题分析：** 当前测试没有固定现状 `61/13/3` decision count、Nth-decision failure、strategy config 未消费、same-bar fill、runtime timestamp、initial-cost denominator、fill-based win rate 与 cache-dependent warm-up。Phase 1 只保存可独立通过的现状 characterization/诊断证据；目标行为的 RED 由后续 owning todo 现场新增并立即最小 GREEN，避免跨 phase 长期红灯或 xfail。
 
@@ -351,7 +351,7 @@ Phase 内仅并行互不写同一 owner 的 research/test lanes；`agent/backtes
 
   **Commit：** N；与 Todo 2 一起提交。
 
-- [ ] 2. 冻结 typed Strategy / Policy / Run / Result contract
+- [x] 2. 冻结 typed Strategy / Policy / Run / Result contract
 
   **问题分析：** Strategy 存储字段很多，但 backtest 没有“可执行策略”概念；result 也没有 run provenance、decision/order counts、warnings 或 mode。若先修 loop 再定义 contract，会继续把随机 Agent 输出当策略。
 

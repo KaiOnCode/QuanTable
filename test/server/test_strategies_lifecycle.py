@@ -87,6 +87,238 @@ def test_create_strategy_is_immediately_listed(
     assert listed_response.json() == {"items": [created], "total": 1, "page": 1}
 
 
+def test_strategy_boundary_rejects_unknown_create_and_update_fields(
+    strategy_api: tuple[TestClient, ContextStore],
+) -> None:
+    client, store = strategy_api
+
+    create_response = client.post(
+        "/api/strategies",
+        json={"name": "Secret Probe", "tickers": ["AAPL"], "api_key": "secret"},
+    )
+
+    assert create_response.status_code == 422
+    assert store.list_strategies() == []
+
+    created = _create_strategy(client, {"name": "Typed Strategy", "tickers": ["AAPL"]})
+    update_response = client.put(
+        f"/api/strategies/{created['id']}",
+        json={"webhook_url": "https://secret.example"},
+    )
+
+    assert update_response.status_code == 422
+    assert client.get(f"/api/strategies/{created['id']}").json() == created
+
+
+def test_strategy_boundary_does_not_echo_secret_unknown_input(
+    strategy_api: tuple[TestClient, ContextStore],
+) -> None:
+    client, _ = strategy_api
+
+    response = client.post(
+        "/api/strategies",
+        json={"name": "Secret Probe", "api_key": "SECRET_VALUE"},
+    )
+
+    assert response.status_code == 422
+    assert "SECRET_VALUE" not in response.text
+
+
+@pytest.mark.parametrize(
+    ("policy_fields", "code", "message"),
+    [
+        (
+            {"quant_strategy_name": "unknown", "quant_params": {}},
+            "strategy_not_backtestable",
+            "Quant Strategy requires a supported executable definition",
+        ),
+        (
+            {"quant_strategy_name": "momentum", "quant_params": {}},
+            "strategy_config_invalid",
+            "target_position_pct must be a finite percent",
+        ),
+        (
+            {
+                "quant_strategy_name": "momentum",
+                "quant_params": {
+                    "lookback_bars": 1,
+                    "entry_threshold": 0.05,
+                    "exit_threshold": -0.02,
+                    "target_position_pct": 40,
+                },
+            },
+            "strategy_config_invalid",
+            "Quant Strategy parameters are invalid",
+        ),
+        (
+            {
+                "quant_strategy_name": "sma_crossover",
+                "quant_params": {
+                    "fast_window": 80,
+                    "slow_window": 20,
+                    "target_position_pct": 40,
+                },
+            },
+            "strategy_config_invalid",
+            "Quant Strategy parameters are invalid",
+        ),
+        (
+            {
+                "quant_strategy_name": "sma_crossover",
+                "quant_params": {
+                    "fast_window": 10,
+                    "slow_window": 20,
+                    "target_position_pct": 60,
+                },
+            },
+            "strategy_config_invalid",
+            "target_position_pct must not exceed Strategy max_position_pct",
+        ),
+        (
+            {
+                "quant_strategy_name": "sma_crossover",
+                "quant_params": {
+                    "fast_window": 10,
+                    "slow_window": 20,
+                    "target_position_pct": 999,
+                },
+            },
+            "strategy_config_invalid",
+            "Quant Strategy parameters are invalid",
+        ),
+    ],
+)
+def test_invalid_quant_create_is_rejected_without_persistence(
+    strategy_api: tuple[TestClient, ContextStore],
+    policy_fields: dict[str, JsonValue],
+    code: str,
+    message: str,
+) -> None:
+    client, store = strategy_api
+
+    response = client.post(
+        "/api/strategies",
+        json={
+            "name": "Invalid Quant",
+            "type": "quant",
+            "max_position_pct": 50,
+            **policy_fields,
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == {
+        "code": code,
+        "message": message,
+    }
+    assert store.list_strategies() == []
+
+
+def test_invalid_quant_partial_update_is_rejected_without_mutation(
+    strategy_api: tuple[TestClient, ContextStore],
+) -> None:
+    client, store = strategy_api
+    created = _create_strategy(
+        client,
+        {
+            "name": "Valid SMA",
+            "type": "quant",
+            "max_position_pct": 50,
+            "quant_strategy_name": "sma_crossover",
+            "quant_params": {
+                "fast_window": 10,
+                "slow_window": 50,
+                "target_position_pct": 40,
+            },
+        },
+    )
+    strategy_id = TypeAdapter(str).validate_python(created["id"])
+
+    response = client.put(
+        f"/api/strategies/{strategy_id}",
+        json={
+            "quant_params": {
+                "fast_window": 80,
+                "slow_window": 20,
+                "target_position_pct": 999,
+            }
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == {
+        "code": "strategy_config_invalid",
+        "message": "Quant Strategy parameters are invalid",
+    }
+    assert store.get_strategy(strategy_id) == created
+
+
+@pytest.mark.parametrize("strategy_type", ["agent", "hitl"])
+def test_non_quant_create_preserves_existing_semantics(
+    strategy_api: tuple[TestClient, ContextStore], strategy_type: str
+) -> None:
+    client, _ = strategy_api
+
+    response = client.post(
+        "/api/strategies",
+        json={"name": f"Valid {strategy_type}", "type": strategy_type},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["type"] == strategy_type
+
+
+@pytest.mark.parametrize(
+    ("rule", "params"),
+    [
+        (
+            "momentum",
+            {
+                "lookback_bars": 20,
+                "entry_threshold": 0.05,
+                "exit_threshold": -0.02,
+                "target_position_pct": 40,
+            },
+        ),
+        (
+            "sma_crossover",
+            {
+                "fast_window": 10,
+                "slow_window": 50,
+                "target_position_pct": 40,
+            },
+        ),
+    ],
+)
+def test_valid_quant_policy_create_and_partial_update_round_trip(
+    strategy_api: tuple[TestClient, ContextStore],
+    rule: str,
+    params: dict[str, JsonValue],
+) -> None:
+    client, store = strategy_api
+
+    created = client.post(
+        "/api/strategies",
+        json={
+            "name": "Valid Quant",
+            "type": "quant",
+            "max_position_pct": 50,
+            "quant_strategy_name": rule,
+            "quant_params": params,
+        },
+    )
+    strategy_id = created.json()["id"]
+    updated = client.put(
+        f"/api/strategies/{strategy_id}", json={"description": "Still valid"}
+    )
+
+    assert created.status_code == 201
+    assert updated.status_code == 200
+    assert updated.json()["quant_strategy_name"] == rule
+    assert updated.json()["quant_params"] == params
+    assert store.get_strategy(strategy_id) == updated.json()
+
+
 def test_clone_strategy_copies_config_without_strategy_data(
     strategy_api: tuple[TestClient, ContextStore],
     tmp_path: Path,
@@ -103,11 +335,15 @@ def test_clone_strategy_copies_config_without_strategy_data(
             "description": "Clone this configuration only",
             "status": "active",
             "tickers": ["AAPL", "MSFT"],
-            "custom_config": SOURCE_CUSTOM_CONFIG,
-            **SOURCE_NON_CLONEABLE_FIELDS,
         },
     )
     source_id = TypeAdapter(str).validate_python(source["id"])
+    store.update_strategy(
+        source_id,
+        {"custom_config": SOURCE_CUSTOM_CONFIG, **SOURCE_NON_CLONEABLE_FIELDS},
+    )
+    source = store.get_strategy(source_id)
+    assert source is not None
     store.record_decision(
         source_id,
         {

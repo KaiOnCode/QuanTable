@@ -97,6 +97,14 @@ Create new strategy.
 
 **Response:** `201` + StrategyConfig
 
+For `type: "quant"`, create validates the canonical typed executable definition
+before persistence. Supported rules are `momentum/v1` and
+`sma_crossover/v1`; required parameters, ranges, SMA window ordering, and
+`target_position_pct <= max_position_pct` are enforced. Unknown rules return
+`422 strategy_not_backtestable`; malformed or out-of-range parameters return
+`422 strategy_config_invalid`. Agent and HITL creation retain their existing
+non-quant semantics.
+
 ### `GET /api/strategies/{strategy_id}`
 
 **Response:** StrategyConfig (full)
@@ -104,6 +112,11 @@ Create new strategy.
 ### `PUT /api/strategies/{strategy_id}`
 
 Update strategy config (partial update supported).
+
+For an effective quant Strategy, the server merges the partial update with the
+persisted record and validates the complete typed definition before writing.
+A rejected update leaves the persisted Strategy unchanged and returns the same
+stable `422` code/message contract as create.
 
 ### `DELETE /api/strategies/{strategy_id}`
 
@@ -572,15 +585,40 @@ Test connection to external MCP server.
   "date_from": "2025-01-02",
   "date_to": "2025-03-31",
   "frequency": "weekly",
-  "benchmark": "SPY"
+  "benchmark": "SPY",
+  "mode": "deterministic"
 }
 ```
 
 **Response (202):** `{ "backtest_id": "uuid", "status": "pending" }`.
-Each request creates an independent persisted job. `strategy_id` must refer to an
-existing strategy. Invalid dates/ticker/frequency return `422`; an unknown
-strategy returns `404`; a missing LLM configuration returns `422` before a job
-is created. Before the point-in-time loop begins, the job preloads the exact
+`mode` defaults to `deterministic`. Each request synchronously resolves the
+mutable Strategy into an immutable `BacktestRunSpec`, persists the request and
+spec atomically, and only then enqueues the job. The worker receives that spec
+and never reloads Strategy state. Changing or deleting a Strategy after `202`
+therefore cannot alter the accepted run.
+
+Deterministic mode accepts only active `quant` Strategies with a non-empty
+uppercase ticker universe and a typed `momentum/v1` or `sma_crossover/v1`
+definition. `frequency` is a run override; the Strategy execution frequency is
+preserved separately. Strategy position limits use 0..100 percent and are
+converted to broker decimal fractions. Initial capital is USD. Commission
+`0.001` is 10 bps and slippage `0.0005` is 5 bps. Canonical v1 is long-only and
+uses signal-close/next-open timing.
+
+Agent Strategies require explicit `agent_experiment` mode. Experimental results
+are stochastic/provider-dependent and cannot be presented as canonical
+performance. Only this mode requires a non-empty model, provider credentials,
+and forced structured-output capability. Missing provider capability returns
+`503`; deterministic creation is independent of LLM credentials. HITL and
+hollow quant Strategies are rejected.
+
+Unknown Strategies return `404` with `strategy_not_found`. Other eligibility
+errors return `422`, including `strategy_inactive`, `ticker_not_allowed`,
+`strategy_config_invalid`, `strategy_not_backtestable`,
+`strategy_type_unsupported`, `strategy_mode_unsupported`, and
+`agent_model_missing`. Provider preflight returns `503` with `llm_unavailable`
+or `provider_capability_unsupported`. Invalid dates/ticker/frequency remain
+Pydantic `422` responses. Before the point-in-time loop begins, the job preloads the exact
 target and benchmark OHLCV request window through `DataService`; every decision
 tool then reads only the persisted slice at or before its `as_of` boundary. The
 ACTIVE route never invokes a legacy analysis pipeline.
@@ -600,7 +638,22 @@ ACTIVE route never invokes a legacy analysis pipeline.
       "end_date": "2025-03-31",
       "frequency": "weekly",
       "benchmark_symbol": "SPY",
-      "strategy_id": "strategy-uuid"
+      "strategy_id": "strategy-uuid",
+      "mode": "deterministic",
+      "strategy_snapshot_hash": "sha256",
+      "policy_hash": "sha256",
+      "data_snapshot_hash": "",
+      "strategy_execution_frequency": "monthly",
+      "run_frequency": "weekly",
+      "initial_capital": 100000,
+      "commission_rate": 0.001,
+      "commission_bps": 10,
+      "slippage_rate": 0.0005,
+      "slippage_bps": 5,
+      "execution_timing": "next_open",
+      "max_position_pct": 0.5,
+      "allow_short": false,
+      "max_drawdown_limit_enforced": false
     },
     "summary": {
       "cumulative_return_pct": 15.3,
@@ -609,8 +662,30 @@ ACTIVE route never invokes a legacy analysis pipeline.
       "max_drawdown_pct": -7.1,
       "sharpe_ratio": 1.2
     },
+    "outcome": "completed_no_trades",
     "series": [],
-    "trades": []
+    "trades": [],
+    "warnings": ["completed_with_no_trades_not_trusted_performance"],
+    "progress": {
+      "decisions_eligible": 0,
+      "decisions_not_ready": 0,
+      "decisions_completed": 0
+    },
+    "decisions": [],
+    "orders": [],
+    "end_position": {
+      "ticker": "AAPL",
+      "shares": 0,
+      "market_value": 0,
+      "unrealized_pnl": 0,
+      "liquidated_at_end": false
+    },
+    "provenance": {
+      "strategy_snapshot_hash": "sha256",
+      "policy_hash": "sha256",
+      "data_snapshot_hash": "",
+      "canonical_result_hash": ""
+    }
   },
   "error": null,
   "created_at": "2025-01-02T00:00:00+00:00",
@@ -623,6 +698,9 @@ ACTIVE route never invokes a legacy analysis pipeline.
 Pending/running jobs have `result: null`. Failed jobs have `result: null` and
 a safe `{ "code", "message" }` error. Results live in `system.db`; startup
 marks abandoned pending/running jobs as failed with `code: "interrupted"`.
+`completed_no_trades` is a terminal outcome with an explicit warning, not a
+trusted performance result. Closed-trade statistics exclude open positions;
+gross and net metrics remain distinct as later numerical-contract fields land.
 Stable failure codes are `market_data_unavailable`, `agent_failed`,
 `backtest_failed`, `interrupted`, and `storage_corrupt`; messages never expose
 provider responses, prompts, credentials, paths, or stacks.

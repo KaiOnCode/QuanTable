@@ -17,72 +17,38 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { strategiesApi } from "@/lib/api/strategies";
+import { QuantPolicyFields } from "@/components/strategies/quant-policy-fields";
+import type { CreateStrategyRequest, StrategyType } from "@/lib/types/models";
+import { buildCreateStrategyRequest } from "@/lib/strategy-create-request";
 import {
-  DEFAULT_DEEP_THINK_MODEL,
-  DEFAULT_QUICK_THINK_MODEL,
-} from "@/lib/llm-defaults";
-import type { CreateStrategyRequest } from "@/lib/types/models";
+  DEFAULT_QUANT_POLICY_DRAFT,
+  validateQuantPolicyDraft,
+  type QuantPolicyDraft,
+} from "@/lib/strategy-policy";
 import {
   ArrowLeft, Plus, Loader2, X,
 } from "lucide-react";
 import Link from "next/link";
-
-const DEFAULT_AGENTS = ["market", "news", "fundamentals", "pm"];
 
 export default function NewStrategyPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [type, setType] = useState("agent");
+  const [type, setType] = useState<StrategyType>("agent");
+  const [quantPolicy, setQuantPolicy] = useState<QuantPolicyDraft>(DEFAULT_QUANT_POLICY_DRAFT);
+  const [quantErrors, setQuantErrors] = useState<Readonly<Record<string, string>>>({});
   const [tickerInput, setTickerInput] = useState("");
   const [tickers, setTickers] = useState<string[]>([]);
   const [error, setError] = useState("");
 
   const createMutation = useMutation({
-    mutationFn: () =>
-      strategiesApi.create({
-        name: name || "Untitled Strategy",
-        description,
-        type: type as "agent" | "quant" | "hitl",
-        tickers,
-        active_agents: DEFAULT_AGENTS,
-        debate_rounds: 2,
-        beliefs: [],
-        belief_weights: {},
-        risk_debate_rounds: 2,
-        agent_model: DEFAULT_QUICK_THINK_MODEL,
-        deep_think_model: DEFAULT_DEEP_THINK_MODEL,
-        agent_temperature: 0,
-        enable_debate_mode: true,
-        enable_cross_review: false,
-        quant_strategy_name: null,
-        quant_params: {},
-        alpha_zoo_factors: [],
-        execution_frequency: "daily",
-        execution_time: "09:30",
-        initial_capital: 100000,
-        max_position_pct: 80,
-        max_drawdown_pct: 100,
-        hitl_enabled: false,
-        hitl_trigger_position_change_pct: 20,
-        hitl_trigger_signal_conflict: true,
-        hitl_trigger_confidence_below: 0.6,
-        hitl_timeout_hours: 2,
-        memory_enabled: true,
-        memory_recall_limit: 5,
-        weekly_reflection: true,
-        tags: [],
-        creator: "",
-        parent_strategy_id: null,
-      } satisfies CreateStrategyRequest),
+    mutationFn: (request: CreateStrategyRequest) => strategiesApi.create(request),
     onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: ["strategies"] });
       router.push(`/strategies/${result.id}`);
     },
-    onError: (e: Error) => {
-      setError(e.message);
-    },
+    onError: (mutationError: Error) => setError(mutationError.message),
   });
 
   const addTicker = () => {
@@ -103,8 +69,24 @@ export default function NewStrategyPage() {
       setError("Strategy name is required");
       return;
     }
+    const policy = validateQuantPolicyDraft(quantPolicy, 80);
+    if (type === "quant" && !policy.ok) {
+      setQuantErrors(policy.errors);
+      setError("Correct the highlighted quant policy fields.");
+      const firstError = Object.keys(policy.errors)[0];
+      const fieldIds: Readonly<Record<string, string>> = {
+        lookbackBars: "lookback-bars", entryThreshold: "entry-threshold",
+        exitThreshold: "exit-threshold", targetPositionPct: "target-position-pct",
+        fastWindow: "fast-window", slowWindow: "slow-window",
+      };
+      if (firstError) document.getElementById(fieldIds[firstError] ?? "quant-rule")?.focus();
+      return;
+    }
+    const request = buildCreateStrategyRequest({ name, description, type, tickers }, policy);
+    if (!request) return;
+    setQuantErrors({});
     setError("");
-    createMutation.mutate();
+    createMutation.mutate(request);
   };
 
   return (
@@ -150,7 +132,9 @@ export default function NewStrategyPage() {
               {/* Type */}
               <div className="space-y-2">
                 <Label>Strategy Type</Label>
-                <Select value={type} onValueChange={(v) => v && setType(v)}>
+                <Select value={type} onValueChange={(value) => {
+                  if (value === "agent" || value === "quant" || value === "hitl") setType(value);
+                }}>
                   <SelectTrigger className="w-full sm:w-48">
                     <SelectValue />
                   </SelectTrigger>
@@ -166,6 +150,19 @@ export default function NewStrategyPage() {
                   {type === "hitl" && "AI agents propose decisions; a human approves before execution."}
                 </p>
               </div>
+
+              {type === "quant" ? (
+                <>
+                  <Separator />
+                  <QuantPolicyFields
+                    draft={quantPolicy}
+                    errors={quantErrors}
+                    maximumPositionPct={80}
+                    disabled={createMutation.isPending}
+                    onChange={(draft) => { setQuantPolicy(draft); setQuantErrors({}); }}
+                  />
+                </>
+              ) : null}
 
               <Separator />
 

@@ -7,11 +7,16 @@ No mock data — every response is computed from real stored data.
 from __future__ import annotations
 
 import uuid
-from typing import assert_never
+from typing import Annotated, assert_never
 
-from fastapi import APIRouter, HTTPException, Query
-from pydantic import JsonValue
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from pydantic import JsonValue, ValidationError
 
+from storage.strategy_config import StrategyConfigPayload
+from storage.strategy_policy import (
+    StrategyEligibilityError,
+    validate_quant_strategy_definition,
+)
 from server.routes.strategy_lifecycle import (
     CloneStrategyRequest,
     LifecycleAction,
@@ -23,10 +28,38 @@ from storage import get_store
 router = APIRouter(tags=["strategies"])
 
 
+async def _parse_strategy_config(
+    payload: dict[str, JsonValue] = Body(...),
+) -> StrategyConfigPayload:
+    try:
+        return StrategyConfigPayload.model_validate(payload)
+    except ValidationError as exc:
+        detail = [
+            {
+                key: value
+                for key, value in error.items()
+                if key not in {"ctx", "input", "url"}
+            }
+            for error in exc.errors()
+        ]
+        raise HTTPException(422, detail=detail) from exc
+
+
 def _now() -> str:
     from datetime import datetime, timezone
 
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _validate_strategy_policy(strategy: dict[str, object]) -> None:
+    if strategy.get("type") != "quant":
+        return
+    try:
+        validate_quant_strategy_definition(strategy)
+    except StrategyEligibilityError as exc:
+        raise HTTPException(
+            422, detail={"code": exc.code, "message": exc.message}
+        ) from exc
 
 
 def _transition_strategy(
@@ -91,7 +124,9 @@ async def list_strategies(
 
 
 @router.post("/strategies", status_code=201)
-async def create_strategy(config: dict):
+async def create_strategy(
+    config: Annotated[StrategyConfigPayload, Depends(_parse_strategy_config)],
+):
     """Create a new strategy. Persists to system.db and returns the stored record."""
     strategy_id = str(uuid.uuid4())
     now = _now()
@@ -99,43 +134,12 @@ async def create_strategy(config: dict):
     # Build full config with defaults
     strategy = {
         "id": strategy_id,
-        "name": config.get("name", "Untitled Strategy"),
-        "description": config.get("description", ""),
-        "type": config.get("type", "agent"),
-        "status": config.get("status", "draft"),
-        "tickers": config.get("tickers", []),
-        "beliefs": config.get("beliefs", []),
-        "active_agents": config.get(
-            "active_agents", ["market", "news", "fundamentals", "pm"]
-        ),
-        "debate_rounds": config.get("debate_rounds", 2),
+        **config.model_dump(),
         "created_at": now,
         "updated_at": now,
-        "tags": config.get("tags", []),
-        "creator": config.get("creator", ""),
-        # Store any additional fields the frontend sends
-        **{
-            k: v
-            for k, v in config.items()
-            if k
-            not in (
-                "id",
-                "name",
-                "description",
-                "type",
-                "status",
-                "tickers",
-                "beliefs",
-                "active_agents",
-                "debate_rounds",
-                "created_at",
-                "updated_at",
-                "tags",
-                "creator",
-            )
-        },
     }
 
+    _validate_strategy_policy(strategy)
     store = get_store()
     store.register_strategy(strategy)
     return strategy
@@ -152,11 +156,18 @@ async def get_strategy(strategy_id: str):
 
 
 @router.put("/strategies/{strategy_id}")
-async def update_strategy(strategy_id: str, config: dict):
+async def update_strategy(
+    strategy_id: str,
+    config: Annotated[StrategyConfigPayload, Depends(_parse_strategy_config)],
+):
     """Update a strategy. Partial update — only sent fields are changed."""
     store = get_store()
+    existing = store.get_strategy(strategy_id)
+    if existing is None:
+        raise HTTPException(404, f"Strategy {strategy_id} not found")
     # Remove id from updates (shouldn't change)
-    updates = {k: v for k, v in config.items() if k != "id"}
+    updates = config.model_dump(exclude_unset=True)
+    _validate_strategy_policy({**existing, **updates})
     result = store.update_strategy(strategy_id, updates)
     if result is None:
         raise HTTPException(404, f"Strategy {strategy_id} not found")

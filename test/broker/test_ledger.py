@@ -506,3 +506,50 @@ def test_trade_ledger_computes_core_metrics_from_snapshots_and_round_trip_fills(
     assert metrics["sharpe_ratio"] > 0
     assert metrics["max_drawdown_duration"] == pytest.approx(1.0)
     assert metrics["avg_holding_period_days"] == pytest.approx(1.0)
+
+
+def test_characterizes_current_denominator_and_entry_fill_trade_classification() -> (
+    None
+):
+    ledger = TradeLedger()
+    runtime_timestamp = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    initial_capital = 100_000.0
+    first_post_decision_equity = 99_924.9750632725
+    final_equity = 104_924.975
+    open_position = Position(ticker="AAPL", shares=10, avg_cost=100.05)
+    account_after_entry = AccountSnapshot(
+        cash=98_924.4750632725,
+        equity=first_post_decision_equity,
+        positions=[open_position],
+        timestamp=runtime_timestamp,
+    )
+    ledger.record_fill(
+        fill=Fill(
+            order_id="entry-order",
+            fill_price=100.05,
+            fill_qty=10,
+            fee=1.0005,
+            slippage=0.5,
+            timestamp=runtime_timestamp,
+        ),
+        position=open_position,
+        account=account_after_entry,
+    )
+    ledger.record_daily_snapshot("2026-01-02", account_after_entry)
+    ledger.record_daily_snapshot(
+        "2026-01-03",
+        AccountSnapshot(
+            cash=98_924.4750632725,
+            equity=final_equity,
+            positions=[open_position],
+            timestamp=datetime(2026, 1, 3, tzinfo=timezone.utc),
+        ),
+    )
+
+    metrics = ledger.compute_metrics()
+    initial_capital_return = final_equity / initial_capital - 1
+
+    assert metrics["total_return"] * 100 == pytest.approx(5.003754)
+    assert initial_capital_return * 100 == pytest.approx(4.924975)
+    assert metrics["number_of_trades"] == 1
+    assert metrics["win_rate"] == 0.0

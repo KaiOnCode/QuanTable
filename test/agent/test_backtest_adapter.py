@@ -131,6 +131,65 @@ def test_backtest_adapter_rejects_prose_or_multiple_decision_calls(tmp_path) -> 
     assert current_agent_run_context() is None
 
 
+def test_characterizes_current_nth_invalid_structured_decision_as_generic_failure(
+    tmp_path,
+) -> None:
+    valid_content = json.dumps(
+        {
+            "status": "ok",
+            "action": "HOLD",
+            "target_position_pct": 0.0,
+            "confidence": 0.5,
+            "rationale": "seeded hold",
+            "execution": "held",
+        }
+    )
+    contents = iter([valid_content, valid_content, '{"status":"invalid"}'])
+    adapter = BacktestDecisionAdapter(
+        loop_factory=lambda: _OneDecisionLoop(
+            {
+                "messages": [
+                    {
+                        "role": "tool",
+                        "name": "submit_backtest_decision",
+                        "content": next(contents),
+                    }
+                ]
+            }
+        )
+    )
+
+    for decision_number in (1, 2):
+        result = adapter.run(
+            context=_context(tmp_path),
+            ticker="AAPL",
+            date=f"2026-01-0{decision_number}T00:00:00Z",
+            as_of=f"2026-01-0{decision_number}T00:00:00Z",
+            current_position_pct=0.0,
+            execution_enabled=True,
+            strategy_id="strategy-1",
+            account_id="account-1",
+            session_id="session-1",
+        )
+        assert result["status"] == "ok"
+
+    with pytest.raises(
+        BacktestDecisionError,
+        match="backtest decision tool returned invalid structured decision",
+    ):
+        adapter.run(
+            context=_context(tmp_path),
+            ticker="AAPL",
+            date="2026-01-03T00:00:00Z",
+            as_of="2026-01-03T00:00:00Z",
+            current_position_pct=0.0,
+            execution_enabled=True,
+            strategy_id="strategy-1",
+            account_id="account-1",
+            session_id="session-1",
+        )
+
+
 def test_backtest_adapter_converts_agent_runtime_failure_to_typed_error(
     tmp_path,
 ) -> None:

@@ -2,6 +2,68 @@
 
 Last updated: 2026-07-12 | Branch: `dev`
 
+## Backtest Reliability and Fidelity Goal
+
+Immutable session baseline (recorded once; continuations must read, not recompute):
+
+- `BASELINE_HEAD=9292987bc35f8223609e98e655fabba3cdf65242`
+- `origin/dev=9292987bc35f8223609e98e655fabba3cdf65242`
+- `upstream/dev=289d728869e1745d0e8e936855032e9a3341abf2`
+- Initial branch: `dev`; initial dirty worktree: clean.
+
+### Phase 1: Characterization and Frozen Contract ✅
+
+Completed on 2026-07-13 under
+`plans/backtest-reliability-and-fidelity/backtest-reliability-and-fidelity-plan.md`.
+
+Delivered:
+
+- Todo 1 GREEN-only current-behavior characterization for 61/13/3 decision
+  counts, Nth invalid decision failure, same-close fill, runtime timestamps,
+  initial-capital denominator, fill-based trade classification, and shortened
+  SMA warm-up. Personal SQLite data was read-only diagnosis evidence only.
+- Todo 2 frozen typed Strategy/Policy/Run/Result contract with deterministic
+  and agent-experiment mode eligibility, stable hashes, freeze-before-enqueue
+  persistence, mode-aware preflight, typed Strategy POST/PUT validation, and
+  truthful New/Edit quant controls for momentum and SMA crossover.
+- Shared-track ownership was corrected: `storage/strategy_policy.py` and
+  `storage/strategy_config.py` own reusable typed contracts; SHARED strategy
+  routes do not import ACTIVE agent modules. Concurrent legacy
+  `run_spec_json` migration is serialized and preserves legacy rows.
+- Secret-bearing unknown fields are rejected without echoing raw input. Typed
+  discriminators, envelope extras, and huge numeric overflow cases return
+  stable validation errors.
+
+Fresh verification:
+
+- `uv run pytest -q test` passed `326 passed, 1 skipped, 1 warning`; the
+  warning is the existing Starlette/httpx deprecation warning.
+- BasedPyright, Ruff check/format, frontend TypeScript, Node tests, scoped
+  lint, production build, architecture scans, and diff checks passed.
+- Real FastAPI/TestClient and production Chromium verified invalid/valid
+  Strategy POST/PUT, frozen spec immutability, New/Edit momentum/SMA,
+  invalid-focus/Enter/Cancel/readback, and 18 current visual states at
+  375/768/1280 with no console/page errors or overflow.
+- `review-work` five lanes returned PASS/HIGH. Debugging audits recorded RED
+  to GREEN for the migration race, SHARED import boundary, typed
+  discriminators/extras/overflow, and validation-error secret echo.
+
+Scope and ownership notes:
+
+- Todo 2 `run` is intentionally recorded as `202` eligibility/preflight plus
+  frozen spec persistence. Terminal deterministic execution and no-AgentLoop
+  behavior remain Todo 4 owners; no terminal `agent_failed` result was claimed
+  as successful performance.
+- Todo 3/4/9 own per-decision progress, deterministic executor, richer
+  experimental semantics, replay/provenance migration, and result persistence.
+
+Evidence:
+
+- `.omo/evidence/backtest-reliability-and-fidelity/phase-1/task-1-characterization.txt`
+- `.omo/evidence/backtest-reliability-and-fidelity/phase-1/task-2-track-boundary-fix.txt`
+- `.omo/evidence/backtest-reliability-and-fidelity/phase-1/task-2-migration-concurrency-fix.txt`
+- `.omo/evidence/backtest-reliability-and-fidelity/phase-1/review-work-final.md`
+
 ## Frontend Demo Integration: Backtest Running Persistence ✅
 
 Completed on 2026-07-12 after product-owner reproduction of the Backtest

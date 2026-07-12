@@ -29,6 +29,7 @@ type ReportJobStatus = Literal["pending", "running", "completed", "failed"]
 class BacktestJobRecord:
     id: str
     request_json: str
+    run_spec_json: str | None
     status: BacktestJobStatus
     result_json: str | None
     error_json: str | None
@@ -1016,16 +1017,18 @@ class ContextStore:
         db.commit()
         return cursor.rowcount > 0
 
-    def create_backtest_job(self, job_id: str, request_json: str) -> BacktestJobRecord:
+    def create_backtest_job(
+        self, job_id: str, request_json: str, run_spec_json: str | None = None
+    ) -> BacktestJobRecord:
         self._init_backtest_jobs_db()
         now = _now()
         db = self._system_db()
         db.execute(
             """INSERT INTO backtest_jobs
-               (id, request_json, status, result_json, error_json,
+               (id, request_json, run_spec_json, status, result_json, error_json,
                 created_at, started_at, completed_at, updated_at)
-               VALUES (?, ?, 'pending', NULL, NULL, ?, NULL, NULL, ?)""",
-            (job_id, request_json, now, now),
+               VALUES (?, ?, ?, 'pending', NULL, NULL, ?, NULL, NULL, ?)""",
+            (job_id, request_json, run_spec_json, now, now),
         )
         db.commit()
         job = self.get_backtest_job(job_id)
@@ -1038,7 +1041,7 @@ class ContextStore:
         row = (
             self._system_db()
             .execute(
-                """SELECT id, request_json, status, result_json, error_json,
+                """SELECT id, request_json, run_spec_json, status, result_json, error_json,
                       created_at, started_at, completed_at, updated_at
                FROM backtest_jobs WHERE id = ?""",
                 (job_id,),
@@ -1104,23 +1107,41 @@ class ContextStore:
 
     def _init_backtest_jobs_db(self) -> None:
         db = self._system_db()
-        db.execute(
-            """CREATE TABLE IF NOT EXISTS backtest_jobs (
-                id TEXT PRIMARY KEY,
-                request_json TEXT NOT NULL,
-                status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed')),
-                result_json TEXT,
-                error_json TEXT,
-                created_at TEXT NOT NULL,
-                started_at TEXT,
-                completed_at TEXT,
-                updated_at TEXT NOT NULL
-            )"""
-        )
-        db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_backtest_jobs_status ON backtest_jobs(status)"
-        )
-        db.commit()
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            db.execute(
+                """CREATE TABLE IF NOT EXISTS backtest_jobs (
+                    id TEXT PRIMARY KEY,
+                    request_json TEXT NOT NULL,
+                    run_spec_json TEXT,
+                    status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed')),
+                    result_json TEXT,
+                    error_json TEXT,
+                    created_at TEXT NOT NULL,
+                    started_at TEXT,
+                    completed_at TEXT,
+                    updated_at TEXT NOT NULL
+                )"""
+            )
+            columns = {
+                str(row["name"])
+                for row in db.execute("PRAGMA table_info(backtest_jobs)").fetchall()
+            }
+            if "run_spec_json" not in columns:
+                try:
+                    db.execute(
+                        "ALTER TABLE backtest_jobs ADD COLUMN run_spec_json TEXT"
+                    )
+                except sqlite3.OperationalError as exc:
+                    if "duplicate column name" not in str(exc).lower():
+                        raise
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_backtest_jobs_status ON backtest_jobs(status)"
+            )
+            db.commit()
+        except sqlite3.Error:
+            db.rollback()
+            raise
 
     def create_scan_run(
         self,
@@ -1444,6 +1465,7 @@ def _backtest_job_from_row(row: sqlite3.Row) -> BacktestJobRecord:
     return BacktestJobRecord(
         id=str(row["id"]),
         request_json=str(row["request_json"]),
+        run_spec_json=(str(row["run_spec_json"]) if row["run_spec_json"] else None),
         status=normalized_status,
         result_json=(str(row["result_json"]) if row["result_json"] else None),
         error_json=(str(row["error_json"]) if row["error_json"] else None),

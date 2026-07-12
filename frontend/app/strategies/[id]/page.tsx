@@ -13,6 +13,7 @@ import { StatusBadge, DirectionBadge, ActionBadge } from "@/components/shared/ba
 import { EmptyState } from "@/components/shared/empty-state";
 import { formatPercent, formatDate } from "@/lib/utils";
 import { strategiesApi } from "@/lib/api/strategies";
+import { QuantPolicyEditor } from "@/components/strategies/quant-policy-editor";
 import { Loader2, ArrowLeft, TrendingUp, BarChart3, Settings } from "lucide-react";
 import Link from "next/link";
 
@@ -150,6 +151,15 @@ export default function StrategyDetailPage() {
                 <InfoRow label="Type" value={strategy.type} />
                 <InfoRow label="Execution" value={`${strategy.execution_frequency ?? "daily"} @ ${strategy.execution_time ?? "09:30"}`} />
                 <InfoRow label="Debate Rounds" value={`${strategy.debate_rounds ?? 2}`} />
+                {strategy.type === "quant" ? (
+                  <div className="col-span-2 mt-3 border-t pt-4">
+                    <h2 className="mb-1 text-sm font-semibold">Deterministic Quant Policy</h2>
+                    <p className="mb-4 text-xs text-muted-foreground">
+                      Configure the supported executable rule persisted with this strategy.
+                    </p>
+                    <QuantPolicyEditor strategy={strategy} />
+                  </div>
+                ) : null}
                 <div className="col-span-2">
                   <span className="text-muted-foreground">Beliefs:</span>
                   {(strategy.beliefs ?? []).length > 0 ? (

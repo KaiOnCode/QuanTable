@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pandas as pd
 import pytest
 
@@ -98,6 +100,64 @@ def _benchmark_prices(price_df: pd.DataFrame) -> pd.DataFrame:
     for column in ("Open", "High", "Low", "Close"):
         benchmark[column] = benchmark[column] * 2.0
     return benchmark
+
+
+@pytest.mark.parametrize(
+    ("frequency", "expected_decisions"),
+    [("daily", 61), ("weekly", 13), ("monthly", 3)],
+)
+def test_characterizes_current_61_bar_decision_counts(
+    frequency: str, expected_decisions: int
+) -> None:
+    agent = RecordingBacktestAgent()
+    runner = BacktestRunner(BrokerConfig(), agent=agent)
+    index = pd.bdate_range("2024-01-02", periods=61)
+    price_df = pd.DataFrame(
+        {
+            "Open": 100.0,
+            "High": 101.0,
+            "Low": 99.0,
+            "Close": 100.0,
+        },
+        index=index,
+    )
+
+    runner.run(
+        ticker="AAPL",
+        price_df=price_df,
+        benchmark_df=_benchmark_prices(price_df),
+        start_date=str(index[0])[:10],
+        end_date=str(index[-1])[:10],
+        frequency=frequency,
+    )
+
+    assert len(agent.calls) == expected_decisions
+
+
+def test_characterizes_current_same_close_fill_and_runtime_timestamp() -> None:
+    before_run = datetime.now(timezone.utc)
+    price_df = pd.DataFrame(
+        [{"Open": 90.0, "High": 105.0, "Low": 85.0, "Close": 100.0}],
+        index=pd.to_datetime(["2024-01-02"]),
+    )
+    runner = BacktestRunner(
+        BrokerConfig(commission_rate=0.0, slippage_rate=0.0),
+        scoped_agent_factory=lambda _as_of, broker: ScriptedExecutionAgent(broker),
+    )
+
+    result = runner.run(
+        ticker="AAPL",
+        price_df=price_df,
+        benchmark_df=_benchmark_prices(price_df),
+        start_date="2024-01-02",
+        end_date="2024-01-02",
+    )
+    after_run = datetime.now(timezone.utc)
+    fill_timestamp = datetime.fromisoformat(str(result.trades.loc[0, "timestamp"]))
+
+    assert result.trades.loc[0, "price"] == pytest.approx(100.0)
+    assert before_run <= fill_timestamp <= after_run
+    assert fill_timestamp.date().isoformat() != "2024-01-02"
 
 
 def test_backtest_runner_returns_empty_exports_for_an_empty_price_window() -> None:

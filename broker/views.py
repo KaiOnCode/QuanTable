@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 import pandas as pd
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from broker.events import BrokerEvent, BrokerEventType
 from broker.ledger import LedgerFillRecord
@@ -189,6 +189,8 @@ class PerformanceMetricsView(BaseModel):
 
 
 class BacktestConfigView(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     ticker: str = ""
     start_date: str = ""
     end_date: str = ""
@@ -196,6 +198,66 @@ class BacktestConfigView(BaseModel):
     benchmark_symbol: str = "SPY"
     strategy_id: str = ""
     account_id: str = "default"
+    mode: Literal["deterministic", "agent_experiment"] = "deterministic"
+    strategy_snapshot_hash: str = ""
+    policy_hash: str = ""
+    data_snapshot_hash: str = ""
+    engine_version: str = "backtest-engine/v1"
+    strategy_execution_frequency: Literal["daily", "weekly", "monthly"] = "daily"
+    run_frequency: Literal["daily", "weekly", "monthly"] = "daily"
+    initial_capital: float = 100_000.0
+    commission_rate: float = 0.001
+    commission_bps: float = 10.0
+    slippage_rate: float = 0.0005
+    slippage_bps: float = 5.0
+    execution_timing: Literal["next_open", "close_bar"] = "next_open"
+    max_position_pct: float = 1.0
+    allow_short: bool = False
+    provider_adjustment_mode: str = "auto_adjusted_prices_v1"
+    corporate_actions_mode: str = "provider_adjusted_prices"
+    risk_free_rate: float = 0.0
+    max_drawdown_limit_pct: float = 0.0
+    max_drawdown_limit_enforced: bool = False
+    evaluation_bar_count: int = 0
+    sample_first_date: str = ""
+    sample_last_date: str = ""
+
+
+class BacktestProgressView(BaseModel):
+    decisions_eligible: int = 0
+    decisions_not_ready: int = 0
+    decisions_completed: int = 0
+
+
+class BacktestDecisionView(BaseModel):
+    sequence: int
+    signal_date: str
+    execution_date: str | None = None
+    status: Literal["not_ready", "completed", "failed", "unfilled_end_of_window"]
+    target_position_pct: float | None = None
+
+
+class BacktestOrderEvidenceView(BaseModel):
+    order_id: str
+    status: Literal["pending", "executed", "cancelled", "rejected", "unfilled"]
+    signal_date: str
+    execution_date: str | None = None
+    reason: str = ""
+
+
+class BacktestEndPositionView(BaseModel):
+    ticker: str = ""
+    shares: float = 0.0
+    market_value: float = 0.0
+    unrealized_pnl: float = 0.0
+    liquidated_at_end: bool = False
+
+
+class BacktestProvenanceView(BaseModel):
+    strategy_snapshot_hash: str = ""
+    policy_hash: str = ""
+    data_snapshot_hash: str = ""
+    canonical_result_hash: str = ""
 
 
 class BacktestSeriesPointView(BaseModel):
@@ -207,11 +269,31 @@ class BacktestSeriesPointView(BaseModel):
 
 
 class BacktestResultView(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     status: Literal["completed"] = "completed"
+    outcome: Literal["completed", "completed_no_trades"] = "completed_no_trades"
     config: BacktestConfigView
     summary: PerformanceMetricsView
     series: list[BacktestSeriesPointView] = Field(default_factory=list)
     trades: list[TradeView] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    progress: BacktestProgressView = Field(default_factory=BacktestProgressView)
+    decisions: list[BacktestDecisionView] = Field(default_factory=list)
+    decision_count: int = 0
+    orders: list[BacktestOrderEvidenceView] = Field(default_factory=list)
+    order_count: int = 0
+    end_position: BacktestEndPositionView = Field(
+        default_factory=BacktestEndPositionView
+    )
+    provenance: BacktestProvenanceView = Field(default_factory=BacktestProvenanceView)
+
+    @model_validator(mode="after")
+    def derive_counts_and_outcome(self) -> BacktestResultView:
+        self.decision_count = len(self.decisions)
+        self.order_count = len(self.orders)
+        self.outcome = "completed" if self.trades else "completed_no_trades"
+        return self
 
 
 def to_account_view(

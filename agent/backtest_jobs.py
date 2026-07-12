@@ -5,12 +5,19 @@ import io
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from os import getenv
+from collections.abc import Callable
 from typing import Literal, Protocol
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from agent.backtest_adapter import BacktestDecisionAdapter, BacktestDecisionError
+from agent.backtest_policy import (
+    BacktestMode,
+    BacktestRunSpec,
+    StrategyEligibilityError,
+    freeze_backtest_run_spec,
+)
 from broker.backtest_data import (
     BacktestDataError,
     BacktestDataService,
@@ -20,7 +27,7 @@ from broker.backtest_data import (
 from broker.backtest_runner import BacktestAgent, BacktestRunner
 from broker.config import BrokerConfig
 from broker.engine import MockBrokerEngine
-from broker.views import BacktestResultView
+from broker.views import BacktestConfigView, BacktestProvenanceView, BacktestResultView
 from dataflow.store import MarketDataStore
 from dataflow.history import DataServiceHistoryLoader
 from storage.store import BacktestJobRecord, ContextStore
@@ -29,7 +36,7 @@ type BacktestJobStatus = Literal["pending", "running", "completed", "failed"]
 
 
 class BacktestRequest(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     strategy_id: str = Field(min_length=1, max_length=128)
     ticker: str = Field(pattern=r"^[A-Z][A-Z0-9.-]{0,14}$")
@@ -37,6 +44,7 @@ class BacktestRequest(BaseModel):
     date_to: date
     frequency: Literal["daily", "weekly", "monthly"] = "daily"
     benchmark: str = Field(default="SPY", pattern=r"^[A-Z][A-Z0-9.-]{0,14}$")
+    mode: BacktestMode = BacktestMode.DETERMINISTIC
 
     @model_validator(mode="after")
     def ordered_date_window(self) -> BacktestRequest:
@@ -46,7 +54,7 @@ class BacktestRequest(BaseModel):
 
 
 class BacktestJobError(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     code: Literal[
         "agent_failed",
@@ -59,7 +67,7 @@ class BacktestJobError(BaseModel):
 
 
 class BacktestJobResponse(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     backtest_id: str
     status: BacktestJobStatus
@@ -72,7 +80,7 @@ class BacktestJobResponse(BaseModel):
 
 
 class BacktestJobRunner(Protocol):
-    def run(self, request: BacktestRequest) -> BacktestResultView: ...
+    def run(self, spec: BacktestRunSpec) -> BacktestResultView: ...
 
 
 class _ScopedBacktestAgent:
@@ -125,30 +133,73 @@ class ActiveBacktestJobRunner:
             self._market_store
         )
 
-    def run(self, request: BacktestRequest) -> BacktestResultView:
+    def run(self, spec: BacktestRunSpec) -> BacktestResultView:
         dataset = BacktestDatasetPreparer(
             self._market_store,
             history_loader=self._history_loader,
         ).prepare(
-            ticker=request.ticker,
-            benchmark_symbol=request.benchmark,
-            date_from=request.date_from.isoformat(),
-            date_to=request.date_to.isoformat(),
+            ticker=spec.ticker,
+            benchmark_symbol=spec.benchmark,
+            date_from=spec.date_from.isoformat(),
+            date_to=spec.date_to.isoformat(),
         )
         runner = BacktestRunner(
-            BrokerConfig(),
+            BrokerConfig(**spec.broker_config.model_dump()),
             scoped_agent_factory=self._scoped_agent_factory,
         )
-        return runner.run(
-            request.ticker,
+        result = runner.run(
+            spec.ticker,
             dataset.target,
-            request.date_from.isoformat(),
-            request.date_to.isoformat(),
+            spec.date_from.isoformat(),
+            spec.date_to.isoformat(),
             benchmark_df=dataset.benchmark,
-            benchmark_symbol=request.benchmark,
-            frequency=request.frequency,
-            strategy_id=request.strategy_id,
+            benchmark_symbol=spec.benchmark,
+            frequency=spec.run_frequency,
+            strategy_id=spec.strategy_id,
         ).view
+        warnings = [
+            "max_drawdown_limit_not_enforced",
+            "capacity_model_not_modeled",
+            "provider_adjusted_prices_are_synthetic",
+        ]
+        if spec.mode is BacktestMode.AGENT_EXPERIMENT:
+            warnings.append("experimental_provider_dependent_result")
+        if not result.trades:
+            warnings.append("completed_with_no_trades_not_trusted_performance")
+        config = BacktestConfigView(
+            ticker=spec.ticker,
+            start_date=spec.date_from.isoformat(),
+            end_date=spec.date_to.isoformat(),
+            frequency=spec.run_frequency,
+            benchmark_symbol=spec.benchmark,
+            strategy_id=spec.strategy_id,
+            mode=spec.mode.value,
+            strategy_snapshot_hash=spec.strategy_snapshot_hash,
+            policy_hash=spec.policy_hash,
+            strategy_execution_frequency=spec.strategy_execution_frequency,
+            run_frequency=spec.run_frequency,
+            initial_capital=spec.broker_config.initial_cash,
+            commission_rate=spec.broker_config.commission_rate,
+            commission_bps=spec.broker_config.commission_rate * 10_000,
+            slippage_rate=spec.broker_config.slippage_rate,
+            slippage_bps=spec.broker_config.slippage_rate * 10_000,
+            execution_timing=spec.broker_config.execution_timing,
+            max_position_pct=spec.broker_config.max_position_pct,
+            allow_short=spec.broker_config.allow_short,
+            max_drawdown_limit_pct=spec.max_drawdown_limit_pct,
+            max_drawdown_limit_enforced=spec.max_drawdown_limit_enforced,
+        )
+        return result.model_copy(
+            update={
+                "outcome": "completed" if result.trades else "completed_no_trades",
+                "config": config,
+                "warnings": warnings,
+                "provenance": BacktestProvenanceView(
+                    strategy_snapshot_hash=spec.strategy_snapshot_hash,
+                    policy_hash=spec.policy_hash,
+                ),
+            }
+        )
 
     def _scoped_agent_factory(
         self, as_of: str, broker: MockBrokerEngine
@@ -167,24 +218,37 @@ class BacktestJobService:
         store: ContextStore,
         runner: BacktestJobRunner,
         llm_available: bool = True,
+        structured_output_supported: bool = True,
+        strategy_resolver: Callable[[str], dict[str, object] | None] | None = None,
         max_workers: int = 2,
     ) -> None:
         self._store = store
         self._runner = runner
         self._llm_available = llm_available
+        self._structured_output_supported = structured_output_supported
+        self._strategy_resolver = strategy_resolver or store.get_strategy
         self._executor = ThreadPoolExecutor(
             max_workers=max_workers,
             thread_name_prefix="backtest-job",
         )
 
-    @property
-    def can_start(self) -> bool:
-        return self._llm_available
-
     def create(self, request: BacktestRequest) -> BacktestJobResponse:
+        strategy = self._strategy_resolver(request.strategy_id)
+        if strategy is None:
+            raise StrategyEligibilityError(
+                "strategy_not_found", "Strategy not found", http_status=404
+            )
+        spec = freeze_backtest_run_spec(
+            request,
+            strategy,
+            llm_available=self._llm_available,
+            structured_output_supported=self._structured_output_supported,
+        )
         job_id = uuid4().hex
-        self._store.create_backtest_job(job_id, request.model_dump_json())
-        self._executor.submit(self._run_job, job_id, request)
+        self._store.create_backtest_job(
+            job_id, request.model_dump_json(), spec.model_dump_json()
+        )
+        self._executor.submit(self._run_job, job_id, spec)
         response = self.get(job_id)
         if response is None:
             raise RuntimeError("backtest job disappeared after creation")
@@ -235,11 +299,11 @@ class BacktestJobService:
     def shutdown(self) -> None:
         self._executor.shutdown(wait=True)
 
-    def _run_job(self, job_id: str, request: BacktestRequest) -> None:
+    def _run_job(self, job_id: str, spec: BacktestRunSpec) -> None:
         if not self._store.mark_backtest_job_running(job_id):
             return
         try:
-            result = self._runner.run(request)
+            result = self._runner.run(spec)
         except BacktestDataError:
             self._store.fail_backtest_job(
                 job_id,
@@ -247,7 +311,7 @@ class BacktestJobService:
                     code="market_data_unavailable",
                     message=(
                         "Historical market data is unavailable for "
-                        f"{request.ticker} and {request.benchmark} in the requested window."
+                        f"{spec.ticker} and {spec.benchmark} in the requested window."
                     ),
                 ).model_dump_json(),
             )
