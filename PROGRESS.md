@@ -2,6 +2,48 @@
 
 Last updated: 2026-07-12 | Branch: `dev`
 
+## Frontend Demo Integration: Backtest Running Persistence ✅
+
+Completed on 2026-07-12 after product-owner reproduction of the Backtest
+running state disappearing on navigation or reload.
+
+Delivered:
+
+- Persisted only the active Backtest job ID in same-tab `sessionStorage`, kept
+  the backend GET endpoint as the status source of truth, and promoted a
+  restored ID into the URL so polling survives page navigation and reload.
+- Made a valid explicit URL ID authoritative, retained only a short-lived
+  create-to-router bridge, and cleared the matching pointer on completed,
+  failed, or not-found jobs so this does not become an implicit history.
+- Restricted browser and API path IDs to the server's 32-character lowercase
+  hexadecimal format and encoded path segments, preventing malformed,
+  oversized, or traversal-shaped values from reaching another API route.
+
+Fresh verification:
+
+- TDD reproduced the missing persistence seam, then added six focused Node
+  cases for ID parsing, URL priority, active-only state transitions, terminal
+  and not-found cleanup, route restoration, and API path rejection.
+- Production Chromium created real job
+  `92c0d597b6db44a2882978cf39c35f2a` with POST `202` exactly once. Dashboard to
+  Backtest restored `Backtest running`, added the explicit ID to the URL, and
+  reload restored the same job. Desktop/mobile console and page errors were
+  empty; the 390px viewport had no horizontal overflow.
+- A completed real job verified terminal cleanup, explicit URL priority, and
+  preservation of an unrelated active pointer. Invalid session/query values
+  were removed without any unintended `/api/settings` request.
+- `uv run pytest -q` passed `274 passed, 1 skipped, 1 warning in 9.44s`;
+  TypeScript, production build, scoped ESLint, full ESLint, focused Node tests,
+  and diff checks passed. Full ESLint retained 66 documented pre-existing
+  warnings and no errors. Goal, QA, code-quality, security, context, and both
+  visual review lanes returned PASS.
+
+Evidence:
+
+- `.omo/evidence/frontend-demo-integration/review-fixes/backtest-running-persistence/final-review.md`
+- `.omo/evidence/frontend-demo-integration/review-fixes/backtest-running-persistence/production-running-restored-desktop-final.png`
+- `.omo/evidence/frontend-demo-integration/review-fixes/backtest-running-persistence/production-running-restored-mobile-final.png`
+
 ## Frontend Demo Integration: Backtest Production Repair ✅
 
 Completed on 2026-07-12 after product-owner reproduction of the Backtest

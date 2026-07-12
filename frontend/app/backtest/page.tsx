@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import {
@@ -14,6 +14,7 @@ import {
   YAxis,
 } from "recharts";
 import { Shell } from "@/components/layout/shell";
+import { BacktestMetrics } from "@/components/backtest/backtest-metrics";
 import {
   Card,
   CardContent,
@@ -43,17 +44,10 @@ import {
 } from "@/components/ui/table";
 import { backtestApi } from "@/lib/api/backtest";
 import { strategiesApi } from "@/lib/api/strategies";
-import type { BacktestRequest, PerformanceMetricsView } from "@/lib/types/models";
+import type { BacktestRequest } from "@/lib/types/models";
+import { usePersistedBacktestId } from "@/lib/use-persisted-backtest-id";
 import { formatCurrency, formatDate, formatPercent } from "@/lib/utils";
-import {
-  AlertCircle,
-  BarChart3,
-  Download,
-  LineChart,
-  Loader2,
-  Play,
-  RefreshCw,
-} from "lucide-react";
+import { AlertCircle, BarChart3, Download, LineChart, Loader2, Play, RefreshCw } from "lucide-react";
 
 const DEFAULT_DATE_FROM = "2024-01-02";
 const DEFAULT_DATE_TO = "2024-03-29";
@@ -62,30 +56,8 @@ function messageFor(error: unknown): string {
   return error instanceof Error ? error.message : "The request could not be completed.";
 }
 
-function MetricCard({ label, value }: { label: string; value: string }) {
-  return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardDescription>{label}</CardDescription>
-        <CardTitle className="text-xl font-mono tabular-nums">{value}</CardTitle>
-      </CardHeader>
-    </Card>
-  );
-}
-
-function Metrics({ summary }: { summary: PerformanceMetricsView }) {
-  return (
-    <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
-      <MetricCard label="Cumulative Return" value={formatPercent(summary.cumulative_return_pct)} />
-      <MetricCard label="Benchmark Return" value={formatPercent(summary.benchmark_return_pct)} />
-      <MetricCard label="Excess Return" value={formatPercent(summary.excess_return_pct)} />
-      <MetricCard label="Max Drawdown" value={formatPercent(summary.max_drawdown_pct)} />
-      <MetricCard label="Sharpe Ratio" value={summary.sharpe_ratio.toFixed(2)} />
-      <MetricCard label="Win Rate" value={formatPercent(summary.win_rate_pct)} />
-      <MetricCard label="Trades" value={String(summary.number_of_trades)} />
-      <MetricCard label="Avg Holding Period" value={`${summary.avg_holding_period_days.toFixed(1)} days`} />
-    </div>
-  );
+function isNotFoundError(error: unknown): boolean {
+  return error instanceof Error && error.message.startsWith("HTTP 404:");
 }
 
 function BacktestContent() {
@@ -96,8 +68,9 @@ function BacktestContent() {
   const [dateTo, setDateTo] = useState(DEFAULT_DATE_TO);
   const [frequency, setFrequency] = useState<BacktestRequest["frequency"]>("weekly");
   const [benchmark, setBenchmark] = useState("SPY");
-  const [createdBacktestId, setCreatedBacktestId] = useState<string | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const { backtestId, isRestored, persistBacktestId, syncBacktestStatus } =
+    usePersistedBacktestId(searchParams.get("backtest_id"));
 
   const strategiesQuery = useQuery({
     queryKey: ["strategies"],
@@ -110,8 +83,6 @@ function BacktestContent() {
     "";
   const selectedStrategyName =
     strategies.find((strategy) => strategy.id === selectedStrategyId)?.name ?? "";
-  const backtestId = createdBacktestId ?? searchParams.get("backtest_id");
-
   const jobQuery = useQuery({
     queryKey: ["backtest", backtestId],
     queryFn: () => backtestApi.get(backtestId ?? ""),
@@ -124,14 +95,19 @@ function BacktestContent() {
   });
   const job = jobQuery.data;
 
+  useEffect(() => {
+    if (job) {
+      syncBacktestStatus(job.backtest_id, job.status);
+    } else if (backtestId && isNotFoundError(jobQuery.error)) {
+      syncBacktestStatus(backtestId, "not_found");
+    }
+  }, [backtestId, job, jobQuery.error, syncBacktestStatus]);
+
   const runMutation = useMutation({
     mutationFn: (request: BacktestRequest) => backtestApi.create(request),
     onSuccess: (created) => {
       setValidationError(null);
-      setCreatedBacktestId(created.backtest_id);
-      const url = new URL(window.location.href);
-      url.searchParams.set("backtest_id", created.backtest_id);
-      window.history.replaceState(null, "", url);
+      persistBacktestId(created.backtest_id, created.status);
     },
   });
 
@@ -257,14 +233,14 @@ function BacktestContent() {
         {isRunning ? <Card><CardContent className="flex items-center gap-3 pt-6"><Loader2 className="h-5 w-5 animate-spin" /><div><p className="font-medium">Backtest {job?.status}</p><p className="text-sm text-muted-foreground">The page will refresh this persisted job until it reaches a terminal state.</p></div></CardContent></Card> : null}
         {jobError ? <Card className="border-destructive"><CardContent className="flex items-start justify-between gap-4 pt-6" role="alert"><div><p className="flex items-center gap-2 font-medium text-destructive"><AlertCircle className="h-4 w-4" /> Backtest failed</p><p className="mt-1 text-sm text-muted-foreground">{jobError}</p></div><Button variant="outline" onClick={submit} disabled={runMutation.isPending}><RefreshCw className="mr-2 h-4 w-4" /> Retry</Button></CardContent></Card> : null}
 
-        {!backtestId && !runMutation.isPending ? <Card><CardContent className="pt-2"><EmptyState icon={<BarChart3 className="h-12 w-12" />} title="No backtest selected" description="Choose a strategy and historical window, then run a persisted backtest." /></CardContent></Card> : null}
+        {isRestored && !backtestId && !runMutation.isPending ? <Card><CardContent className="pt-2"><EmptyState icon={<BarChart3 className="h-12 w-12" />} title="No backtest selected" description="Choose a strategy and historical window, then run a persisted backtest." /></CardContent></Card> : null}
 
         {completed && resultConfig && backtestId ? <div className="space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div><h3 className="text-base font-semibold">Completed {resultConfig.ticker} backtest</h3><p className="text-sm text-muted-foreground">{resultConfig.start_date} to {resultConfig.end_date} · {resultConfig.frequency} decisions · benchmark {resultConfig.benchmark_symbol}</p></div>
             <Badge>Completed</Badge>
           </div>
-          <Metrics summary={completed.summary} />
+          <BacktestMetrics summary={completed.summary} />
           <Card>
             <CardHeader><CardTitle className="text-base">Equity and Drawdown</CardTitle><CardDescription>{chartData.length} daily equity points returned by the completed job.</CardDescription></CardHeader>
             <CardContent><div className="h-80 min-w-0"><ResponsiveContainer width="100%" height="100%"><RechartsLineChart data={chartData} margin={{ top: 8, right: 12, bottom: 8, left: 4 }}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="dateLabel" minTickGap={32} /><YAxis yAxisId="equity" tickFormatter={(value: number) => `$${Math.round(value)}`} width={70} /><YAxis yAxisId="drawdown" orientation="right" tickFormatter={(value: number) => `${value}%`} width={55} /><Tooltip formatter={(value, name) => { const numberValue = typeof value === "number" ? value : Number(value); const label = String(name ?? ""); return [label.includes("drawdown") ? formatPercent(numberValue) : formatCurrency(numberValue), label]; }} /><Legend /><Line yAxisId="equity" type="monotone" dataKey="strategy_equity" name="Strategy equity" stroke="var(--primary)" strokeWidth={2} dot={false} /><Line yAxisId="equity" type="monotone" dataKey="benchmark_equity" name="Benchmark equity" stroke="var(--muted-foreground)" strokeWidth={2} dot={false} /><Line yAxisId="drawdown" type="monotone" dataKey="strategy_drawdown_pct" name="Strategy drawdown" stroke="var(--destructive)" strokeWidth={1.5} dot={false} /></RechartsLineChart></ResponsiveContainer></div></CardContent>

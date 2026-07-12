@@ -1,4 +1,5 @@
 import { api, apiUrl } from "./client";
+import { encodeBacktestIdPathSegment } from "@/lib/backtest-id";
 import type { BacktestJobResponse, BacktestRequest } from "@/lib/types/models";
 
 export const backtestApi = {
@@ -7,10 +8,10 @@ export const backtestApi = {
   },
 
   get(backtestId: string): Promise<BacktestJobResponse> {
-    return api.get(`/agent/backtest/${backtestId}`);
+    return api.get(`/agent/backtest/${encodeBacktestIdPathSegment(backtestId)}`);
   },
 
   csvUrl(backtestId: string): string {
-    return apiUrl(`/agent/backtest/${backtestId}/trades.csv`);
+    return apiUrl(`/agent/backtest/${encodeBacktestIdPathSegment(backtestId)}/trades.csv`);
   },
 };
