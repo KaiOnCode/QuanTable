@@ -247,3 +247,6 @@ userDraft.md
 
 # Research
 docs/research/
+
+# Goal-mode local evidence (referenced by PROGRESS.md, not product commits)
+.omo/
