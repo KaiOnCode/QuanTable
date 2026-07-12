@@ -2,6 +2,60 @@
 
 Last updated: 2026-07-12 | Branch: `dev`
 
+## Frontend Demo Integration: Backtest Production Repair ✅
+
+Completed on 2026-07-12 after product-owner reproduction of the Backtest
+failure state.
+
+Delivered:
+
+- Added full-window target and benchmark preloading through the existing Yahoo
+  provider before cache-only Backtest execution. The dedicated loader always
+  writes into the runner's injected market store, even when general market
+  caching is disabled, and propagates persistence failures.
+- Repaired malformed indicator OHLCV dates, rejected invalid dates at the store
+  boundary, and removed legacy positional-date rows during idempotent store
+  initialization.
+- Preserved point-in-time context across concurrent read tools, restricted the
+  Backtest agent to price, indicator, and decision tools, and made duplicate
+  recovery preserve final answers and original streamed result indices.
+- Replaced the indistinguishable generic failure with stable, secret-safe
+  market-data and agent error categories. The completed chart now uses the
+  project's `oklch`-compatible color tokens, so the strategy, benchmark, and
+  drawdown series render visibly.
+
+Fresh verification:
+
+- TDD covered missing and partial cache windows, cache-disabled persistence,
+  propagated write failures, malformed dates, thread context, duplicate-only
+  and mixed duplicate tool calls, safe job errors, and Backtest prompt limits.
+- `uv run pytest -q` passed `274 passed, 1 skipped, 1 warning in 6.31s`.
+  BasedPyright passed with zero diagnostics; Ruff check, frontend TypeScript,
+  production build, ESLint, and diff checks passed. ESLint retained 66
+  documented pre-existing warnings and no errors.
+- The original AAPL/SPY `2024-01-02` through `2024-03-29` weekly job completed
+  with 61 persisted equity points and `error: null`; its CSV returned `200`
+  with the canonical header and survived a backend restart. A nonexistent
+  ticker produced the actionable `market_data_unavailable` response without
+  leaking provider details.
+- Fresh production Chromium clicked Run Backtest and observed POST `202`, real
+  polling to completed, one historical result point, and reload restoration.
+  It also verified the original 61-point result, CSV download, three visible
+  chart strokes, the responsive failure state, zero console errors, and zero
+  unexpected request failures. Both visual reviewers and the Goal, hands-on,
+  code-quality, security, and context review lanes returned PASS.
+
+Evidence:
+
+- `.omo/evidence/frontend-demo-integration/review-fixes/backtest-fix/final-review.md`
+- `.omo/evidence/frontend-demo-integration/review-fixes/backtest-fix/final-api.json`
+- `.omo/evidence/frontend-demo-integration/review-fixes/backtest-fix/final-browser.json`
+- `.omo/evidence/frontend-demo-integration/review-fixes/backtest-fix/backtest-completed-desktop.png`
+- `.omo/evidence/frontend-demo-integration/review-fixes/backtest-fix/backtest-failure-mobile.png`
+
+Next: commit this scoped repair, push `origin dev:dev`, prove remote parity,
+and request product-owner closeout.
+
 ## Frontend Demo Integration: Review Corrections ✅
 
 Completed on 2026-07-12 after product-owner review of the Phase 7 candidate.

@@ -115,7 +115,7 @@ class BacktestDecisionAdapter:
         session_id: str,
         context: AgentRunContext | None = None,
     ) -> BacktestDecisionResult:
-        del date, current_position_pct, execution_enabled
+        del date, execution_enabled
         run_context = context or self._build_context(
             ticker=ticker,
             as_of=as_of,
@@ -126,13 +126,19 @@ class BacktestDecisionAdapter:
         loop = self._loop_factory()
         system_prompt = (
             "You are a point-in-time backtest decision agent. Use only the available "
-            "scoped tools. You must call submit_backtest_decision exactly once with a "
-            "structured BUY, SELL, or HOLD decision. Do not infer a decision in prose."
+            "scoped tools. You may call get_price and get_indicators at most once each. "
+            "After any read results, immediately call submit_backtest_decision exactly "
+            "once with a structured BUY, SELL, or HOLD decision. Never repeat a read "
+            "tool. Missing optional data requires HOLD, not another lookup. Do not infer "
+            "a decision in prose."
         )
         try:
             with bind_agent_run_context(run_context):
                 result = loop.run(
-                    f"Make the single decision for {ticker} as of {as_of}.",
+                    (
+                        f"Make the single decision for {ticker} as of {as_of}; "
+                        f"current position is {current_position_pct:.2f}%."
+                    ),
                     session_id=session_id,
                     system_prompt=system_prompt,
                 )
@@ -199,9 +205,6 @@ class BacktestDecisionAdapter:
             {
                 "get_price",
                 "get_indicators",
-                "get_fundamentals",
-                "get_news",
-                "search_skills",
                 "submit_backtest_decision",
             }
         )

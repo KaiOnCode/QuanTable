@@ -10,13 +10,19 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from agent.backtest_adapter import BacktestDecisionAdapter
-from broker.backtest_data import BacktestDataService, BacktestDatasetPreparer
+from agent.backtest_adapter import BacktestDecisionAdapter, BacktestDecisionError
+from broker.backtest_data import (
+    BacktestDataError,
+    BacktestDataService,
+    BacktestDatasetPreparer,
+    HistoricalPriceLoader,
+)
 from broker.backtest_runner import BacktestAgent, BacktestRunner
 from broker.config import BrokerConfig
 from broker.engine import MockBrokerEngine
 from broker.views import BacktestResultView
 from dataflow.store import MarketDataStore
+from dataflow.history import DataServiceHistoryLoader
 from storage.store import BacktestJobRecord, ContextStore
 
 type BacktestJobStatus = Literal["pending", "running", "completed", "failed"]
@@ -42,7 +48,13 @@ class BacktestRequest(BaseModel):
 class BacktestJobError(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    code: Literal["backtest_failed", "interrupted", "storage_corrupt"]
+    code: Literal[
+        "agent_failed",
+        "backtest_failed",
+        "interrupted",
+        "market_data_unavailable",
+        "storage_corrupt",
+    ]
     message: str
 
 
@@ -103,11 +115,21 @@ class _ScopedBacktestAgent:
 
 
 class ActiveBacktestJobRunner:
-    def __init__(self, market_store: MarketDataStore | None = None) -> None:
+    def __init__(
+        self,
+        market_store: MarketDataStore | None = None,
+        history_loader: HistoricalPriceLoader | None = None,
+    ) -> None:
         self._market_store = market_store or MarketDataStore()
+        self._history_loader = history_loader or DataServiceHistoryLoader(
+            self._market_store
+        )
 
     def run(self, request: BacktestRequest) -> BacktestResultView:
-        dataset = BacktestDatasetPreparer(self._market_store).prepare(
+        dataset = BacktestDatasetPreparer(
+            self._market_store,
+            history_loader=self._history_loader,
+        ).prepare(
             ticker=request.ticker,
             benchmark_symbol=request.benchmark,
             date_from=request.date_from.isoformat(),
@@ -218,6 +240,29 @@ class BacktestJobService:
             return
         try:
             result = self._runner.run(request)
+        except BacktestDataError:
+            self._store.fail_backtest_job(
+                job_id,
+                BacktestJobError(
+                    code="market_data_unavailable",
+                    message=(
+                        "Historical market data is unavailable for "
+                        f"{request.ticker} and {request.benchmark} in the requested window."
+                    ),
+                ).model_dump_json(),
+            )
+            return
+        except BacktestDecisionError:
+            self._store.fail_backtest_job(
+                job_id,
+                BacktestJobError(
+                    code="agent_failed",
+                    message=(
+                        "The backtest agent could not produce a valid structured decision."
+                    ),
+                ).model_dump_json(),
+            )
+            return
         except Exception:  # noqa: BLE001
             self._store.fail_backtest_job(
                 job_id,

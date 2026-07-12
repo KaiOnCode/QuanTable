@@ -31,6 +31,21 @@ def _seed_prices(
     )
 
 
+class _FixtureHistoryLoader:
+    def __init__(self, store: MarketDataStore) -> None:
+        self._store = store
+        self.calls: list[tuple[str, str, str]] = []
+
+    def preload(self, ticker: str, date_from: str, date_to: str) -> None:
+        self.calls.append((ticker, date_from, date_to))
+        close = 100.0 if ticker == "AAPL" else 400.0
+        _seed_prices(
+            self._store,
+            ticker,
+            [(date_from, close), (date_to, close + 1.0)],
+        )
+
+
 def test_backtest_data_service_hides_future_sentinel_from_all_scoped_reads(
     tmp_path,
 ) -> None:
@@ -104,3 +119,54 @@ def test_dataset_preparer_returns_distinct_target_and_benchmark_windows(
     # Then: the dataframes retain independent close histories.
     assert list(dataset.target["Close"]) == [100.0, 110.0]
     assert list(dataset.benchmark["Close"]) == [400.0, 404.0]
+
+
+def test_dataset_preparer_preloads_missing_target_and_benchmark_windows(
+    tmp_path,
+) -> None:
+    # Given: the production-shaped cache is empty and a historical loader owns fills.
+    store = MarketDataStore(str(tmp_path / "market.db"))
+    loader = _FixtureHistoryLoader(store)
+    preparer = BacktestDatasetPreparer(
+        market_store=store,
+        history_loader=loader,
+    )
+
+    # When: a backtest requests a target and independent benchmark window.
+    dataset = preparer.prepare(
+        ticker="AAPL",
+        benchmark_symbol="SPY",
+        date_from="2024-01-02",
+        date_to="2024-03-29",
+    )
+
+    # Then: both exact windows are preloaded before the cache-only dataset is built.
+    assert loader.calls == [
+        ("AAPL", "2024-01-02", "2024-03-29"),
+        ("SPY", "2024-01-02", "2024-03-29"),
+    ]
+    assert list(dataset.target["Close"]) == [100.0, 101.0]
+    assert list(dataset.benchmark["Close"]) == [400.0, 401.0]
+
+
+def test_dataset_preparer_refreshes_partial_request_window(tmp_path) -> None:
+    # Given: target cache has only an interior bar while benchmark is empty.
+    store = MarketDataStore(str(tmp_path / "market.db"))
+    _seed_prices(store, "AAPL", [("2024-02-01", 105.0)])
+    loader = _FixtureHistoryLoader(store)
+    preparer = BacktestDatasetPreparer(store, history_loader=loader)
+
+    # When: the complete request window is prepared.
+    dataset = preparer.prepare(
+        ticker="AAPL",
+        benchmark_symbol="SPY",
+        date_from="2024-01-02",
+        date_to="2024-03-29",
+    )
+
+    # Then: both symbols are refreshed before cache-only reads begin.
+    assert loader.calls == [
+        ("AAPL", "2024-01-02", "2024-03-29"),
+        ("SPY", "2024-01-02", "2024-03-29"),
+    ]
+    assert list(dataset.target["Close"]) == [100.0, 105.0, 101.0]

@@ -16,7 +16,8 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
-from datetime import datetime, timezone, timedelta
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "market_data.db"
@@ -24,6 +25,26 @@ DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "market_data
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+@dataclass(frozen=True, slots=True)
+class InvalidOHLCVDateError(ValueError):
+    value: str
+
+    def __str__(self) -> str:
+        return f"OHLCV date must be an ISO trading date: {self.value!r}"
+
+
+def _parse_ohlcv_date(row: dict) -> str:
+    raw_value = row.get("date", row.get("ts", ""))
+    value = str(raw_value)[:10]
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError as error:
+        raise InvalidOHLCVDateError(value) from error
+    if parsed.isoformat() != value:
+        raise InvalidOHLCVDateError(value)
+    return value
 
 
 class MarketDataStore:
@@ -76,6 +97,9 @@ class MarketDataStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_fund_ticker ON fundamentals(ticker);
                 """)
+            db.execute(
+                "DELETE FROM ohlcv WHERE date(date) IS NULL OR date(date) != date"
+            )
             # Migrations: add columns that may not exist in older DBs
             # Must run outside executescript — if column already exists, silently skip
             for col in ("roe", "dividend_yield", "profit_margin"):
@@ -161,7 +185,7 @@ class MarketDataStore:
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         ticker.upper(),
-                        row.get("date", row.get("ts", ""))[:10],
+                        _parse_ohlcv_date(row),
                         row.get("open", row.get("o")),
                         row.get("high", row.get("h")),
                         row.get("low", row.get("l")),

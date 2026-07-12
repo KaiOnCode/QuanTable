@@ -553,7 +553,12 @@ export interface BacktestResultView {
 }
 
 export interface BacktestJobError {
-  code: "backtest_failed" | "interrupted" | "storage_corrupt";
+  code:
+    | "agent_failed"
+    | "backtest_failed"
+    | "interrupted"
+    | "market_data_unavailable"
+    | "storage_corrupt";
   message: string;
 }
 

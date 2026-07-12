@@ -580,7 +580,10 @@ Test connection to external MCP server.
 Each request creates an independent persisted job. `strategy_id` must refer to an
 existing strategy. Invalid dates/ticker/frequency return `422`; an unknown
 strategy returns `404`; a missing LLM configuration returns `422` before a job
-is created. The ACTIVE route never invokes a legacy analysis pipeline.
+is created. Before the point-in-time loop begins, the job preloads the exact
+target and benchmark OHLCV request window through `DataService`; every decision
+tool then reads only the persisted slice at or before its `as_of` boundary. The
+ACTIVE route never invokes a legacy analysis pipeline.
 
 ### `GET /api/agent/backtest/{backtest_id}`
 
@@ -620,6 +623,9 @@ is created. The ACTIVE route never invokes a legacy analysis pipeline.
 Pending/running jobs have `result: null`. Failed jobs have `result: null` and
 a safe `{ "code", "message" }` error. Results live in `system.db`; startup
 marks abandoned pending/running jobs as failed with `code: "interrupted"`.
+Stable failure codes are `market_data_unavailable`, `agent_failed`,
+`backtest_failed`, `interrupted`, and `storage_corrupt`; messages never expose
+provider responses, prompts, credentials, paths, or stacks.
 
 ### `GET /api/agent/backtest/{backtest_id}/trades.csv`
 

@@ -187,12 +187,12 @@ def df_get_indicators(
 
     # Include raw OHLCV rows so callers can store to DB
     ohlcv_rows = []
-    for idx, row in df_prices.iterrows():
-        idx_value: Any = idx
+    for _, row in df_prices.iterrows():
+        date_source: Any = row.get("date")
         date_value = (
-            idx_value.strftime("%Y-%m-%d")
-            if hasattr(idx_value, "strftime")
-            else str(idx_value)[:10]
+            date_source.strftime("%Y-%m-%d")
+            if hasattr(date_source, "strftime")
+            else str(date_source)[:10]
         )
         ohlcv_rows.append(
             {

@@ -36,11 +36,12 @@ class DataService:
         self,
         fallback_local_root: str = "data",
         broker: "BrokerGateway | None" = None,
+        market_store: MarketDataStore | None = None,
     ):
         self.local_root = fallback_local_root
         self.portfolio_manager = PortfolioManager()
         self._broker = broker
-        self._store: MarketDataStore | None = None
+        self._store = market_store
 
     @property
     def store(self) -> MarketDataStore:

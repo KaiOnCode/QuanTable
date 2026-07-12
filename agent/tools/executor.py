@@ -26,6 +26,7 @@ import json
 import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextvars import copy_context
 from dataclasses import dataclass
 from typing import Callable
 
@@ -92,7 +93,8 @@ class StreamingToolExecutor:
             self._tools[index] = tracked
 
         if is_read:
-            tracked.future = self._pool.submit(self._invoke, tracked)
+            context = copy_context()
+            tracked.future = self._pool.submit(context.run, self._invoke, tracked)
         else:
             # Write tools: mark as completed immediately with empty result.
             # They'll be executed serially in get_remaining_results().

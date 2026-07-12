@@ -23,6 +23,10 @@ class ToolDataService(Protocol):
     def get_news(self, ticker: str, window_days: int = 7) -> list[dict]: ...
 
 
+class HistoricalPriceLoader(Protocol):
+    def preload(self, ticker: str, date_from: str, date_to: str) -> None: ...
+
+
 def _as_of_date(value: str | date) -> date:
     if isinstance(value, date):
         return value
@@ -95,6 +99,7 @@ class BacktestDataset:
 @dataclass(frozen=True, slots=True)
 class BacktestDatasetPreparer:
     market_store: MarketDataStore
+    history_loader: HistoricalPriceLoader | None = None
 
     def prepare(
         self,
@@ -108,6 +113,13 @@ class BacktestDatasetPreparer:
         end = _as_of_date(date_to)
         if start > end:
             raise BacktestDataError("date_from must not be after date_to")
+        if self.history_loader is not None:
+            self.history_loader.preload(ticker, start.isoformat(), end.isoformat())
+            self.history_loader.preload(
+                benchmark_symbol,
+                start.isoformat(),
+                end.isoformat(),
+            )
         target = self._window(ticker, start, end)
         benchmark = self._window(benchmark_symbol, start, end)
         if target.empty or benchmark.empty:

@@ -94,6 +94,11 @@ def test_backtest_adapter_requires_exactly_one_structured_decision_and_resets_co
     # Then: the result is tool-derived and no context leaks after the call.
     assert result["status"] == "ok"
     assert len(loop.requests) == 1
+    assert "Never repeat a read tool" in str(loop.requests[0]["system_prompt"])
+    assert "Missing optional data requires HOLD" in str(
+        loop.requests[0]["system_prompt"]
+    )
+    assert "current position is 0.00%" in str(loop.requests[0]["user_message"])
     assert current_agent_run_context() is None
 
 

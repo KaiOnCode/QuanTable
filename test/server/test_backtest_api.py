@@ -9,6 +9,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from agent.backtest_adapter import BacktestDecisionError
 from agent.backtest_jobs import BacktestJobResponse, BacktestJobService, BacktestRequest
 from broker.views import BacktestConfigView, BacktestResultView, PerformanceMetricsView
 from server.routes import agent as agent_routes
@@ -62,6 +63,17 @@ class _UnexpectedKeyErrorRunner:
             raise KeyError("/private/prompt/token must not escape")
         finally:
             self.finished.set()
+
+
+class _DecisionFailingRunner:
+    def run(self, request: BacktestRequest) -> BacktestResultView:
+        del request
+        raise BacktestDecisionError("provider detail must not escape")
+
+
+class _NoOpHistoryLoader:
+    def preload(self, ticker: str, date_from: str, date_to: str) -> None:
+        del ticker, date_from, date_to
 
 
 @pytest.fixture
@@ -246,7 +258,10 @@ def test_backtest_converts_empty_price_window_to_safe_failed_job(
     client, store, _ = backtest_api
     service = BacktestJobService(
         store=store,
-        runner=ActiveBacktestJobRunner(MarketDataStore(tmp_path / "market.db")),
+        runner=ActiveBacktestJobRunner(
+            MarketDataStore(tmp_path / "market.db"),
+            history_loader=_NoOpHistoryLoader(),
+        ),
     )
     monkeypatch.setattr(agent_routes, "get_backtest_job_service", lambda: service)
 
@@ -257,7 +272,33 @@ def test_backtest_converts_empty_price_window_to_safe_failed_job(
     failed = _poll_until_terminal(client, created.json()["backtest_id"])
     assert failed.status == "failed"
     assert failed.error is not None
-    assert failed.error.code == "backtest_failed"
+    assert failed.error.code == "market_data_unavailable"
+    assert failed.error.message == (
+        "Historical market data is unavailable for AAPL and SPY in the requested window."
+    )
+    service.shutdown()
+
+
+def test_backtest_converts_agent_decision_failure_to_safe_typed_error(
+    backtest_api: tuple[TestClient, ContextStore, FastAPI],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: an agent runner failure whose provider detail must remain private.
+    client, store, _ = backtest_api
+    service = BacktestJobService(store=store, runner=_DecisionFailingRunner())
+    monkeypatch.setattr(agent_routes, "get_backtest_job_service", lambda: service)
+
+    # When: the persisted worker reaches the decision boundary.
+    created = client.post("/api/agent/backtest", json=_request_payload())
+    failed = _poll_until_terminal(client, created.json()["backtest_id"])
+
+    # Then: callers receive a stable actionable category without provider details.
+    assert failed.error is not None
+    assert failed.error.code == "agent_failed"
+    assert failed.error.message == (
+        "The backtest agent could not produce a valid structured decision."
+    )
+    assert "provider detail" not in failed.model_dump_json()
     service.shutdown()
 
 

@@ -357,7 +357,8 @@ class AgentLoop:
             # Cross-iteration dedup: reject calls already made.
             # Key on tool name + ticker/query only (ignore days/limit params)
             deduped_calls = []
-            for tc in tool_calls:
+            for stream_index, tc in enumerate(tool_calls):
+                tc["_stream_index"] = stream_index
                 args = tc.get("args") or {}
                 # Dedup key: name + primary identifier (ticker or query)
                 primary = (
@@ -375,12 +376,26 @@ class AgentLoop:
             tool_calls = deduped_calls
 
             if not tool_calls:
+                executor.shutdown()
+                if content:
+                    messages.append({"role": "assistant", "content": str(content)})
+                    validated = self._validate_output(str(content), messages)
+                    yield (
+                        "answer",
+                        {"text": validated, "terminal_reason": "completed"},
+                    )
+                    break
                 messages.append(
-                    {"role": "assistant", "content": str(content) if content else ""}
+                    {
+                        "role": "user",
+                        "content": (
+                            "Those tool calls were already completed. Use the existing "
+                            "tool results. Do not repeat them; call a different required "
+                            "tool or provide the final answer."
+                        ),
+                    }
                 )
-                validated = self._validate_output(str(content), messages)
-                yield ("answer", {"text": validated})
-                break
+                continue
 
             # Build assistant message with ALL tool_calls
             messages.append(
@@ -453,7 +468,7 @@ class AgentLoop:
                 yield ev
 
             # Map results back to tool_calls (results_dict is keyed by original index)
-            results = [results_dict[i] for i in sorted(results_dict.keys())]
+            results = [results_dict[tc["_stream_index"]] for tc in tool_calls]
 
             for tc, result in zip(tool_calls, results):
                 tool_msg = {
