@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Shell } from "@/components/layout/shell";
 import {
@@ -32,6 +32,17 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogMedia,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { EmptyState } from "@/components/shared/empty-state";
 import { StatusBadge } from "@/components/shared/badges";
 import { formatDate } from "@/lib/utils";
@@ -76,10 +87,12 @@ const lifecycleLabel = (action: LifecycleAction) => {
 
 export default function StrategiesPage() {
   const queryClient = useQueryClient();
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [rowError, setRowError] = useState<RowError | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<StrategyConfig | null>(null);
   const [pendingRowCounts, setPendingRowCounts] = useState<Record<string, number>>({});
 
   const updatePendingRow = (strategyId: string, delta: 1 | -1) => {
@@ -105,9 +118,25 @@ export default function StrategiesPage() {
 
   const strategies = data?.items ?? [];
 
+  const closeDeleteDialog = () => {
+    setDeleteTarget(null);
+    requestAnimationFrame(() => searchInputRef.current?.focus());
+  };
+
   const deleteMutation = useMutation({
     mutationFn: (id: string) => strategiesApi.delete(id, true),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["strategies"] }),
+    onMutate: (strategyId) => updatePendingRow(strategyId, 1),
+    onSuccess: async () => {
+      setRowError(null);
+      closeDeleteDialog();
+      toast.success("Strategy deleted.");
+      await queryClient.invalidateQueries({ queryKey: ["strategies"] });
+    },
+    onError: (mutationError: Error, strategyId) => {
+      setRowError({ strategyId, message: mutationError.message });
+      toast.error(`Delete failed: ${mutationError.message}`);
+    },
+    onSettled: (_result, _error, strategyId) => updatePendingRow(strategyId, -1),
   });
 
   const lifecycleMutation = useMutation({
@@ -180,6 +209,7 @@ export default function StrategiesPage() {
               <div className="relative flex-1 min-w-[200px] max-w-sm">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
+                  ref={searchInputRef}
                   placeholder="Search strategies..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
@@ -361,11 +391,7 @@ export default function StrategiesPage() {
                           <DropdownMenuSeparator />
                           <DropdownMenuItem
                             className="text-destructive"
-                            onClick={() => {
-                              if (confirm(`Delete "${s.name}"?`)) {
-                                deleteMutation.mutate(s.id);
-                              }
-                            }}
+                            onClick={() => setDeleteTarget(s)}
                           >
                             <Trash2 className="mr-2 h-4 w-4" />
                             Delete
@@ -381,6 +407,46 @@ export default function StrategiesPage() {
           </Card>
         ) : null}
       </div>
+      <AlertDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !deleteMutation.isPending) closeDeleteDialog();
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogMedia className="bg-destructive/10 text-destructive">
+              <Trash2 />
+            </AlertDialogMedia>
+            <AlertDialogTitle>Delete strategy?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget
+                ? `Delete “${deleteTarget.name}”? This permanently removes the strategy and its trading database. Related records in shared services are retained.`
+                : "This action cannot be undone."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col">
+            <AlertDialogCancel disabled={deleteMutation.isPending}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              className="bg-destructive text-white hover:bg-destructive/90 dark:bg-destructive dark:text-background dark:hover:bg-destructive/90"
+              disabled={!deleteTarget || deleteMutation.isPending}
+              onClick={() => {
+                if (deleteTarget) deleteMutation.mutate(deleteTarget.id);
+              }}
+            >
+              {deleteMutation.isPending ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <Trash2 />
+              )}
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Shell>
   );
 }

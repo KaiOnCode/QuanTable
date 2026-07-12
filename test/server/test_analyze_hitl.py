@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI
@@ -10,6 +11,7 @@ import pytest
 
 import hitl.executor
 import quick_ask.orchestrator
+from server import analysis_runs
 from server.routes import analyze
 from storage.store import ContextStore
 
@@ -31,7 +33,7 @@ def _parse_sse_events(text: str) -> list[tuple[str, dict[str, Any]]]:
 
 
 def test_analyze_creates_pending_approval_without_hitl_executor(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store = ContextStore(tmp_path)
 
@@ -71,6 +73,7 @@ def test_analyze_creates_pending_approval_without_hitl_executor(
         del args, kwargs
 
     monkeypatch.setattr(quick_ask.orchestrator, "IntelliFin_Assistant", FakeAssistant)
+    monkeypatch.setattr(analysis_runs, "HISTORY_DIR", tmp_path / "history")
     monkeypatch.setattr(analyze, "get_store", lambda: store, raising=False)
     monkeypatch.setattr(analyze, "_notify_analysis_completed", noop_notify)
     monkeypatch.setattr(analyze, "_notify_analysis_failed", noop_notify)

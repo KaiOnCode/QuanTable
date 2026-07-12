@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI
@@ -9,6 +10,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 import quick_ask.orchestrator
+from server import analysis_runs
 from server.routes import analyze
 
 
@@ -29,6 +31,7 @@ def _parse_sse_events(text: str) -> list[tuple[str, dict[str, Any]]]:
 
 
 def test_analyze_passes_memory_identity_and_returns_record_id(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, Any] = {}
@@ -81,6 +84,7 @@ def test_analyze_passes_memory_identity_and_returns_record_id(
         del args, kwargs
 
     monkeypatch.setattr(quick_ask.orchestrator, "IntelliFin_Assistant", FakeAssistant)
+    monkeypatch.setattr(analysis_runs, "HISTORY_DIR", tmp_path / "history")
     monkeypatch.setattr("dataflow.service.DataService", FakeDataService)
     monkeypatch.setattr(analyze, "_notify_analysis_completed", noop_notify)
     monkeypatch.setattr(analyze, "_notify_analysis_failed", noop_notify)

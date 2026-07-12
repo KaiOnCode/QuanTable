@@ -104,6 +104,8 @@ class ReportSourceResolver:
     def _load_snapshot(self, session_id: str) -> dict[str, object]:
         if Path(session_id).name != session_id:
             raise ReportSourceError("Analysis snapshot not found")
+        if self._is_tombstoned(session_id):
+            raise ReportSourceError("Analysis snapshot not found")
         path = self._history / f"{session_id}.json"
         if path.is_symlink() or path.resolve().parent != self._history.resolve():
             raise ReportSourceError("Analysis snapshot not found")
@@ -120,7 +122,7 @@ class ReportSourceResolver:
     ) -> dict[str, object]:
         candidates: list[tuple[str, dict[str, object]]] = []
         for path in self._history.glob("*.json"):
-            if path.is_symlink():
+            if path.is_symlink() or self._is_tombstoned(path.stem):
                 continue
             try:
                 snapshot = json.loads(path.read_text(encoding="utf-8"))
@@ -146,6 +148,9 @@ class ReportSourceResolver:
         if not candidates:
             raise ReportSourceError("Completed analysis snapshot not found")
         return max(candidates, key=lambda item: item[0])[1]
+
+    def _is_tombstoned(self, session_id: str) -> bool:
+        return (self._history / ".deleted" / f"{session_id}.deleted").is_file()
 
     @staticmethod
     def _validate_analysis(

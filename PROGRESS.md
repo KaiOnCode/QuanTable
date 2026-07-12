@@ -2,6 +2,51 @@
 
 Last updated: 2026-07-12 | Branch: `dev`
 
+## Frontend Demo Integration: Review Corrections ✅
+
+Completed on 2026-07-12 after product-owner review of the Phase 7 candidate.
+
+Delivered:
+
+- Replaced Strategies' native deletion confirmation with the existing browser-
+  DOM `AlertDialog`. The dialog has truthful deletion-scope copy, pending and
+  recoverable failure states, responsive destructive styling, aligned mobile
+  visual/Tab order, and explicit focus restoration to the surviving Search
+  input after cancel, failure dismissal, or successful deletion.
+- Identified the source of the reappearing history as two Analyze route tests
+  writing fixtures into the real `data/history` directory. Both tests now use
+  isolated `tmp_path` history; the two confirmed test artifacts were deleted
+  through the API, and a complete suite leaves real history empty.
+- Extended the tombstone contract to Reports source resolution so an analysis
+  deleted from history cannot reappear as an explicit or latest Report source
+  if a same-name JSON file is written later.
+
+Fresh verification:
+
+- The browser RED captured a native `confirm` and no DOM `alertdialog`. Final
+  production Chromium captured no native dialog; cancel, forced HTTP 500,
+  success, and mobile cancellation all restored Search with no inert layer.
+  Keyboard input after deletion succeeded, mobile focus order matched layout,
+  and destructive contrast measured `6.85:1`.
+- Independent hands-on QA passed `11/11` browser/history scenarios. Both visual
+  reviewers and the Goal, code-quality, security, and context review lanes
+  returned unconditional PASS.
+- `uv run pytest test -q` passed `261 passed, 1 skipped, 1 warning in 8.05s` and
+  emitted `FULL_SUITE_HISTORY_ISOLATION_PASS`; the real history count stayed
+  zero. BasedPyright, Ruff check/format, frontend TypeScript, production build,
+  scoped lint, suppression, forbidden-path, and diff checks passed. Repository
+  ESLint retained 66 documented pre-existing warnings and no errors.
+
+Evidence:
+
+- `.omo/evidence/frontend-demo-integration/review-fixes/final-review.md`
+- `.omo/evidence/frontend-demo-integration/review-fixes/final-browser-qa.json`
+- `.omo/evidence/frontend-demo-integration/review-fixes/strategy-delete-final-desktop.png`
+- `.omo/evidence/frontend-demo-integration/review-fixes/strategy-delete-final-mobile.png`
+
+Next: request product-owner closeout after the scoped correction is committed,
+pushed to `origin/dev`, and verified at remote parity.
+
 ## Frontend Demo Integration: Phase 7 — Cross-Page Acceptance & Closeout ✅
 
 Completed on 2026-07-12 under

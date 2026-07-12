@@ -121,6 +121,21 @@ def test_stock_source_requires_completed_exact_identity_and_latest(reporting) ->
         resolver.stock("MSFT", "strategy-a", session_id="older")
 
 
+def test_stock_source_excludes_tombstoned_analysis(reporting) -> None:
+    _, history, _, resolver = reporting
+    _snapshot(history, "deleted")
+    deleted_dir = history / ".deleted"
+    deleted_dir.mkdir(parents=True)
+    (deleted_dir / "deleted.deleted").write_text("deleted", encoding="utf-8")
+
+    with pytest.raises(ReportSourceError, match="not found"):
+        resolver.stock("AAPL", "strategy-a", session_id="deleted")
+
+    _snapshot(history, "available")
+    latest = resolver.stock("AAPL", "strategy-a")
+    assert latest.source_ids == ("available",)
+
+
 def test_sector_uses_only_completed_scan_tickers_and_marks_analysis_gap(
     reporting,
 ) -> None:
