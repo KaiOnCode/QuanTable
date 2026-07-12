@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Shell } from "@/components/layout/shell";
 import {
   Card, CardContent, CardDescription, CardHeader, CardTitle,
@@ -22,8 +23,9 @@ import {
   Brain, Search, Loader2, BookOpen, FlaskConical, History, RefreshCw,
 } from "lucide-react";
 
-export default function MemoryLabPage() {
-  const [requestedStrategy, setRequestedStrategy] = useState<string>("");
+function MemoryLabContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [tickerFilter, setTickerFilter] = useState("");
 
   const strategiesQuery = useQuery({
@@ -31,8 +33,9 @@ export default function MemoryLabPage() {
     queryFn: () => strategiesApi.list(),
   });
   const strategies = strategiesQuery.data?.items ?? [];
+  const requestedIdentity = searchParams.get("strategy_id") || "";
   const selectedStrategy =
-    strategies.find((strategy) => strategy.id === requestedStrategy)?.id ??
+    strategies.find((strategy) => strategy.id === requestedIdentity)?.id ??
     strategies[0]?.id ??
     "";
   const selectedStrategyName =
@@ -48,6 +51,12 @@ export default function MemoryLabPage() {
     retry: false,
   });
   const memories = memoryQuery.data?.memories ?? [];
+
+  const selectStrategy = (strategyId: string) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("strategy_id", strategyId);
+    router.replace(`/memory-lab?${params.toString()}`, { scroll: false });
+  };
 
   // OWM score distribution (computed client-side)
   const owmScores = memories.map((m) => m.owm_score);
@@ -72,7 +81,7 @@ export default function MemoryLabPage() {
               <span className="text-sm font-medium">Strategy:</span>
               <Select
                 value={selectedStrategy}
-                onValueChange={(v) => v && setRequestedStrategy(v)}
+                onValueChange={(value) => value && selectStrategy(value)}
                 disabled={strategiesQuery.isLoading || strategiesQuery.isError || strategies.length === 0}
               >
                 <SelectTrigger className="w-full sm:w-64" aria-label="Strategy">
@@ -138,8 +147,8 @@ export default function MemoryLabPage() {
 
         {!strategiesQuery.isLoading && !strategiesQuery.isError && strategies.length > 0 ? (
         <Tabs defaultValue="memories">
-          <div className="overflow-x-auto pb-1">
-          <TabsList className="w-max">
+          <div className="pb-1 sm:overflow-x-auto">
+          <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:inline-flex sm:h-8 sm:w-max">
             <TabsTrigger value="memories"><Brain className="mr-2 h-4 w-4" />Memories ({memories.length})</TabsTrigger>
             <TabsTrigger value="reflections"><History className="mr-2 h-4 w-4" />Reflections</TabsTrigger>
             <TabsTrigger value="knowledge"><BookOpen className="mr-2 h-4 w-4" />Knowledge Base</TabsTrigger>
@@ -278,5 +287,21 @@ export default function MemoryLabPage() {
         ) : null}
       </div>
     </Shell>
+  );
+}
+
+export default function MemoryLabPage() {
+  return (
+    <Suspense
+      fallback={
+        <Shell>
+          <div className="flex h-64 items-center justify-center">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        </Shell>
+      }
+    >
+      <MemoryLabContent />
+    </Suspense>
   );
 }

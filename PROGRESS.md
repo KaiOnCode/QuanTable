@@ -2,6 +2,59 @@
 
 Last updated: 2026-07-12 | Branch: `dev`
 
+## Frontend Demo Integration: Phase 7 — Cross-Page Acceptance & Closeout ✅
+
+Completed on 2026-07-12 under
+`plans/frontend-demo-integration/frontend-demo-to-real-functionality-plan.md`.
+
+Delivered:
+
+- Completed the real cross-page acceptance journey for Strategies, Quick Ask,
+  Memory Lab, Backtest, Scanner, Risk, Reports, and Settings, including failure
+  or empty states, responsive layouts, reload/navigation restoration, and
+  browser console/network inspection.
+- Fixed full-suite pytest collection by selecting importlib import mode, then
+  added deterministic startup recovery and concurrency-safe lifecycle ownership
+  for Backtest and Report executors. Route-local lifespans preserve the SHARED
+  `server.main` to ACTIVE track boundary on normal and exceptional shutdown.
+- Made Memory Lab's `strategy_id` URL-authoritative, removed the misleading MCP
+  Start control, tightened changed-path TypeScript contracts, and resolved the
+  final responsive/sidebar/calendar visual gate findings.
+- Updated this issue tracker only after the independent F1-F4 and security
+  reviewers approved the stable candidate.
+
+Fresh final gate evidence:
+
+- `uv run pytest test -q` passed: `260 passed, 1 skipped, 1 warning in 7.43s`;
+  the warning is the existing Starlette/httpx deprecation warning.
+- BasedPyright passed with zero diagnostics and its mechanical baseline pruning
+  was restored. Repository Ruff check/format, frontend TypeScript, ESLint,
+  `git diff --check`, and changed-path suppression scans passed. ESLint retained
+  66 documented pre-existing warnings and no errors.
+- The required sandbox-external Next production-build retry passed compilation,
+  TypeScript, page collection, and all 20 routes after the sandbox-only
+  Turbopack internal-port `EPERM`.
+- Fresh production Chromium and real FastAPI/curl QA used a cleanable two-
+  strategy dataset and drove all eight pages. Backtest, Scanner, and Report
+  records survived a backend restart; Risk and Memory switched between distinct
+  strategy identities; a completed Report downloaded as a real PDF while
+  pending, missing, and traversal-shaped downloads were rejected.
+- The runtime debugging audit rejected all three required hypotheses: in-memory-
+  only job loss, stale cross-strategy query identity, and unsafe Report download
+  bypass. F1, F2, F3, F4, and security reviewers returned unconditional
+  approval with no blocker.
+
+Evidence:
+
+- `.omo/evidence/frontend-demo-integration/phase-7/phase-7-runtime-receipt.md`
+- `.omo/evidence/frontend-demo-integration/phase-7/full-gate-root.md`
+- `.omo/evidence/frontend-demo-integration/phase-7/debug-audit/runtime-audit.md`
+- `.omo/evidence/frontend-demo-integration/final-review/`
+
+Next: create the scoped Phase 7 commit, push `origin dev:dev`, prove remote
+parity, and run the F1 remote-final audit before presenting closeout to the
+user.
+
 ## Frontend Demo Integration: Phase 6 — Notification Setup & Status ✅
 
 Completed on 2026-07-12 under

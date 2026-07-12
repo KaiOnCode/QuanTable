@@ -16,7 +16,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
-import { EmptyState } from "@/components/shared/empty-state";
 import {
   Select,
   SelectContent,
@@ -581,22 +580,15 @@ export default function SettingsPage() {
               MCP Integration
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent>
             <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
               <div>
                 <Label className="text-sm">MCP Server</Label>
-                <p className="text-xs text-muted-foreground">Expose tools to external AI agents</p>
+                <p className="text-xs text-muted-foreground">
+                  Server management is not available in this build.
+                </p>
               </div>
-              <div className="flex items-center gap-2">
-                <Badge variant="outline">Stopped</Badge>
-                <Button variant="outline" size="sm">Start</Button>
-              </div>
-            </div>
-            <div className="p-8">
-              <EmptyState
-                title="No external servers"
-                description="Add external MCP servers to extend agent capabilities with third-party tools."
-              />
+              <Badge variant="outline">Unavailable</Badge>
             </div>
           </CardContent>
         </Card>

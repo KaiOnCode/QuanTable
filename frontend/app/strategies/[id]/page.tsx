@@ -13,7 +13,7 @@ import { StatusBadge, DirectionBadge, ActionBadge } from "@/components/shared/ba
 import { EmptyState } from "@/components/shared/empty-state";
 import { formatPercent, formatDate } from "@/lib/utils";
 import { strategiesApi } from "@/lib/api/strategies";
-import { Loader2, ArrowLeft, TrendingUp, BarChart3, Shield, Settings } from "lucide-react";
+import { Loader2, ArrowLeft, TrendingUp, BarChart3, Settings } from "lucide-react";
 import Link from "next/link";
 
 type TabKey = "overview" | "decisions" | "settings";
@@ -153,7 +153,7 @@ export default function StrategyDetailPage() {
                 <div className="col-span-2">
                   <span className="text-muted-foreground">Beliefs:</span>
                   {(strategy.beliefs ?? []).length > 0 ? (
-                    <ul className="list-disc list-inside">{strategy.beliefs?.map((b: string, i: number) => <li key={i} className="text-xs text-muted-foreground">{b}</li>)}</ul>
+                    <ul className="list-disc list-inside">{strategy.beliefs?.map((belief: string) => <li key={`${strategy.id}:${belief}`} className="text-xs text-muted-foreground">{belief}</li>)}</ul>
                   ) : <span className="text-xs text-muted-foreground"> None configured</span>}
                 </div>
                 <div className="col-span-2">
@@ -198,7 +198,7 @@ function StrategyDecisions({ strategyId }: { strategyId: string }) {
 
   if (isLoading) return <p className="text-sm text-muted-foreground p-4">Loading decisions...</p>;
 
-  const decisions = (data as any)?.decisions ?? [];
+  const decisions = data?.decisions ?? [];
   if (decisions.length === 0) {
     return (
       <Card>
@@ -213,7 +213,7 @@ function StrategyDecisions({ strategyId }: { strategyId: string }) {
 
   return (
     <div className="space-y-3">
-      {decisions.slice(0, 20).map((d: any) => (
+      {decisions.slice(0, 20).map((d) => (
         <Card key={d.id}>
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">

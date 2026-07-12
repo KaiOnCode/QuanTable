@@ -78,7 +78,7 @@ export function Sidebar({ mobile = false, onNavigate }: SidebarProps) {
       </div>
 
       {/* Nav */}
-      <ScrollArea className="flex-1 py-2">
+      <ScrollArea className="flex-1 py-2 [&_[data-slot=scroll-area-viewport]]:snap-y [&_[data-slot=scroll-area-viewport]]:snap-mandatory">
         <nav className="flex flex-col gap-0.5 px-2">
           {navItems.map((item) => {
             const isActive =
@@ -95,7 +95,7 @@ export function Sidebar({ mobile = false, onNavigate }: SidebarProps) {
                     variant: isActive ? "secondary" : "ghost",
                     size: isCollapsed ? "icon" : "default",
                   }),
-                  "justify-start gap-3 h-9",
+                  "h-9 snap-start justify-start gap-3",
                   isCollapsed && "w-10 mx-auto",
                   !isCollapsed && "w-full px-3"
                 )}

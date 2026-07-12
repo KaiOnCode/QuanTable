@@ -1563,3 +1563,7 @@ def get_store(data_dir: str | Path = DEFAULT_DATA_DIR) -> ContextStore:
 
 def recover_interrupted_backtest_jobs() -> int:
     return get_store().recover_interrupted_backtest_jobs()
+
+
+def recover_interrupted_report_jobs() -> int:
+    return get_store().recover_interrupted_report_jobs()

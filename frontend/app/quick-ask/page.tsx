@@ -493,7 +493,7 @@ function QuickAskContent() {
               </Select>
               <div className="w-full min-w-[200px] sm:flex-1">
                 <Input
-                  placeholder="Enter ticker symbol (e.g. AAPL, TSLA)"
+                  placeholder="Ticker (e.g. AAPL)"
                   value={ticker}
                   onChange={(e) => setTicker(e.target.value.toUpperCase())}
                   onKeyDown={(e) =>

@@ -11,9 +11,11 @@ import json
 import logging
 import os
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from queue import Empty, Queue
-from threading import Thread
+from threading import Lock, Thread
 from typing import Literal
 from uuid import uuid4
 
@@ -31,20 +33,41 @@ from agent.scanner_adapter import ScannerCompilationError, ScannerCompilationSer
 from server.routes.scanner import ScanRunError, ScanRunResponse, _response_from_record
 from storage import get_store
 
-router = APIRouter(tags=["agent"])
 logger = logging.getLogger(__name__)
 
 RUNS_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "agent-runs"
 RUNS_DIR.mkdir(parents=True, exist_ok=True)
 _backtest_job_service: BacktestJobService | None = None
+_backtest_job_service_lock = Lock()
 _scanner_compilation_service: ScannerCompilationService | None = None
+
+
+@asynccontextmanager
+async def agent_lifespan(_app: object) -> AsyncIterator[None]:
+    try:
+        yield
+    finally:
+        shutdown_backtest_job_service()
+
+
+router = APIRouter(tags=["agent"], lifespan=agent_lifespan)
 
 
 def get_backtest_job_service() -> BacktestJobService:
     global _backtest_job_service
-    if _backtest_job_service is None:
-        _backtest_job_service = default_backtest_job_service(get_store())
-    return _backtest_job_service
+    with _backtest_job_service_lock:
+        if _backtest_job_service is None:
+            _backtest_job_service = default_backtest_job_service(get_store())
+        return _backtest_job_service
+
+
+def shutdown_backtest_job_service() -> None:
+    global _backtest_job_service
+    with _backtest_job_service_lock:
+        service = _backtest_job_service
+        _backtest_job_service = None
+    if service is not None:
+        service.shutdown()
 
 
 def get_scanner_compilation_service() -> ScannerCompilationService:

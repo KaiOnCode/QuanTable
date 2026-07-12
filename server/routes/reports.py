@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from functools import lru_cache
 from pathlib import Path
+from threading import Lock
 from typing import Annotated, Callable, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -20,7 +23,19 @@ from server.analysis_runs import HISTORY_DIR
 from storage import get_store
 from utils.pdf_generator import ReportPdfRenderer
 
-router = APIRouter(tags=["reports"])
+_report_service: ReportService | None = None
+_report_service_lock = Lock()
+
+
+@asynccontextmanager
+async def report_lifespan(_app: object) -> AsyncIterator[None]:
+    try:
+        yield
+    finally:
+        shutdown_report_service()
+
+
+router = APIRouter(tags=["reports"], lifespan=report_lifespan)
 
 Ticker = Annotated[
     str,
@@ -84,14 +99,27 @@ def get_report_repository() -> ReportRepository:
     return ReportRepository(get_store(), root)
 
 
-@lru_cache(maxsize=1)
 def get_report_service() -> ReportService:
-    repository = get_report_repository()
-    return ReportService(
-        repository,
-        ReportSourceResolver(get_store(), HISTORY_DIR),
-        ReportPdfRenderer(),
-    )
+    global _report_service
+    with _report_service_lock:
+        if _report_service is None:
+            repository = get_report_repository()
+            _report_service = ReportService(
+                repository,
+                ReportSourceResolver(get_store(), HISTORY_DIR),
+                ReportPdfRenderer(),
+            )
+        return _report_service
+
+
+def shutdown_report_service() -> None:
+    global _report_service
+    with _report_service_lock:
+        service = _report_service
+        _report_service = None
+    if service is not None:
+        service.close()
+    get_report_repository.cache_clear()
 
 
 def _response(job: ReportJob) -> ReportResponse:

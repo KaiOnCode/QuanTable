@@ -16,6 +16,17 @@ import type {
 
 const BASE = "/strategies";
 
+export type StrategyDecision = {
+  readonly id: string;
+  readonly ticker: string;
+  readonly action: string | null;
+  readonly direction: string | null;
+  readonly confidence: number | null;
+  readonly report: string | null;
+  readonly winning_belief: string | null;
+  readonly created_at: string;
+};
+
 // ── Strategy CRUD ─────────────────────────────────────
 
 export const strategiesApi = {
@@ -171,7 +182,10 @@ export const strategiesApi = {
       from?: string;
       to?: string;
     }
-  ): Promise<{ decisions: unknown[] }> {
+  ): Promise<{
+    readonly decisions: readonly StrategyDecision[];
+    readonly total: number;
+  }> {
     const sp = new URLSearchParams();
     if (params?.ticker) sp.set("ticker", params.ticker);
     if (params?.from) sp.set("from", params.from);
