@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from datetime import datetime
+import math
 from typing import Any, Literal
 
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from broker.events import BrokerEvent, BrokerEventType
-from broker.ledger import LedgerFillRecord
+from broker.ledger import ClosedTradeRecord, LedgerFillRecord
 from broker.models import (
     AccountSnapshot,
     ExecutionReport,
@@ -113,6 +114,24 @@ class TradeView(BaseModel):
     decision_id: str = ""
 
 
+class ClosedTradeView(BaseModel):
+    entry_at: datetime
+    exit_at: datetime
+    ticker: str
+    quantity: float
+    entry_vwap: float
+    exit_vwap: float
+    average_cost_basis: float
+    net_realized_pnl: float
+    fees: float
+    slippage: float
+    holding_period_trading_days: int
+    strategy_id: str = ""
+    account_id: str = "default"
+    session_id: str = ""
+    decision_id: str = ""
+
+
 class ApprovalSnapshotView(BaseModel):
     approval_id: str = ""
     approval_status: str = ""
@@ -171,21 +190,35 @@ class BrokerEventView(BaseModel):
 
 
 class PerformanceMetricsView(BaseModel):
-    cumulative_return_pct: float = 0.0
-    total_return_pct: float = 0.0
-    annualized_return_pct: float = 0.0
-    benchmark_return_pct: float = 0.0
-    excess_return_pct: float = 0.0
-    max_drawdown_pct: float = 0.0
-    max_drawdown_duration: float = 0.0
-    sharpe_ratio: float = 0.0
-    win_rate_pct: float = 0.0
-    profit_factor: float = 0.0
-    avg_win: float = 0.0
-    avg_loss: float = 0.0
-    payoff_ratio: float = 0.0
+    model_config = ConfigDict(allow_inf_nan=False)
+
+    cumulative_return_pct: float | None = 0.0
+    total_return_pct: float | None = 0.0
+    annualized_return_pct: float | None = None
+    annualized_volatility_pct: float | None = None
+    benchmark_return_pct: float | None = None
+    excess_return_pct: float | None = None
+    max_drawdown_pct: float | None = 0.0
+    max_drawdown_duration: int = 0
+    sharpe_ratio: float | None = None
+    win_rate_pct: float | None = 0.0
+    profit_factor: float | None = None
+    avg_win: float | None = 0.0
+    avg_loss: float | None = 0.0
+    payoff_ratio: float | None = None
     number_of_trades: int = 0
+    number_of_fills: int = 0
+    number_of_orders: int = 0
+    number_of_rejections: int = 0
+    number_of_closed_trades: int = 0
     avg_holding_period_days: float = 0.0
+    realized_pnl_usd: float = 0.0
+    unrealized_pnl_usd: float = 0.0
+    net_pnl_usd: float = 0.0
+    total_fees_usd: float = 0.0
+    total_slippage_usd: float = 0.0
+    turnover_pct: float = 0.0
+    average_daily_gross_exposure_pct: float = 0.0
 
 
 class BacktestConfigView(BaseModel):
@@ -231,6 +264,7 @@ class BacktestConfigView(BaseModel):
     )
     warmup_bars: int = 0
     risk_free_rate: float = 0.0
+    periods_per_year: int = Field(default=252, ge=1)
     max_drawdown_limit_pct: float = 0.0
     max_drawdown_limit_enforced: bool = False
     evaluation_bar_count: int = 0
@@ -274,6 +308,7 @@ class BacktestEndPositionView(BaseModel):
     ticker: str = ""
     shares: float = 0.0
     market_value: float = 0.0
+    average_cost_basis: float = 0.0
     unrealized_pnl: float = 0.0
     liquidated_at_end: bool = False
 
@@ -286,11 +321,18 @@ class BacktestProvenanceView(BaseModel):
 
 
 class BacktestSeriesPointView(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+
     date: str
     strategy_equity: float
-    benchmark_equity: float
+    benchmark_equity: float | None = None
     strategy_drawdown_pct: float = 0.0
-    benchmark_drawdown_pct: float = 0.0
+    benchmark_drawdown_pct: float | None = None
+
+
+class BacktestNoTradeReasonView(BaseModel):
+    code: Literal["no_signals", "not_ready", "all_hold", "all_rejected"]
+    count: int = Field(ge=1)
 
 
 class BacktestResultView(BaseModel):
@@ -302,6 +344,9 @@ class BacktestResultView(BaseModel):
     summary: PerformanceMetricsView
     series: list[BacktestSeriesPointView] = Field(default_factory=list)
     trades: list[TradeView] = Field(default_factory=list)
+    executions: list[TradeView] = Field(default_factory=list)
+    closed_trades: list[ClosedTradeView] = Field(default_factory=list)
+    no_trade_reasons: list[BacktestNoTradeReasonView] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     progress: BacktestProgressView = Field(default_factory=BacktestProgressView)
     decisions: list[BacktestDecisionView] = Field(default_factory=list)
@@ -319,7 +364,7 @@ class BacktestResultView(BaseModel):
     def derive_counts_and_outcome(self) -> BacktestResultView:
         self.decision_count = len(self.decisions)
         self.order_count = len(self.orders)
-        self.outcome = "completed" if self.trades else "completed_no_trades"
+        self.outcome = "completed" if self.closed_trades else "completed_no_trades"
         return self
 
 
@@ -446,6 +491,26 @@ def to_trade_view(record: LedgerFillRecord) -> TradeView:
     )
 
 
+def to_closed_trade_view(record: ClosedTradeRecord) -> ClosedTradeView:
+    return ClosedTradeView(
+        entry_at=record.entry_at,
+        exit_at=record.exit_at,
+        ticker=record.ticker,
+        quantity=record.quantity,
+        entry_vwap=record.entry_vwap,
+        exit_vwap=record.exit_vwap,
+        average_cost_basis=record.average_cost_basis,
+        net_realized_pnl=record.net_realized_pnl,
+        fees=record.fees,
+        slippage=record.slippage,
+        holding_period_trading_days=record.holding_period_trading_days,
+        strategy_id=record.strategy_id,
+        account_id=record.account_id,
+        session_id=record.session_id,
+        decision_id=record.decision_id,
+    )
+
+
 def to_execution_report_view(
     report: ExecutionReport,
     *,
@@ -558,38 +623,78 @@ def to_broker_event_view(event: BrokerEvent) -> BrokerEventView:
 
 
 def to_performance_metrics_view(
-    metrics: Mapping[str, float | int],
+    metrics: Mapping[str, float | int | None],
     *,
-    benchmark_return: float = 0.0,
+    benchmark_return: float | None = None,
 ) -> PerformanceMetricsView:
-    total_return = float(metrics.get("total_return", 0.0))
+    total_return = _finite_or_none(metrics.get("total_return", 0.0))
+    benchmark = _finite_or_none(benchmark_return)
+    excess_return = (
+        total_return - benchmark
+        if total_return is not None and benchmark is not None
+        else None
+    )
     return PerformanceMetricsView(
-        cumulative_return_pct=total_return * 100.0,
-        total_return_pct=total_return * 100.0,
-        annualized_return_pct=float(metrics.get("annualized_return", 0.0)) * 100.0,
-        benchmark_return_pct=benchmark_return * 100.0,
-        excess_return_pct=(total_return - benchmark_return) * 100.0,
-        max_drawdown_pct=float(metrics.get("max_drawdown", 0.0)) * 100.0,
-        max_drawdown_duration=float(metrics.get("max_drawdown_duration", 0.0)),
-        sharpe_ratio=float(metrics.get("sharpe_ratio", 0.0)),
-        win_rate_pct=float(metrics.get("win_rate", 0.0)) * 100.0,
-        profit_factor=float(metrics.get("profit_factor", 0.0)),
-        avg_win=float(metrics.get("avg_win", 0.0)),
-        avg_loss=float(metrics.get("avg_loss", 0.0)),
-        payoff_ratio=float(metrics.get("payoff_ratio", 0.0)),
-        number_of_trades=int(metrics.get("number_of_trades", 0)),
-        avg_holding_period_days=float(metrics.get("avg_holding_period_days", 0.0)),
+        cumulative_return_pct=_percent_or_none(total_return),
+        total_return_pct=_percent_or_none(total_return),
+        annualized_return_pct=_percent_or_none(
+            _finite_or_none(metrics.get("annualized_return"))
+        ),
+        annualized_volatility_pct=_percent_or_none(
+            _finite_or_none(metrics.get("annualized_volatility"))
+        ),
+        benchmark_return_pct=_percent_or_none(benchmark),
+        excess_return_pct=_percent_or_none(excess_return),
+        max_drawdown_pct=_percent_or_none(
+            _finite_or_none(metrics.get("max_drawdown", 0.0))
+        ),
+        max_drawdown_duration=_int_or_zero(metrics.get("max_drawdown_duration", 0)),
+        sharpe_ratio=_finite_or_none(metrics.get("sharpe_ratio")),
+        win_rate_pct=_percent_or_none(_finite_or_none(metrics.get("win_rate", 0.0))),
+        profit_factor=_finite_or_none(metrics.get("profit_factor")),
+        avg_win=_finite_or_none(metrics.get("avg_win", 0.0)),
+        avg_loss=_finite_or_none(metrics.get("avg_loss", 0.0)),
+        payoff_ratio=_finite_or_none(metrics.get("payoff_ratio")),
+        number_of_trades=_int_or_zero(metrics.get("number_of_trades", 0)),
+        number_of_fills=_int_or_zero(metrics.get("number_of_fills", 0)),
+        number_of_orders=_int_or_zero(metrics.get("number_of_orders", 0)),
+        number_of_rejections=_int_or_zero(metrics.get("number_of_rejections", 0)),
+        number_of_closed_trades=_int_or_zero(metrics.get("number_of_closed_trades", 0)),
+        avg_holding_period_days=_finite_or_zero(
+            metrics.get("avg_holding_period_days", 0.0)
+        ),
+        realized_pnl_usd=_finite_or_zero(metrics.get("realized_pnl", 0.0)),
+        unrealized_pnl_usd=_finite_or_zero(metrics.get("unrealized_pnl", 0.0)),
+        net_pnl_usd=_finite_or_zero(metrics.get("net_pnl", 0.0)),
+        total_fees_usd=_finite_or_zero(
+            metrics.get("total_fees", metrics.get("fees", 0.0))
+        ),
+        total_slippage_usd=_finite_or_zero(
+            metrics.get("total_slippage", metrics.get("slippage", 0.0))
+        ),
+        turnover_pct=_finite_or_zero(metrics.get("turnover", 0.0)) * 100.0,
+        average_daily_gross_exposure_pct=(
+            _finite_or_zero(metrics.get("average_daily_gross_exposure", 0.0)) * 100.0
+        ),
     )
 
 
 def to_backtest_result_view(
     *,
     config: BacktestConfigView,
-    metrics: Mapping[str, float | int],
+    metrics: Mapping[str, float | int | None],
     portfolio: pd.DataFrame,
     trades: Sequence[LedgerFillRecord] | None = None,
-    benchmark_return: float = 0.0,
+    executions: Sequence[LedgerFillRecord] | None = None,
+    closed_trades: Sequence[ClosedTradeRecord] | None = None,
+    benchmark_return: float | None = None,
+    warnings: Sequence[str] | None = None,
+    progress: BacktestProgressView | None = None,
+    decisions: Sequence[BacktestDecisionView] | None = None,
+    no_trade_reasons: Sequence[BacktestNoTradeReasonView] | None = None,
 ) -> BacktestResultView:
+    legacy_records = trades if trades is not None else executions
+    execution_records = executions if executions is not None else legacy_records
     return BacktestResultView(
         config=config,
         summary=to_performance_metrics_view(
@@ -597,8 +702,36 @@ def to_backtest_result_view(
             benchmark_return=benchmark_return,
         ),
         series=_portfolio_to_series(portfolio),
-        trades=[to_trade_view(record) for record in trades or []],
+        trades=[to_trade_view(record) for record in legacy_records or []],
+        executions=[to_trade_view(record) for record in execution_records or []],
+        closed_trades=[to_closed_trade_view(record) for record in closed_trades or []],
+        warnings=list(warnings or []),
+        progress=progress or BacktestProgressView(),
+        decisions=list(decisions or []),
+        no_trade_reasons=list(no_trade_reasons or []),
     )
+
+
+def _finite_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        candidate = float(value)
+    except (TypeError, ValueError):
+        return None
+    return candidate if math.isfinite(candidate) else None
+
+
+def _finite_or_zero(value: Any) -> float:
+    return _finite_or_none(value) or 0.0
+
+
+def _percent_or_none(value: float | None) -> float | None:
+    return value * 100.0 if value is not None else None
+
+
+def _int_or_zero(value: int | float | None) -> int:
+    return int(value) if value is not None else 0
 
 
 def _select_mark_price(
@@ -661,9 +794,11 @@ def _portfolio_to_series(portfolio: pd.DataFrame) -> list[BacktestSeriesPointVie
         BacktestSeriesPointView(
             date=str(row["date"]),
             strategy_equity=float(row["strategy_equity"]),
-            benchmark_equity=float(row["benchmark_equity"]),
+            benchmark_equity=_finite_or_none(row.get("benchmark_equity")),
             strategy_drawdown_pct=float(row.get("strategy_drawdown", 0.0)) * 100.0,
-            benchmark_drawdown_pct=float(row.get("benchmark_drawdown", 0.0)) * 100.0,
+            benchmark_drawdown_pct=_percent_or_none(
+                _finite_or_none(row.get("benchmark_drawdown"))
+            ),
         )
         for row in portfolio.to_dict(orient="records")
     ]

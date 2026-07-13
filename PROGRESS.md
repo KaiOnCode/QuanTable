@@ -1,6 +1,6 @@
 # Progress & Roadmap
 
-Last updated: 2026-07-12 | Branch: `dev`
+Last updated: 2026-07-13 | Branch: `dev`
 
 ## Backtest Reliability and Fidelity Goal
 
@@ -169,6 +169,55 @@ Evidence:
 - `.omo/evidence/backtest-reliability-and-fidelity/phase-3/task-6-current-execution-receipt.md`
 - `.omo/evidence/backtest-reliability-and-fidelity/phase-3/phase3-debug-audit.txt`
 - `.omo/evidence/backtest-reliability-and-fidelity/phase-3/phase3-final.md`
+
+### Phase 4: Accounting and Performance Metrics ✅
+
+Completed on 2026-07-13: Todo 7 and Todo 8 are closed. The immutable Goal
+baseline recorded above remains unchanged.
+
+- The ledger now uses configured initial capital, long-only average-cost
+  episodes, separate executions and closed trades, realized/unrealized/net
+  P&L, cost diagnostics, turnover/exposure, and explicit ending positions.
+- Benchmark comparison uses the target calendar, first-open integer shares,
+  cost-reserved residual cash, past-only five-session fill, and nullable
+  unavailable/stale metrics. A zero-affordable-share benchmark remains valid
+  all-cash rather than becoming stale/null.
+- Risk output has calendar CAGR, daily-return annualized volatility/Sharpe,
+  trading-day drawdown duration, finite/null JSON behavior, strict sample
+  warnings, and explicit non-trusted `completed_no_trades` reason semantics.
+- The public historical runner force-freezes both `next_open` and
+  `allow_short=false`; generic naked SELL input is rejected. No same-bar fill
+  or short historical result is accepted.
+- The documented terminal GET envelope now exactly round-trips through
+  `BacktestJobResponse`, including top-level progress/decisions, derived
+  counts, runtime config fields, and active-path limitation warnings.
+
+Fresh verification:
+
+- Focused Phase 4 pytest passed `159 passed, 1 warning`; full pytest passed
+  `500 passed, 1 skipped, 1 warning`. The warning is the existing
+  Starlette/httpx deprecation warning.
+- BasedPyright reported `0 errors, 0 warnings, 0 notes`; Ruff check/format and
+  `git diff --check` passed.
+- Direct public-library QA verified all-cash zero-share benchmark behavior and
+  generic naked-short rejection. Fresh isolated FastAPI/curl QA verified the
+  61-session all-HOLD outcome, sample warnings, and no-trade credibility
+  warning; the owned temporary service was removed afterward.
+- Goal, code-quality, QA, security, and context review-work lanes all returned
+  unconditional PASS after the final full-GET contract repair.
+
+Deferred explicitly from this Phase 4 closeout:
+
+- Todo 9 persisted API/error/export migration; Todo 10 nullable frontend
+  rendering, no-trade presentation, production Chromium, and visual QA.
+- Todo 11 replay/mutation/OOS contract and Todo 12 final acceptance remain
+  unclaimed. Zero-trade/experimental output remains non-credible performance.
+
+Evidence:
+
+- `.omo/evidence/backtest-reliability-and-fidelity/phase-4/task-7-ledger.txt`
+- `.omo/evidence/backtest-reliability-and-fidelity/phase-4/task-8-metrics.txt`
+- `.omo/evidence/backtest-reliability-and-fidelity/phase-4/phase4-final.md`
 
 ## Frontend Demo Integration: Backtest Running Persistence ✅
 

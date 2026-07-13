@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
+import math
 
 import pandas as pd
 import pytest
 from pydantic import ValidationError
 
 from broker.events import BrokerEvent
-from broker.ledger import LedgerFillRecord
+from broker.ledger import ClosedTradeRecord, LedgerFillRecord
 from broker.models import (
     AccountSnapshot,
     ExecutionReport,
@@ -478,3 +480,143 @@ def test_backtest_result_view_serializes_completed_portfolio_contract() -> None:
     assert view.series[0].benchmark_equity == pytest.approx(101_000.0)
     assert view.series[0].strategy_drawdown_pct == pytest.approx(1.0)
     assert view.trades[0].order_id == "order-1"
+
+
+def test_backtest_result_view_marks_entry_only_execution_as_not_trusted_performance() -> (
+    None
+):
+    position = Position(ticker="AAPL", shares=10, avg_cost=100.0)
+    entry_record = LedgerFillRecord(
+        fill=Fill(
+            order_id="entry-order",
+            fill_price=100.0,
+            fill_qty=10,
+            fee=0.0,
+            slippage=0.0,
+        ),
+        ticker="AAPL",
+        side="BUY",
+        realized_pnl=0.0,
+        position_after=position,
+        account_after=AccountSnapshot(
+            cash=99_000.0,
+            equity=100_000.0,
+            positions=[position],
+        ),
+    )
+
+    view = to_backtest_result_view(
+        config=BacktestConfigView(ticker="AAPL"),
+        metrics={"number_of_fills": 1, "number_of_closed_trades": 0},
+        portfolio=pd.DataFrame(),
+        trades=[entry_record],
+        executions=[entry_record],
+        closed_trades=[],
+    )
+
+    assert view.trades
+    assert view.executions
+    assert view.closed_trades == []
+    assert view.summary.number_of_closed_trades == 0
+    assert view.outcome == "completed_no_trades"
+
+
+def test_performance_metrics_view_maps_accounting_units_explicitly() -> None:
+    summary = to_performance_metrics_view(
+        {
+            "number_of_fills": 2,
+            "number_of_orders": 3,
+            "number_of_closed_trades": 1,
+            "realized_pnl": 63.75,
+            "unrealized_pnl": 59.25,
+            "net_pnl": 123.0,
+            "total_fees": 27.0,
+            "total_slippage": 1.25,
+            "turnover": 0.175,
+            "average_daily_gross_exposure": 0.625,
+        }
+    )
+    payload = summary.model_dump()
+
+    assert payload["number_of_fills"] == 2
+    assert payload["number_of_orders"] == 3
+    assert payload["number_of_closed_trades"] == 1
+    assert payload["realized_pnl_usd"] == pytest.approx(63.75)
+    assert payload["unrealized_pnl_usd"] == pytest.approx(59.25)
+    assert payload["net_pnl_usd"] == pytest.approx(123.0)
+    assert payload["total_fees_usd"] == pytest.approx(27.0)
+    assert payload["total_slippage_usd"] == pytest.approx(1.25)
+    assert payload["turnover_pct"] == pytest.approx(17.5)
+    assert payload["average_daily_gross_exposure_pct"] == pytest.approx(62.5)
+
+
+def test_performance_metrics_view_uses_json_null_for_unavailable_or_non_finite_values() -> (
+    None
+):
+    summary = to_performance_metrics_view(
+        {
+            "annualized_return": math.nan,
+            "annualized_volatility": math.inf,
+            "sharpe_ratio": math.nan,
+            "profit_factor": math.inf,
+            "payoff_ratio": math.inf,
+        },
+        benchmark_return=None,
+    )
+
+    assert summary.annualized_return_pct is None
+    assert summary.annualized_volatility_pct is None
+    assert summary.sharpe_ratio is None
+    assert summary.profit_factor is None
+    assert summary.payoff_ratio is None
+    assert summary.benchmark_return_pct is None
+    assert summary.excess_return_pct is None
+    assert json.loads(summary.model_dump_json())["profit_factor"] is None
+    assert json.dumps(summary.model_dump(mode="json"), allow_nan=False)
+
+
+def test_backtest_result_view_preserves_closed_trade_accounting_fields() -> None:
+    closed_trade = ClosedTradeRecord(
+        entry_at=datetime(2024, 1, 2, tzinfo=timezone.utc),
+        exit_at=datetime(2024, 1, 5, tzinfo=timezone.utc),
+        ticker="AAPL",
+        quantity=20.0,
+        entry_vwap=105.0,
+        exit_vwap=97.5,
+        average_cost_basis=106.05,
+        net_realized_pnl=-190.5,
+        fees=40.5,
+        slippage=1.05,
+        holding_period_trading_days=3,
+        strategy_id="strategy-a",
+        account_id="account-a",
+        session_id="session-a",
+        decision_id="exit-decision",
+    )
+    portfolio = pd.DataFrame(
+        [
+            {
+                "date": "2024-01-05",
+                "strategy_equity": 99_809.5,
+                "benchmark_equity": 100_000.0,
+                "strategy_drawdown": 0.0,
+                "benchmark_drawdown": 0.0,
+            }
+        ]
+    )
+
+    view = to_backtest_result_view(
+        config=BacktestConfigView(ticker="AAPL"),
+        metrics={"number_of_closed_trades": 1, "number_of_trades": 1},
+        portfolio=portfolio,
+        closed_trades=[closed_trade],
+    )
+
+    assert len(view.closed_trades) == 1
+    mapped = view.closed_trades[0]
+    assert mapped.average_cost_basis == pytest.approx(106.05)
+    assert mapped.net_realized_pnl == pytest.approx(-190.5)
+    assert mapped.fees == pytest.approx(40.5)
+    assert mapped.slippage == pytest.approx(1.05)
+    assert mapped.holding_period_trading_days == 3
+    assert mapped.decision_id == "exit-decision"

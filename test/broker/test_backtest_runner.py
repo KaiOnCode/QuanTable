@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+import json
 import math
+from threading import Event, Lock
 
 import pandas as pd
 import pytest
 
 from agentgraph.execution_node import create_execution_node
 from broker.backtest_runner import (
+    BacktestResult,
     BacktestRunError,
     BacktestRunObserver,
     BacktestRunner,
@@ -184,6 +188,33 @@ class BuyThenHoldAgent:
         return {
             "execution_report": "HOLD — 无需执行",
         }
+
+
+class NakedShortAgent:
+    def __init__(self, broker: MockBrokerEngine) -> None:
+        self._broker = broker
+
+    def run(
+        self,
+        ticker: str,
+        *,
+        strategy_id: str,
+        account_id: str,
+        session_id: str,
+        **_kwargs: object,
+    ) -> dict[str, object]:
+        self._broker.place_order(
+            Order(
+                ticker=ticker,
+                side=OrderSide.SELL,
+                type=OrderType.MARKET,
+                qty=10,
+                strategy_id=strategy_id,
+                account_id=account_id,
+                session_id=session_id,
+            )
+        )
+        return {"execution_report": "SELL"}
 
 
 def _benchmark_prices(price_df: pd.DataFrame) -> pd.DataFrame:
@@ -777,6 +808,56 @@ def test_unaffordable_typed_target_is_recorded_as_unfilled_order_evidence() -> N
     assert result.view.orders[0].execution_date == "2024-01-03T00:00:00+00:00"
     assert observer.decisions[0].execution_date == "2024-01-03T00:00:00Z"
     assert runner.broker.get_positions() == []
+    assert result.view.no_trade_reasons == []
+
+
+def test_backtest_runner_records_all_hold_as_a_zero_trade_reason() -> None:
+    prices = pd.DataFrame(
+        [
+            {"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.0},
+            {"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.0},
+        ],
+        index=pd.to_datetime(["2024-01-02", "2024-01-03"]),
+    )
+    runner = BacktestRunner(
+        BrokerConfig(commission_rate=0.0, slippage_rate=0.0),
+        decision_executor=_TargetSequenceExecutor([0.0]),
+    )
+
+    result = runner.run(
+        ticker="AAPL",
+        price_df=prices,
+        benchmark_df=_benchmark_prices(prices),
+        start_date="2024-01-02",
+        end_date="2024-01-03",
+    )
+
+    assert result.view.outcome == "completed_no_trades"
+    assert result.view.summary.number_of_fills == 0
+    assert [reason.model_dump() for reason in result.view.no_trade_reasons] == [
+        {"code": "all_hold", "count": 1}
+    ]
+
+
+def test_backtest_runner_records_no_signal_window_as_a_zero_trade_reason() -> None:
+    prices = pd.DataFrame(
+        [{"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.0}],
+        index=pd.to_datetime(["2024-01-02"]),
+    )
+    runner = BacktestRunner(BrokerConfig(), agent=RecordingBacktestAgent())
+
+    result = runner.run(
+        ticker="AAPL",
+        price_df=prices,
+        benchmark_df=_benchmark_prices(prices),
+        start_date="2024-01-02",
+        end_date="2024-01-02",
+    )
+
+    assert result.view.outcome == "completed_no_trades"
+    assert [reason.model_dump() for reason in result.view.no_trade_reasons] == [
+        {"code": "no_signals", "count": 1}
+    ]
 
 
 def test_unaffordable_target_increase_is_not_silently_treated_as_hold() -> None:
@@ -1298,7 +1379,7 @@ def test_backtest_runner_returns_structured_trade_and_portfolio_exports() -> Non
     assert list(result.trades["quantity"]) == [500.0]
     assert list(result.portfolio["date"]) == ["2026-01-02", "2026-01-05"]
     assert list(result.portfolio["position_count"]) == [0, 1]
-    assert result.metrics["number_of_trades"] == 1
+    assert result.metrics["number_of_trades"] == 0
 
 
 def test_backtest_runner_adds_strategy_and_benchmark_performance_columns() -> None:
@@ -1354,9 +1435,9 @@ def test_backtest_runner_adds_strategy_and_benchmark_performance_columns() -> No
 
     assert list(result.portfolio["close"]) == [100.0, 110.0, 90.0]
     assert list(result.portfolio["benchmark_equity"]) == [
-        100_000.0,
-        110_000.0,
-        90_000.0,
+        101_010.0,
+        111_110.0,
+        90_910.0,
     ]
     assert list(result.portfolio["strategy_drawdown"]) == [
         0.0,
@@ -1366,8 +1447,222 @@ def test_backtest_runner_adds_strategy_and_benchmark_performance_columns() -> No
     assert list(result.portfolio["benchmark_drawdown"]) == [
         0.0,
         0.0,
-        pytest.approx(1 - 90_000.0 / 110_000.0),
+        pytest.approx(1 - 90_910.0 / 111_110.0),
     ]
+
+
+def test_backtest_runner_uses_costed_integer_share_benchmark_with_residual_cash() -> (
+    None
+):
+    config = BrokerConfig(
+        initial_cash=1_000.0,
+        commission_rate=0.001,
+        slippage_rate=0.0005,
+        execution_timing="next_open",
+    )
+    target = pd.DataFrame(
+        [
+            {"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.0},
+            {"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.0},
+            {"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.0},
+        ],
+        index=pd.to_datetime(["2026-01-02", "2026-01-05", "2026-01-06"]),
+    )
+    benchmark = pd.DataFrame(
+        [
+            {"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.0},
+            {"Open": 110.0, "High": 111.0, "Low": 109.0, "Close": 110.0},
+        ],
+        index=pd.to_datetime(["2026-01-02", "2026-01-06"]),
+    )
+    runner = BacktestRunner(config, agent=RecordingBacktestAgent())
+
+    result = runner.run(
+        ticker="AAPL",
+        price_df=target,
+        benchmark_df=benchmark,
+        start_date="2026-01-02",
+        end_date="2026-01-06",
+    )
+
+    assert [point.benchmark_equity for point in result.view.series] == pytest.approx(
+        [998.64955, 998.64955, 1088.64955]
+    )
+    assert result.view.summary.benchmark_return_pct == pytest.approx(8.864955)
+    assert result.view.summary.excess_return_pct == pytest.approx(-8.864955)
+
+
+def test_winning_closed_trade_has_json_safe_undefined_profit_ratios() -> None:
+    prices = pd.DataFrame(
+        [
+            {"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.0},
+            {"Open": 110.0, "High": 111.0, "Low": 109.0, "Close": 110.0},
+            {"Open": 120.0, "High": 121.0, "Low": 119.0, "Close": 120.0},
+        ],
+        index=pd.to_datetime(["2026-01-02", "2026-01-05", "2026-01-06"]),
+    )
+    runner = BacktestRunner(
+        BrokerConfig(commission_rate=0.0, slippage_rate=0.0),
+        decision_executor=_TargetSequenceExecutor([100.0, 0.0]),
+    )
+
+    result = runner.run(
+        ticker="AAPL",
+        price_df=prices,
+        benchmark_df=_benchmark_prices(prices),
+        start_date="2026-01-02",
+        end_date="2026-01-06",
+    )
+
+    assert len(result.view.closed_trades) == 1
+    assert result.view.summary.profit_factor is None
+    assert result.view.summary.payoff_ratio is None
+    assert json.dumps(result.view.model_dump(mode="json"), allow_nan=False)
+
+
+@pytest.mark.parametrize(
+    ("benchmark", "warning"),
+    [
+        (
+            pd.DataFrame(
+                columns=pd.Index(["Open", "High", "Low", "Close"]),
+            ),
+            "benchmark_start_unavailable",
+        ),
+        (
+            pd.DataFrame(
+                [{"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.0}],
+                index=pd.to_datetime(["2026-01-02"]),
+            ),
+            "benchmark_stale_unavailable",
+        ),
+    ],
+)
+def test_backtest_runner_marks_unavailable_benchmark_as_null_without_shortening_target(
+    benchmark: pd.DataFrame, warning: str
+) -> None:
+    target_dates = pd.to_datetime(
+        [
+            "2026-01-02",
+            "2026-01-05",
+            "2026-01-06",
+            "2026-01-07",
+            "2026-01-08",
+            "2026-01-09",
+            "2026-01-12",
+        ]
+    )
+    target = pd.DataFrame(
+        {
+            "Open": 100.0,
+            "High": 101.0,
+            "Low": 99.0,
+            "Close": 100.0,
+        },
+        index=target_dates,
+    )
+    runner = BacktestRunner(BrokerConfig(), agent=RecordingBacktestAgent())
+
+    result = runner.run(
+        ticker="AAPL",
+        price_df=target,
+        benchmark_df=benchmark,
+        start_date="2026-01-02",
+        end_date="2026-01-12",
+    )
+
+    assert [point.date for point in result.view.series] == [
+        value.strftime("%Y-%m-%d") for value in target_dates
+    ]
+    assert result.view.summary.benchmark_return_pct is None
+    assert result.view.summary.excess_return_pct is None
+    assert warning in result.view.warnings
+    if warning == "benchmark_start_unavailable":
+        assert all(point.benchmark_equity is None for point in result.view.series)
+    else:
+        assert result.view.series[-1].benchmark_equity is None
+
+
+def test_backtest_runner_keeps_an_unaffordable_benchmark_entirely_in_cash() -> None:
+    target_dates = pd.to_datetime(
+        [
+            "2026-01-02",
+            "2026-01-05",
+            "2026-01-06",
+            "2026-01-07",
+            "2026-01-08",
+            "2026-01-09",
+            "2026-01-12",
+        ]
+    )
+    target = pd.DataFrame(
+        {
+            "Open": 100.0,
+            "High": 101.0,
+            "Low": 99.0,
+            "Close": 100.0,
+        },
+        index=target_dates,
+    )
+    benchmark = pd.DataFrame(
+        [{"Open": 200.0, "High": 201.0, "Low": 199.0, "Close": 200.0}],
+        index=pd.to_datetime(["2026-01-02"]),
+    )
+    runner = BacktestRunner(
+        BrokerConfig(initial_cash=100.0, commission_rate=0.0, slippage_rate=0.0),
+        agent=RecordingBacktestAgent(),
+    )
+
+    result = runner.run(
+        ticker="AAPL",
+        price_df=target,
+        benchmark_df=benchmark,
+        start_date="2026-01-02",
+        end_date="2026-01-12",
+    )
+
+    assert [point.benchmark_equity for point in result.view.series] == pytest.approx(
+        [100.0] * len(target_dates)
+    )
+    assert [
+        point.benchmark_drawdown_pct for point in result.view.series
+    ] == pytest.approx([0.0] * len(target_dates))
+    assert result.view.summary.benchmark_return_pct == pytest.approx(0.0)
+    assert result.view.summary.excess_return_pct == pytest.approx(0.0)
+    assert "benchmark_stale_unavailable" not in result.view.warnings
+
+
+def test_backtest_runner_forces_long_only_for_generic_agent_orders() -> None:
+    config = BrokerConfig(
+        commission_rate=0.0,
+        slippage_rate=0.0,
+        execution_timing="next_open",
+        allow_short=True,
+    )
+    broker = MockBrokerEngine(config)
+    runner = BacktestRunner(config, broker=broker, agent=NakedShortAgent(broker))
+    prices = pd.DataFrame(
+        [
+            {"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.0},
+            {"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.0},
+        ],
+        index=pd.to_datetime(["2026-01-02", "2026-01-05"]),
+    )
+
+    result = runner.run(
+        ticker="AAPL",
+        price_df=prices,
+        benchmark_df=_benchmark_prices(prices),
+        start_date="2026-01-02",
+        end_date="2026-01-05",
+    )
+
+    assert result.view.config.allow_short is False
+    assert result.view.executions == []
+    assert result.view.orders[0].status == "rejected"
+    assert result.view.orders[0].reason == "risk_check_failed"
+    assert broker.get_orders()[0].side is OrderSide.SELL
+    assert result.view.end_position.shares == pytest.approx(0.0)
 
 
 def test_backtest_runner_returns_completed_backtest_result_view_contract() -> None:
@@ -1419,16 +1714,18 @@ def test_backtest_runner_returns_completed_backtest_result_view_contract() -> No
     assert result.view.config.ticker == "AAPL"
     assert result.view.config.benchmark_symbol == "SPY"
     assert result.view.summary.cumulative_return_pct == pytest.approx(0.5)
-    assert result.view.summary.benchmark_return_pct == pytest.approx(10.0)
-    assert result.view.summary.excess_return_pct == pytest.approx(-9.5)
+    assert result.view.summary.benchmark_return_pct == pytest.approx(11.11)
+    assert result.view.config.risk_free_rate == pytest.approx(0.0)
+    assert result.view.config.periods_per_year == 252
+    assert result.view.summary.excess_return_pct == pytest.approx(-10.61)
     assert len(result.view.series) == 2
     assert result.view.series[0].strategy_equity == pytest.approx(100_000.0)
-    assert result.view.series[0].benchmark_equity == pytest.approx(100_000.0)
+    assert result.view.series[0].benchmark_equity == pytest.approx(101_010.0)
     assert result.view.trades[0].order_id == result.trades.loc[0, "order_id"]
     assert result.view.trades[0].side == "buy"
 
 
-def test_backtest_runner_view_is_scoped_to_current_session_when_runner_is_reused() -> (
+def test_backtest_runner_reused_same_account_does_not_inherit_prior_broker_state() -> (
     None
 ):
     broker = MockBrokerEngine(
@@ -1494,11 +1791,143 @@ def test_backtest_runner_view_is_scoped_to_current_session_when_runner_is_reused
     )
 
     assert len(first_result.view.series) == 2
+    assert first_result.view.end_position is not None
     assert [point.date for point in second_result.view.series] == ["2026-02-02"]
     assert second_result.view.config.start_date == "2026-02-02"
-    assert all(
-        trade.session_id != first_result.view.trades[0].session_id
-        for trade in second_result.view.trades
+    assert second_result.view.summary.number_of_fills == 0
+    assert second_result.view.series[0].strategy_equity == pytest.approx(100_000.0)
+    assert second_result.metrics["total_return"] == pytest.approx(0.0)
+    assert second_result.view.end_position.shares == pytest.approx(0.0)
+    assert second_result.view.end_position.market_value == pytest.approx(0.0)
+    assert second_result.view.end_position.unrealized_pnl == pytest.approx(0.0)
+
+
+def test_backtest_runner_uses_run_config_initial_cash_with_injected_broker() -> None:
+    runner_config = BrokerConfig(
+        initial_cash=100_000.0,
+        commission_rate=0.0,
+        slippage_rate=0.0,
+        execution_timing="next_open",
+    )
+    broker = MockBrokerEngine(
+        BrokerConfig(
+            initial_cash=50_000.0,
+            commission_rate=0.0,
+            slippage_rate=0.0,
+            execution_timing="next_open",
+        )
+    )
+    runner = BacktestRunner(
+        runner_config,
+        broker=broker,
+        agent=RecordingBacktestAgent(),
+    )
+    prices = pd.DataFrame(
+        [
+            {"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.0},
+            {"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.0},
+        ],
+        index=pd.to_datetime(["2026-01-02", "2026-01-03"]),
+    )
+
+    result = runner.run(
+        ticker="AAPL",
+        price_df=prices,
+        benchmark_df=_benchmark_prices(prices),
+        start_date="2026-01-02",
+        end_date="2026-01-03",
+    )
+
+    assert [point.strategy_equity for point in result.view.series] == pytest.approx(
+        [100_000.0, 100_000.0]
+    )
+    assert result.metrics["total_return"] == pytest.approx(0.0)
+
+
+def test_backtest_runner_serializes_concurrent_same_account_runs() -> None:
+    class ObservableBroker(MockBrokerEngine):
+        def __init__(self, config: BrokerConfig) -> None:
+            super().__init__(config)
+            self.second_reset = Event()
+            self._reset_count = 0
+            self._reset_lock = Lock()
+
+        def reset_account(self, account_id: str = "default") -> None:
+            with self._reset_lock:
+                self._reset_count += 1
+                if self._reset_count == 2:
+                    self.second_reset.set()
+            super().reset_account(account_id)
+
+    class BlockingHoldAgent:
+        def __init__(self, entered: Event, release: Event) -> None:
+            self._entered = entered
+            self._release = release
+            self._calls = 0
+            self._calls_lock = Lock()
+
+        def run(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+            with self._calls_lock:
+                self._calls += 1
+                is_first_decision = self._calls == 1
+            if is_first_decision:
+                self._entered.set()
+                if not self._release.wait(timeout=2):
+                    raise AssertionError("first backtest decision was not released")
+            return {"execution_report": "HOLD"}
+
+    config = BrokerConfig(
+        initial_cash=100_000.0,
+        commission_rate=0.0,
+        slippage_rate=0.0,
+        execution_timing="next_open",
+    )
+    broker = ObservableBroker(config)
+    first_agent_call = Event()
+    release_first_agent_call = Event()
+    runner = BacktestRunner(
+        config,
+        broker=broker,
+        agent=BlockingHoldAgent(first_agent_call, release_first_agent_call),
+    )
+    prices = pd.DataFrame(
+        [
+            {"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.0},
+            {"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.0},
+        ],
+        index=pd.to_datetime(["2026-01-02", "2026-01-03"]),
+    )
+
+    def run_once() -> BacktestResult:
+        return runner.run(
+            ticker="AAPL",
+            price_df=prices.copy(),
+            benchmark_df=_benchmark_prices(prices),
+            start_date="2026-01-02",
+            end_date="2026-01-03",
+            account_id="shared-account",
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first_future = executor.submit(run_once)
+        assert first_agent_call.wait(timeout=2)
+        second_future = executor.submit(run_once)
+        try:
+            assert not broker.second_reset.wait(timeout=0.2)
+        finally:
+            release_first_agent_call.set()
+        first_result = first_future.result(timeout=2)
+        second_result = second_future.result(timeout=2)
+
+    for result in (first_result, second_result):
+        assert result.metrics["total_return"] == pytest.approx(0.0)
+        assert [point.strategy_equity for point in result.view.series] == pytest.approx(
+            [100_000.0, 100_000.0]
+        )
+        assert result.view.end_position.shares == pytest.approx(0.0)
+    assert broker.get_positions(account_id="shared-account") == []
+    assert broker.get_account(account_id="shared-account").equity == pytest.approx(
+        100_000.0
     )
 
 
@@ -1541,3 +1970,229 @@ def test_backtest_config_view_frequency_round_trips_as_canonical_json() -> None:
     restored = BacktestConfigView.model_validate_json(view.model_dump_json())
 
     assert restored == view
+
+
+def test_backtest_runner_uses_configured_initial_capital_for_an_entry_only_result() -> (
+    None
+):
+    class EntryOnlyAgent:
+        def __init__(self, broker: MockBrokerEngine) -> None:
+            self._broker = broker
+
+        def run(
+            self,
+            ticker: str,
+            *,
+            strategy_id: str,
+            account_id: str,
+            session_id: str,
+            **_kwargs: object,
+        ) -> dict[str, object]:
+            self._broker.place_order(
+                Order(
+                    ticker=ticker,
+                    side=OrderSide.BUY,
+                    type=OrderType.MARKET,
+                    qty=10,
+                    strategy_id=strategy_id,
+                    account_id=account_id,
+                    session_id=session_id,
+                )
+            )
+            return {"execution_report": "BUY"}
+
+    config = BrokerConfig(
+        initial_cash=100_000.0,
+        commission_rate=0.0,
+        slippage_rate=0.0,
+        execution_timing="next_open",
+    )
+    broker = MockBrokerEngine(config)
+    runner = BacktestRunner(config, broker=broker, agent=EntryOnlyAgent(broker))
+    price_df = pd.DataFrame(
+        [
+            {"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.0},
+            {"Open": 100.0, "High": 593.0, "Low": 99.0, "Close": 592.4975},
+        ],
+        index=pd.to_datetime(["2024-01-02", "2024-01-03"]),
+    )
+
+    result = runner.run(
+        ticker="AAPL",
+        price_df=price_df,
+        benchmark_df=_benchmark_prices(price_df),
+        start_date="2024-01-02",
+        end_date="2024-01-03",
+    )
+
+    assert result.metrics["total_return"] == pytest.approx(0.04924975)
+    assert result.view.summary.total_return_pct == pytest.approx(4.924975)
+    assert len(result.view.executions) == 1
+    assert result.view.closed_trades == []
+    assert result.metrics["realized_pnl"] == pytest.approx(0.0)
+    assert result.metrics["unrealized_pnl"] == pytest.approx(4_924.975)
+
+
+def test_backtest_runner_exposes_all_in_open_episode_end_position() -> None:
+    class OpenEpisodeAgent:
+        def __init__(self, broker: MockBrokerEngine) -> None:
+            self._broker = broker
+            self._calls = 0
+
+        def run(
+            self,
+            ticker: str,
+            *,
+            strategy_id: str,
+            account_id: str,
+            session_id: str,
+            **_kwargs: object,
+        ) -> dict[str, object]:
+            self._calls += 1
+            if self._calls == 1:
+                side = OrderSide.BUY
+                quantity = 10
+            elif self._calls == 2:
+                side = OrderSide.BUY
+                quantity = 10
+            else:
+                side = OrderSide.SELL
+                quantity = 5
+            self._broker.place_order(
+                Order(
+                    ticker=ticker,
+                    side=side,
+                    type=OrderType.MARKET,
+                    qty=quantity,
+                    strategy_id=strategy_id,
+                    account_id=account_id,
+                    session_id=session_id,
+                )
+            )
+            return {"execution_report": side.value}
+
+    config = BrokerConfig(
+        initial_cash=100_000.0,
+        commission_rate=0.01,
+        slippage_rate=0.0,
+        execution_timing="next_open",
+    )
+    broker = MockBrokerEngine(config)
+    runner = BacktestRunner(config, broker=broker, agent=OpenEpisodeAgent(broker))
+    prices = pd.DataFrame(
+        [
+            {"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.0},
+            {"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.0},
+            {"Open": 110.0, "High": 111.0, "Low": 109.0, "Close": 110.0},
+            {"Open": 120.0, "High": 121.0, "Low": 109.0, "Close": 110.0},
+        ],
+        index=pd.to_datetime(["2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05"]),
+    )
+
+    result = runner.run(
+        ticker="AAPL",
+        price_df=prices,
+        benchmark_df=_benchmark_prices(prices),
+        start_date="2024-01-02",
+        end_date="2024-01-05",
+    )
+
+    assert result.trades["order_id"].tolist() == result.executions["order_id"].tolist()
+    assert len(result.view.trades) == 3
+    assert len(result.view.executions) == 3
+    assert result.closed_trades.empty
+    assert result.view.closed_trades == []
+    assert result.view.end_position.shares == pytest.approx(15.0)
+    end_position = result.view.end_position.model_dump()
+    assert end_position["average_cost_basis"] == pytest.approx(106.05)
+    assert end_position["unrealized_pnl"] == pytest.approx(59.25)
+
+
+def test_backtest_runner_summary_counts_actual_rejection_without_fills() -> None:
+    config = BrokerConfig(
+        commission_rate=0.0,
+        slippage_rate=0.0,
+        execution_timing="next_open",
+        max_position_pct=0.4,
+        allow_short=False,
+    )
+    broker = MockBrokerEngine(config)
+    runner = BacktestRunner(config, broker=broker, agent=ScriptedExecutionAgent(broker))
+    prices = pd.DataFrame(
+        {
+            "Open": [100.0, 100.0],
+            "High": [101.0, 101.0],
+            "Low": [99.0, 99.0],
+            "Close": [100.0, 100.0],
+        },
+        index=pd.to_datetime(["2024-01-02", "2024-01-03"]),
+    )
+
+    result = runner.run(
+        ticker="AAPL",
+        price_df=prices,
+        benchmark_df=_benchmark_prices(prices),
+        start_date="2024-01-02",
+        end_date="2024-01-03",
+    )
+
+    assert result.trades.empty
+    assert result.executions.empty
+    assert result.closed_trades.empty
+    assert result.view.trades == []
+    assert result.view.executions == []
+    assert result.view.closed_trades == []
+    assert [order.order_id for order in result.view.orders] == [
+        runner.broker.get_orders()[0].id
+    ]
+    summary = result.view.summary.model_dump()
+    assert summary["number_of_orders"] == 1
+    assert summary["number_of_rejections"] == 1
+    assert summary["number_of_fills"] == 0
+    assert [reason.model_dump() for reason in result.view.no_trade_reasons] == [
+        {"code": "all_rejected", "count": 1}
+    ]
+
+
+def test_backtest_runner_does_not_count_unaffordable_target_intent_as_order() -> None:
+    prices = pd.DataFrame(
+        [
+            {"Open": 1_000.0, "High": 1_001.0, "Low": 999.0, "Close": 1_000.0},
+            {"Open": 1_000.0, "High": 1_001.0, "Low": 999.0, "Close": 1_000.0},
+        ],
+        index=pd.to_datetime(["2024-01-02", "2024-01-03"]),
+    )
+    runner = BacktestRunner(
+        BrokerConfig(
+            initial_cash=100.0,
+            commission_rate=0.0,
+            slippage_rate=0.0,
+        ),
+        decision_executor=_TargetSequenceExecutor([80.0]),
+    )
+
+    result = runner.run(
+        ticker="AAPL",
+        price_df=prices,
+        benchmark_df=_benchmark_prices(prices),
+        start_date="2024-01-02",
+        end_date="2024-01-03",
+    )
+
+    assert result.trades.empty
+    assert result.executions.empty
+    assert result.closed_trades.empty
+    assert result.view.trades == []
+    assert result.view.executions == []
+    assert result.view.closed_trades == []
+    assert len(result.view.orders) == 1
+    intent = result.view.orders[0]
+    assert intent.order_id == "target-intent-1"
+    assert intent.status == "unfilled"
+    assert intent.signal_date == "2024-01-02T00:00:00+00:00"
+    assert intent.execution_date == "2024-01-03T00:00:00+00:00"
+    assert intent.reason == "target_not_affordable"
+    summary = result.view.summary.model_dump()
+    assert summary["number_of_orders"] == 0
+    assert summary["number_of_rejections"] == 0
+    assert summary["number_of_fills"] == 0

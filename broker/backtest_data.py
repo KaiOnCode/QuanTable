@@ -211,10 +211,8 @@ class BacktestDatasetPreparer:
                 ) from error
         target = self._window(ticker, start, end)
         benchmark = self._window(benchmark_symbol, start, end)
-        if target.empty or benchmark.empty:
-            raise BacktestDataError("target and benchmark require historical OHLCV")
-        if target.index.intersection(benchmark.index).empty:
-            raise BacktestDataError("target and benchmark have no overlapping dates")
+        if target.empty:
+            raise BacktestDataError("target requires historical OHLCV")
         target_history = self._history_window(
             ticker,
             start,
@@ -230,17 +228,19 @@ class BacktestDatasetPreparer:
             self._loader_provenance(benchmark_symbol, start, end, warmup_bars),
         )
         self._validate_window(target_history, "target")
-        self._validate_window(benchmark_history, "benchmark")
         self._validate_unmixed_adjustment_modes(target_history, "target")
-        self._validate_unmixed_adjustment_modes(benchmark_history, "benchmark")
+        if not benchmark_history.empty:
+            self._validate_window(benchmark_history, "benchmark")
+            self._validate_unmixed_adjustment_modes(benchmark_history, "benchmark")
         required_adjustment_mode = getattr(self.history_loader, "adjustment_mode", None)
         if isinstance(required_adjustment_mode, str):
             self._validate_adjustment_mode(
                 target_history, "target", required_adjustment_mode
             )
-            self._validate_adjustment_mode(
-                benchmark_history, "benchmark", required_adjustment_mode
-            )
+            if not benchmark_history.empty:
+                self._validate_adjustment_mode(
+                    benchmark_history, "benchmark", required_adjustment_mode
+                )
         return BacktestDataset(
             target=target,
             benchmark=benchmark,

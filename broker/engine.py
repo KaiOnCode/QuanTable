@@ -70,6 +70,10 @@ class MockBrokerEngine(BrokerGateway):
     def execution_timing(self) -> Literal["close_bar", "next_open"]:
         return self._config.execution_timing
 
+    def configure_for_backtest(self, config: BrokerConfig) -> None:
+        self._config = config.model_copy(deep=True)
+        self._risk_checker = PreTradeRiskChecker(self._config)
+
     def on_bar(
         self,
         bars: dict[str, BarData],
@@ -149,6 +153,9 @@ class MockBrokerEngine(BrokerGateway):
             session_id=self._latest_identity_value(account_state, "session_id"),
             decision_id=self._latest_identity_value(account_state, "decision_id"),
         )
+
+    def reset_account(self, account_id: str = "default") -> None:
+        self._accounts[account_id] = _AccountState(cash=self._config.initial_cash)
 
     def _account_at_open(
         self, *, account_id: str, bars: dict[str, BarData]

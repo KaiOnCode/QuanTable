@@ -582,9 +582,9 @@ Test connection to external MCP server.
 {
   "strategy_id": "strategy-uuid",
   "ticker": "AAPL",
-  "date_from": "2025-01-02",
-  "date_to": "2025-03-31",
-  "frequency": "weekly",
+  "date_from": "2024-01-02",
+  "date_to": "2024-01-03",
+  "frequency": "daily",
   "benchmark": "SPY",
   "mode": "deterministic"
 }
@@ -625,7 +625,7 @@ ACTIVE route never invokes a legacy analysis pipeline.
 
 ### `GET /api/agent/backtest/{backtest_id}`
 
-**Response:**
+**Response (illustrative two-session all-HOLD result):**
 ```json
 {
   "status": "completed",
@@ -634,17 +634,20 @@ ACTIVE route never invokes a legacy analysis pipeline.
     "status": "completed",
     "config": {
       "ticker": "AAPL",
-      "start_date": "2025-01-02",
-      "end_date": "2025-03-31",
-      "frequency": "weekly",
+      "start_date": "2024-01-02",
+      "end_date": "2024-01-03",
+      "frequency": "daily",
       "benchmark_symbol": "SPY",
       "strategy_id": "strategy-uuid",
+      "account_id": "default",
       "mode": "deterministic",
-      "strategy_snapshot_hash": "sha256",
-      "policy_hash": "sha256",
-      "data_snapshot_hash": "",
-      "strategy_execution_frequency": "monthly",
-      "run_frequency": "weekly",
+      "agent_model": null,
+      "strategy_snapshot_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "policy_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "data_snapshot_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "engine_version": "backtest-engine/v1",
+      "strategy_execution_frequency": "daily",
+      "run_frequency": "daily",
       "initial_capital": 100000,
       "commission_rate": 0.001,
       "commission_bps": 10,
@@ -653,66 +656,229 @@ ACTIVE route never invokes a legacy analysis pipeline.
       "execution_timing": "next_open",
       "max_position_pct": 0.5,
       "allow_short": false,
+      "provider_adjustment_mode": "auto_adjusted_prices_v1",
       "data_provider": "yfinance",
       "data_provider_version": "1.2.0",
       "data_interval": "1d",
       "data_auto_adjust": true,
       "data_actions": false,
-      "data_end_exclusive": "2025-04-01",
-      "data_lookback_days": 166,
+      "data_end_exclusive": "2024-01-04",
+      "data_lookback_days": 2,
       "data_provider_buffer_days": 100,
       "data_provider_end_semantics": "exclusive",
       "data_provider_timezone": "America/New_York",
       "data_timezone_normalization": "exchange_session_date_to_UTC_midnight",
       "corporate_actions_mode": "provider_adjusted_prices",
-      "warmup_bars": 50,
+      "warmup_bars": 2,
+      "risk_free_rate": 0.0,
+      "periods_per_year": 252,
+      "max_drawdown_limit_pct": 0.2,
+      "evaluation_bar_count": 2,
+      "sample_first_date": "2024-01-02",
+      "sample_last_date": "2024-01-03",
       "max_drawdown_limit_enforced": false
     },
     "summary": {
-      "cumulative_return_pct": 15.3,
-      "benchmark_return_pct": 9.1,
-      "excess_return_pct": 6.2,
-      "max_drawdown_pct": -7.1,
-      "sharpe_ratio": 1.2
+      "cumulative_return_pct": 0.0,
+      "total_return_pct": 0.0,
+      "annualized_return_pct": 0.0,
+      "annualized_volatility_pct": null,
+      "benchmark_return_pct": null,
+      "excess_return_pct": null,
+      "max_drawdown_pct": 0.0,
+      "max_drawdown_duration": 0,
+      "sharpe_ratio": null,
+      "win_rate_pct": 0.0,
+      "profit_factor": null,
+      "avg_win": 0.0,
+      "avg_loss": 0.0,
+      "payoff_ratio": null,
+      "number_of_trades": 0,
+      "number_of_fills": 0,
+      "number_of_orders": 0,
+      "number_of_rejections": 0,
+      "number_of_closed_trades": 0,
+      "avg_holding_period_days": 0.0,
+      "realized_pnl_usd": 0.0,
+      "unrealized_pnl_usd": 0.0,
+      "net_pnl_usd": 0.0,
+      "total_fees_usd": 0.0,
+      "total_slippage_usd": 0.0,
+      "turnover_pct": 0.0,
+      "average_daily_gross_exposure_pct": 0.0
     },
     "outcome": "completed_no_trades",
-    "series": [],
+    "series": [
+      {
+        "date": "2024-01-02",
+        "strategy_equity": 100000.0,
+        "benchmark_equity": null,
+        "strategy_drawdown_pct": 0.0,
+        "benchmark_drawdown_pct": null
+      },
+      {
+        "date": "2024-01-03",
+        "strategy_equity": 100000.0,
+        "benchmark_equity": null,
+        "strategy_drawdown_pct": 0.0,
+        "benchmark_drawdown_pct": null
+      }
+    ],
     "trades": [],
-    "warnings": ["completed_with_no_trades_not_trusted_performance"],
+    "executions": [],
+    "closed_trades": [],
+    "no_trade_reasons": [{"code": "all_hold", "count": 1}],
+    "warnings": [
+      "benchmark_start_unavailable",
+      "max_drawdown_limit_not_enforced",
+      "capacity_model_not_modeled",
+      "provider_adjusted_prices_are_synthetic",
+      "insufficient_evaluation_bars_lt_63",
+      "insufficient_evaluation_bars_lt_252",
+      "insufficient_closed_trades_lt_30",
+      "completed_with_no_trades_not_trusted_performance"
+    ],
     "progress": {
-      "decisions_eligible": 0,
+      "bars_total": 2,
+      "bars_processed": 2,
+      "decisions_total": 1,
+      "decisions_eligible": 1,
       "decisions_not_ready": 0,
-      "decisions_completed": 0
+      "decisions_completed": 1,
+      "current_decision_date": "2024-01-02T00:00:00Z"
     },
-    "decisions": [],
+    "decisions": [
+      {
+        "sequence": 1,
+        "signal_date": "2024-01-02T00:00:00Z",
+        "execution_date": null,
+        "status": "completed",
+        "attempts": 1,
+        "target_position_pct": 0.0,
+        "confidence": 1.0,
+        "feature_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "policy_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "error_code": null,
+        "error_stage": null
+      }
+    ],
+    "decision_count": 1,
     "orders": [],
+    "order_count": 0,
     "end_position": {
       "ticker": "AAPL",
       "shares": 0,
       "market_value": 0,
+      "average_cost_basis": 0,
       "unrealized_pnl": 0,
       "liquidated_at_end": false
     },
     "provenance": {
-      "strategy_snapshot_hash": "sha256",
-      "policy_hash": "sha256",
-      "data_snapshot_hash": "",
-      "canonical_result_hash": ""
+      "strategy_snapshot_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "policy_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "data_snapshot_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "canonical_result_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     }
   },
   "error": null,
-  "created_at": "2025-01-02T00:00:00+00:00",
-  "started_at": "2025-01-02T00:00:01+00:00",
-  "completed_at": "2025-01-02T00:00:10+00:00",
-  "updated_at": "2025-01-02T00:00:10+00:00"
+  "progress": {
+    "bars_total": 2,
+    "bars_processed": 2,
+    "decisions_total": 1,
+    "decisions_eligible": 1,
+    "decisions_not_ready": 0,
+    "decisions_completed": 1,
+    "current_decision_date": "2024-01-02T00:00:00Z"
+  },
+  "decisions": [
+    {
+      "sequence": 1,
+      "signal_date": "2024-01-02T00:00:00Z",
+      "execution_date": null,
+      "status": "completed",
+      "attempts": 1,
+      "target_position_pct": 0.0,
+      "confidence": 1.0,
+      "feature_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "policy_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "error_code": null,
+      "error_stage": null
+    }
+  ],
+  "created_at": "2024-01-02T00:00:00+00:00",
+  "started_at": "2024-01-02T00:00:01+00:00",
+  "completed_at": "2024-01-03T00:00:10+00:00",
+  "updated_at": "2024-01-03T00:00:10+00:00"
 }
 ```
+
+#### Backtest accounting payload contract
+
+`executions` is the fill-level ledger: one row for every completed fill. Its
+`price` is the actual execution price, `fee` and `slippage` are USD, and
+`avg_cost_after` is the remaining long position's all-in average cost basis in
+USD per share. `trades` remains a legacy compatibility alias for the same
+execution rows; it does not mean closed round trips.
+
+`closed_trades` contains only complete long-only average-cost episodes. A
+scale-in remains part of the open episode, a partial reduction records realized
+P/L on its execution but does not create a closed-trade row, and only the final
+positive-to-flat exit creates one row. Closed-trade `entry_vwap`, `exit_vwap`,
+and `average_cost_basis` are USD per share; `net_realized_pnl`, `fees`, and
+`slippage` are USD; `holding_period_trading_days` is a count of target trading
+sessions. The compatibility field `summary.number_of_trades` is the same
+closed-trade count.
+
+Summary field units are fixed: `number_of_fills`, `number_of_orders`,
+`number_of_rejections`, and `number_of_closed_trades` are counts;
+`realized_pnl_usd`, `unrealized_pnl_usd`, `net_pnl_usd`, `total_fees_usd`, and
+`total_slippage_usd` are USD; `turnover_pct` and
+`average_daily_gross_exposure_pct` are percentages. `total_return_pct` uses
+configured initial capital; `annualized_return_pct` is CAGR using the actual
+evaluation calendar duration. `annualized_volatility_pct` and `sharpe_ratio`
+use daily equity returns, `config.periods_per_year=252`, and
+`config.risk_free_rate` (currently `0.0`). `max_drawdown_duration` is an
+integer count of consecutive underwater target `trading_days`, while
+`avg_holding_period_days` is also a target trading-session count, not a
+calendar-day duration. `number_of_orders` and `number_of_rejections` are
+derived only from actual broker orders. Synthetic
+unaffordable target intents remain visible in `orders` as truthful `unfilled`
+evidence and do not increment those actual-order counts.
+
+Slippage is an execution-price diagnostic: the fill `price` already embeds the
+slipped execution price. The ledger includes that price once in all-in cost and
+P/L, while `slippage`/`total_slippage_usd` report the diagnostic amount without
+deducting it a second time. `end_position.average_cost_basis` is USD per share,
+and `end_position.unrealized_pnl` is USD; an open ending position is marked to
+market and is not implicitly liquidated.
 
 Pending/running jobs have `result: null`. Failed jobs have `result: null` and
 a safe `{ "code", "message" }` error. Results live in `system.db`; startup
 marks abandoned pending/running jobs as failed with `code: "interrupted"`.
 `completed_no_trades` is a terminal outcome with an explicit warning, not a
-trusted performance result. Closed-trade statistics exclude open positions;
+trusted performance result. `no_trade_reasons` records only observed causes:
+`no_signals`, `not_ready`, `all_hold`, and `all_rejected`; an entry-only open
+position has a real execution but no closed round trip, so it keeps the
+untrusted outcome with an empty reason list rather than being mislabelled a
+hold. `all_rejected` excludes `unfilled` and cancelled evidence. The independent
+sample warnings `insufficient_evaluation_bars_lt_63`,
+`insufficient_evaluation_bars_lt_252`, and
+`insufficient_closed_trades_lt_30` use strict `<` thresholds.
+
+Benchmark comparison uses the target trading calendar without changing target
+decisions: benchmark close values are left-joined to target dates and only
+past values may forward-fill for at most five target sessions. If the first
+target date has no benchmark bar, `benchmark_return_pct` and
+`excess_return_pct` are `null` with `benchmark_start_unavailable`; a later
+stale gap produces `benchmark_stale_unavailable` and the same nullable summary
+contract. Otherwise the benchmark starts with the same initial cash, buys
+integer shares at its first target-session open after slippage and commission,
+retains residual cash, and marks those shares at target-session closes. Public
+payloads use JSON `null` for unavailable or mathematically undefined values
+(including undefined Sharpe, profit factor, and payoff ratio); they never emit
+`Infinity` or `NaN`.
+
+Closed-trade statistics exclude open positions;
 gross and net metrics remain distinct as later numerical-contract fields land.
 Stable failure codes are `market_data_unavailable`, `agent_failed`,
 `insufficient_history`, `backtest_failed`, `interrupted`, and `storage_corrupt`;

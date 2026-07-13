@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 import math
+from threading import RLock
 from typing import Hashable, Literal, Protocol
 from uuid import uuid4
 
@@ -17,11 +18,16 @@ from broker.views import (
     BacktestConfigView,
     BacktestDecisionView,
     BacktestEndPositionView,
+    BacktestNoTradeReasonView,
     BacktestOrderEvidenceView,
     BacktestProgressView,
     BacktestResultView,
     to_backtest_result_view,
 )
+
+_BENCHMARK_MAX_STALE_TARGET_SESSIONS = 5
+_PERIODS_PER_YEAR = 252
+_RISK_FREE_RATE = 0.0
 
 
 class BacktestRunError(RuntimeError):
@@ -95,7 +101,9 @@ type BacktestFrequency = Literal["daily", "weekly", "monthly"]
 class BacktestResult:
     trades: pd.DataFrame
     portfolio: pd.DataFrame
-    metrics: dict[str, float | int]
+    metrics: dict[str, float | int | None]
+    executions: pd.DataFrame = field(default_factory=pd.DataFrame)
+    closed_trades: pd.DataFrame = field(default_factory=pd.DataFrame)
     view: BacktestResultView = field(
         default_factory=lambda: BacktestResultView(
             config=BacktestConfigView(),
@@ -139,17 +147,56 @@ class BacktestRunner:
         )
         if configured != 1:
             raise BacktestRunError("provide exactly one decision implementation")
-        self._config = config.model_copy(update={"execution_timing": "next_open"})
+        self._config = config.model_copy(
+            update={"execution_timing": "next_open", "allow_short": False}
+        )
         if broker is not None and broker.execution_timing != "next_open":
             raise BacktestRunError("backtest broker requires next_open execution")
+        if broker is not None:
+            broker.configure_for_backtest(self._config)
         self.broker = broker if broker is not None else MockBrokerEngine(self._config)
         self.ledger = ledger if ledger is not None else TradeLedger()
         self._agent = agent
         self._scoped_agent_factory = scoped_agent_factory
         self._decision_executor = decision_executor
+        self._run_lock = RLock()
         self.broker.register_on_fill(self.ledger.record_fill)
 
     def run(
+        self,
+        ticker: str,
+        price_df: pd.DataFrame,
+        start_date: str,
+        end_date: str,
+        *,
+        benchmark_df: pd.DataFrame | None = None,
+        benchmark_symbol: str = "SPY",
+        frequency: str = "daily",
+        strategy_id: str = "",
+        account_id: str = "default",
+        policy_hash: str = "",
+        observer: BacktestRunObserver | None = None,
+        history_df: pd.DataFrame | None = None,
+        snapshot_benchmark_df: pd.DataFrame | None = None,
+    ) -> BacktestResult:
+        with self._run_lock:
+            return self._run(
+                ticker,
+                price_df,
+                start_date,
+                end_date,
+                benchmark_df=benchmark_df,
+                benchmark_symbol=benchmark_symbol,
+                frequency=frequency,
+                strategy_id=strategy_id,
+                account_id=account_id,
+                policy_hash=policy_hash,
+                observer=observer,
+                history_df=history_df,
+                snapshot_benchmark_df=snapshot_benchmark_df,
+            )
+
+    def _run(
         self,
         ticker: str,
         price_df: pd.DataFrame,
@@ -177,7 +224,14 @@ class BacktestRunner:
         )
         if observer is not None:
             observer.bind_input_snapshot(history, snapshot_benchmark)
+        self.broker.reset_account(account_id)
         session_id = f"backtest-{ticker.lower()}-{uuid4().hex[:8]}"
+        self.ledger.record_initial_capital(
+            self._config.initial_cash,
+            session_id=session_id,
+            strategy_id=strategy_id,
+            account_id=account_id,
+        )
         decision_dates, canonical_frequency = self._decision_dates(
             target.index, frequency
         )
@@ -191,6 +245,8 @@ class BacktestRunner:
         target_intent_evidence: list[BacktestOrderEvidenceView] = []
         pending_agent_order_sequences: dict[str, int] = {}
         execution_recorded_sequences: set[int] = set()
+        recorded_decisions: list[BacktestDecisionView] = []
+        typed_actions: list[str] = []
         for trading_date, row in target.iterrows():
             execution_time = self._historical_timestamp(trading_date)
             placement = self._place_pending_target_order(
@@ -217,6 +273,11 @@ class BacktestRunner:
                     del pending_agent_order_sequences[order_id]
             newly_executed_sequences = executed_sequences - execution_recorded_sequences
             execution_recorded_sequences.update(newly_executed_sequences)
+            recorded_decisions = self._with_execution_dates(
+                recorded_decisions,
+                newly_executed_sequences,
+                as_of,
+            )
             if observer is not None:
                 for sequence in sorted(newly_executed_sequences):
                     observer.record_execution(sequence, as_of)
@@ -253,15 +314,15 @@ class BacktestRunner:
                                 )
                             }
                         )
+                        not_ready_decision = BacktestDecisionView(
+                            sequence=decision_sequence,
+                            signal_date=as_of,
+                            status="not_ready",
+                            policy_hash=policy_hash,
+                        )
+                        recorded_decisions.append(not_ready_decision)
                         if observer is not None:
-                            observer.record_decision(
-                                BacktestDecisionView(
-                                    sequence=decision_sequence,
-                                    signal_date=as_of,
-                                    status="not_ready",
-                                    policy_hash=policy_hash,
-                                )
-                            )
+                            observer.record_decision(not_ready_decision)
                             observer.record_progress(progress)
                         self.ledger.record_daily_snapshot(
                             date=self._to_timestamp(trading_date).strftime("%Y-%m-%d"),
@@ -279,6 +340,7 @@ class BacktestRunner:
                         closes=closes,
                         current_position_pct=current_position_pct,
                     )
+                    typed_actions.append(typed_decision.action)
                     pending_intent = self._target_intent(
                         sequence=decision_sequence,
                         signal_time=execution_time,
@@ -346,22 +408,27 @@ class BacktestRunner:
                     agent_executed_at_signal_sequences - execution_recorded_sequences
                 )
                 execution_recorded_sequences.update(newly_agent_executed_sequences)
+                completed_decision = BacktestDecisionView(
+                    sequence=decision_sequence,
+                    signal_date=as_of,
+                    execution_date=None,
+                    status="completed",
+                    target_position_pct=self._decision_float(
+                        decision, "target_position_pct"
+                    ),
+                    confidence=self._decision_float(decision, "confidence"),
+                    attempts=self._decision_int(decision, "attempts") or 1,
+                    feature_hash=self._decision_str(decision, "feature_hash"),
+                    policy_hash=policy_hash,
+                )
+                recorded_decisions.append(completed_decision)
+                recorded_decisions = self._with_execution_dates(
+                    recorded_decisions,
+                    newly_agent_executed_sequences,
+                    as_of,
+                )
                 if observer is not None:
-                    observer.record_decision(
-                        BacktestDecisionView(
-                            sequence=decision_sequence,
-                            signal_date=as_of,
-                            execution_date=None,
-                            status="completed",
-                            target_position_pct=self._decision_float(
-                                decision, "target_position_pct"
-                            ),
-                            confidence=self._decision_float(decision, "confidence"),
-                            attempts=self._decision_int(decision, "attempts") or 1,
-                            feature_hash=self._decision_str(decision, "feature_hash"),
-                            policy_hash=policy_hash,
-                        )
-                    )
+                    observer.record_decision(completed_decision)
                     observer.record_progress(progress)
                     for sequence in sorted(newly_agent_executed_sequences):
                         observer.record_execution(sequence, as_of)
@@ -382,10 +449,48 @@ class BacktestRunner:
             raise BacktestInsufficientHistoryError(
                 "no evaluation decision has sufficient policy history"
             )
-        portfolio = self._build_portfolio_performance_view(
+        portfolio, benchmark_warnings = self._build_portfolio_performance_view(
             target, benchmark, session_id
         )
-        metrics = self.ledger.compute_metrics(session_id=session_id)
+        metrics = self.ledger.compute_metrics(
+            session_id=session_id,
+            strategy_id=strategy_id,
+            account_id=account_id,
+            risk_free_rate=_RISK_FREE_RATE,
+            periods_per_year=_PERIODS_PER_YEAR,
+        )
+        executions = self.ledger.to_executions_dataframe(
+            session_id=session_id,
+            strategy_id=strategy_id,
+            account_id=account_id,
+        )
+        closed_trades = self.ledger.to_closed_trades_dataframe(
+            session_id=session_id,
+            strategy_id=strategy_id,
+            account_id=account_id,
+        )
+        execution_records = self.ledger.load_execution_records(
+            session_id=session_id,
+            strategy_id=strategy_id,
+            account_id=account_id,
+        )
+        closed_trade_records = self.ledger.load_closed_trade_records(
+            session_id=session_id,
+            strategy_id=strategy_id,
+            account_id=account_id,
+        )
+        actual_orders = [
+            order
+            for order in self.broker.get_orders(account_id=account_id)
+            if order.session_id == session_id
+        ]
+        metrics = {
+            **metrics,
+            "number_of_orders": len(actual_orders),
+            "number_of_rejections": sum(
+                order.status is OrderStatus.REJECTED for order in actual_orders
+            ),
+        }
         result_view = to_backtest_result_view(
             config=BacktestConfigView(
                 ticker=ticker,
@@ -395,27 +500,57 @@ class BacktestRunner:
                 frequency=canonical_frequency,
                 strategy_id=strategy_id,
                 account_id=account_id,
+                initial_capital=self._config.initial_cash,
+                commission_rate=self._config.commission_rate,
+                commission_bps=self._config.commission_rate * 10_000,
+                slippage_rate=self._config.slippage_rate,
+                slippage_bps=self._config.slippage_rate * 10_000,
+                execution_timing=self._config.execution_timing,
+                max_position_pct=self._config.max_position_pct,
+                allow_short=self._config.allow_short,
+                risk_free_rate=_RISK_FREE_RATE,
+                periods_per_year=_PERIODS_PER_YEAR,
             ),
             metrics=metrics,
             portfolio=portfolio,
-            trades=self.ledger.load_fill_records(session_id=session_id),
+            trades=execution_records,
+            executions=execution_records,
+            closed_trades=closed_trade_records,
             benchmark_return=self._calculate_benchmark_return(portfolio),
+            warnings=benchmark_warnings,
+            progress=progress,
+            decisions=recorded_decisions,
         )
         order_evidence = [
             *self._order_evidence(account_id, session_id),
             *target_intent_evidence,
         ]
+        no_trade_reasons = self._zero_trade_reasons(
+            progress=progress,
+            typed_actions=typed_actions,
+            actual_orders=actual_orders,
+            number_of_executions=len(execution_records),
+            number_of_closed_trades=len(closed_trade_records),
+        )
         result_view = result_view.model_copy(
             update={
                 "orders": order_evidence,
                 "order_count": len(order_evidence),
-                "end_position": self._end_position(ticker, account_id),
+                "no_trade_reasons": no_trade_reasons,
+                "end_position": self._end_position(
+                    ticker=ticker,
+                    account_id=account_id,
+                    session_id=session_id,
+                    strategy_id=strategy_id,
+                ),
             }
         )
         return BacktestResult(
-            trades=self.ledger.to_trades_dataframe(session_id=session_id),
+            trades=executions,
             portfolio=portfolio,
             metrics=metrics,
+            executions=executions,
+            closed_trades=closed_trades,
             view=result_view,
         )
 
@@ -435,6 +570,60 @@ class BacktestRunner:
     def _decision_str(decision: dict, key: str) -> str | None:
         value = decision.get(key)
         return value if isinstance(value, str) else None
+
+    @staticmethod
+    def _with_execution_dates(
+        decisions: list[BacktestDecisionView],
+        sequences: set[int],
+        execution_date: str,
+    ) -> list[BacktestDecisionView]:
+        if not sequences:
+            return decisions
+        return [
+            decision.model_copy(update={"execution_date": execution_date})
+            if decision.sequence in sequences
+            else decision
+            for decision in decisions
+        ]
+
+    @staticmethod
+    def _zero_trade_reasons(
+        *,
+        progress: BacktestProgressView,
+        typed_actions: list[str],
+        actual_orders: list[Order],
+        number_of_executions: int,
+        number_of_closed_trades: int,
+    ) -> list[BacktestNoTradeReasonView]:
+        if number_of_closed_trades or number_of_executions:
+            return []
+        reasons: list[BacktestNoTradeReasonView] = []
+        if progress.decisions_total == 0:
+            reasons.append(BacktestNoTradeReasonView(code="no_signals", count=1))
+        if progress.decisions_not_ready:
+            reasons.append(
+                BacktestNoTradeReasonView(
+                    code="not_ready",
+                    count=progress.decisions_not_ready,
+                )
+            )
+        if typed_actions and all(action == "HOLD" for action in typed_actions):
+            reasons.append(
+                BacktestNoTradeReasonView(
+                    code="all_hold",
+                    count=len(typed_actions),
+                )
+            )
+        if actual_orders and all(
+            order.status is OrderStatus.REJECTED for order in actual_orders
+        ):
+            reasons.append(
+                BacktestNoTradeReasonView(
+                    code="all_rejected",
+                    count=len(actual_orders),
+                )
+            )
+        return reasons
 
     def _target_intent(
         self,
@@ -583,16 +772,43 @@ class BacktestRunner:
             )
         return evidence
 
-    def _end_position(self, ticker: str, account_id: str) -> BacktestEndPositionView:
+    def _end_position(
+        self,
+        *,
+        ticker: str,
+        account_id: str,
+        session_id: str,
+        strategy_id: str,
+    ) -> BacktestEndPositionView:
         position = self.broker.get_position(ticker, account_id=account_id)
         price = self.broker.get_latest_price(ticker)
         if position is None or price is None:
             return BacktestEndPositionView(ticker=ticker)
+        accounting = (
+            self.ledger.open_long_position_accounting(
+                ticker=ticker,
+                mark_price=price,
+                session_id=session_id,
+                strategy_id=strategy_id,
+                account_id=account_id,
+            )
+            if position.shares > 0
+            else None
+        )
         return BacktestEndPositionView(
             ticker=ticker,
             shares=position.shares,
             market_value=position.shares * price,
-            unrealized_pnl=position.unrealized_pnl,
+            average_cost_basis=(
+                accounting.average_cost_basis
+                if accounting is not None
+                else position.avg_cost
+            ),
+            unrealized_pnl=(
+                accounting.unrealized_pnl
+                if accounting is not None
+                else position.unrealized_pnl
+            ),
             liquidated_at_end=False,
         )
 
@@ -611,12 +827,8 @@ class BacktestRunner:
             raise BacktestRunError("start_date must not be after end_date")
         target = price_df.loc[start_date:end_date].copy()
         benchmark = benchmark_df.loc[start_date:end_date].copy()
-        if target.empty or benchmark.empty:
-            raise BacktestRunError(
-                "target and benchmark require non-empty price windows"
-            )
-        if target.index.intersection(benchmark.index).empty:
-            raise BacktestRunError("target and benchmark have no overlapping dates")
+        if target.empty:
+            raise BacktestRunError("target requires non-empty price window")
         return target, benchmark
 
     def _validate_price_frame(self, frame: pd.DataFrame, label: str) -> None:
@@ -753,60 +965,111 @@ class BacktestRunner:
         target: pd.DataFrame,
         benchmark: pd.DataFrame,
         session_id: str,
-    ) -> pd.DataFrame:
+    ) -> tuple[pd.DataFrame, list[str]]:
         portfolio = self.ledger.to_portfolio_dataframe(session_id=session_id)
         if portfolio.empty:
-            return portfolio
+            return portfolio, []
         target_close = {
             self._to_timestamp(trading_date).strftime("%Y-%m-%d"): self._row_value(
                 row, "Close", "close"
             )
             for trading_date, row in target.iterrows()
         }
-        benchmark_series = pd.Series(
-            [self._row_value(row, "Close", "close") for _, row in benchmark.iterrows()],
-            index=pd.DatetimeIndex(benchmark.index),
-            dtype=float,
-        )
         target_dates = pd.DatetimeIndex(target.index)
-        aligned_benchmark = benchmark_series.reindex(target_dates).ffill(limit=5)
-        benchmark_close = {
-            self._to_timestamp(trading_date).strftime("%Y-%m-%d"): float(value)
-            for trading_date, value in aligned_benchmark.items()
-        }
         dated = portfolio.copy()
         dated["close"] = [target_close[str(value)] for value in dated["date"].tolist()]
-        benchmark_values = [
-            benchmark_close[str(value)] for value in dated["date"].tolist()
-        ]
         strategy_equity = pd.Series(
             dated["equity"].to_numpy(), index=dated.index, dtype=float
         )
         dated["strategy_equity"] = strategy_equity
-        first_benchmark_close = benchmark_values[0]
-        benchmark_shares = self._config.initial_cash / first_benchmark_close
-        dated["benchmark_equity"] = pd.Series(
-            [value * benchmark_shares for value in benchmark_values],
-            index=dated.index,
-            dtype=float,
-        )
+        warnings: list[str] = []
+        benchmark_equity: pd.Series
+        if benchmark.empty:
+            warnings.append("benchmark_start_unavailable")
+            benchmark_equity = pd.Series(
+                [math.nan] * len(dated), index=dated.index, dtype=float
+            )
+        else:
+            benchmark_close_series = pd.Series(
+                [
+                    self._row_value(row, "Close", "close")
+                    for _, row in benchmark.iterrows()
+                ],
+                index=pd.DatetimeIndex(benchmark.index),
+                dtype=float,
+            )
+            benchmark_open_series = pd.Series(
+                [
+                    self._row_value(row, "Open", "open")
+                    for _, row in benchmark.iterrows()
+                ],
+                index=pd.DatetimeIndex(benchmark.index),
+                dtype=float,
+            )
+            aligned_close = benchmark_close_series.reindex(target_dates).ffill(
+                limit=_BENCHMARK_MAX_STALE_TARGET_SESSIONS
+            )
+            first_open = benchmark_open_series.reindex(target_dates).iloc[0]
+            if pd.isna(first_open):
+                warnings.append("benchmark_start_unavailable")
+                benchmark_equity = pd.Series(
+                    [math.nan] * len(dated), index=dated.index, dtype=float
+                )
+            else:
+                slipped_open = float(first_open) * (1 + self._config.slippage_rate)
+                all_in_cost_per_share = slipped_open * (
+                    1 + self._config.commission_rate
+                )
+                benchmark_shares = math.floor(
+                    self._config.initial_cash / all_in_cost_per_share
+                )
+                residual_cash = (
+                    self._config.initial_cash - benchmark_shares * all_in_cost_per_share
+                )
+                if benchmark_shares == 0:
+                    benchmark_equity = pd.Series(
+                        [residual_cash] * len(dated), index=dated.index, dtype=float
+                    )
+                else:
+                    benchmark_close = {
+                        self._to_timestamp(trading_date).strftime("%Y-%m-%d"): value
+                        for trading_date, value in aligned_close.items()
+                    }
+                    benchmark_equity = pd.Series(
+                        [
+                            (
+                                residual_cash + benchmark_shares * float(value)
+                                if not pd.isna(value)
+                                else math.nan
+                            )
+                            for value in (
+                                benchmark_close[str(value)]
+                                for value in dated["date"].tolist()
+                            )
+                        ],
+                        index=dated.index,
+                        dtype=float,
+                    )
+                    if aligned_close.isna().any():
+                        warnings.append("benchmark_stale_unavailable")
+        dated["benchmark_equity"] = benchmark_equity
         benchmark_equity = pd.Series(
             dated["benchmark_equity"].to_numpy(), index=dated.index, dtype=float
         )
         dated["strategy_drawdown"] = self._drawdown(strategy_equity)
         dated["benchmark_drawdown"] = self._drawdown(benchmark_equity)
-        return dated
+        return dated, warnings
 
     @staticmethod
     def _drawdown(equity: pd.Series) -> pd.Series:
         return 1 - equity / equity.cummax()
 
-    @staticmethod
-    def _calculate_benchmark_return(portfolio: pd.DataFrame) -> float:
-        if portfolio.empty:
-            return 0.0
+    def _calculate_benchmark_return(self, portfolio: pd.DataFrame) -> float | None:
+        if portfolio.empty or "benchmark_equity" not in portfolio:
+            return None
         benchmark_equity = pd.Series(portfolio["benchmark_equity"], dtype=float)
-        start_equity = float(benchmark_equity.iloc[0])
-        if start_equity == 0:
-            return 0.0
-        return float(benchmark_equity.iloc[-1]) / start_equity - 1.0
+        if benchmark_equity.empty or benchmark_equity.isna().any():
+            return None
+        if self._config.initial_cash <= 0:
+            return None
+        return float(benchmark_equity.iloc[-1]) / self._config.initial_cash - 1.0

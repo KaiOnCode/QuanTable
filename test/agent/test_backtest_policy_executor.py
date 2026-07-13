@@ -24,11 +24,18 @@ from agent.backtest_policy_executor import (
     ProviderTransientError,
     derive_position_transition,
 )
+from agent import backtest_jobs
 from agent.backtest_jobs import _canonical_economic_result_hash
 from storage.strategy_policy import MomentumPolicy, SmaCrossoverPolicy
 from broker.backtest_runner import BacktestRunner
 from broker.config import BrokerConfig
-from broker.views import TradeView
+from broker.views import (
+    BacktestConfigView,
+    BacktestResultView,
+    ClosedTradeView,
+    PerformanceMetricsView,
+    TradeView,
+)
 import pandas as pd
 
 
@@ -94,6 +101,42 @@ def test_position_transition_rejects_short_or_over_limit_targets() -> None:
         derive_position_transition(20.0, -1.0, max_position_pct=80.0)
     with pytest.raises(ValueError, match="maximum"):
         derive_position_transition(20.0, 81.0, max_position_pct=80.0)
+
+
+@pytest.mark.parametrize(
+    ("evaluation_bar_count", "closed_trade_count", "expected"),
+    [
+        (
+            62,
+            29,
+            [
+                "insufficient_evaluation_bars_lt_63",
+                "insufficient_evaluation_bars_lt_252",
+                "insufficient_closed_trades_lt_30",
+            ],
+        ),
+        (63, 30, ["insufficient_evaluation_bars_lt_252"]),
+        (
+            251,
+            29,
+            [
+                "insufficient_evaluation_bars_lt_252",
+                "insufficient_closed_trades_lt_30",
+            ],
+        ),
+        (252, 30, []),
+    ],
+)
+def test_sample_size_warnings_use_strict_declared_thresholds(
+    evaluation_bar_count: int, closed_trade_count: int, expected: list[str]
+) -> None:
+    assert (
+        backtest_jobs._sample_size_warnings(
+            evaluation_bar_count=evaluation_bar_count,
+            closed_trade_count=closed_trade_count,
+        )
+        == expected
+    )
 
 
 def test_momentum_hold_band_rebalances_an_overweight_position_to_policy_cap() -> None:
@@ -477,3 +520,142 @@ def test_deterministic_61_bar_run_completes_without_agent_loop(
     assert _canonical_economic_result_hash(
         spec, result.view, data_snapshot_hash="a" * 64
     ) != _canonical_economic_result_hash(spec, result.view, data_snapshot_hash="b" * 64)
+
+
+def test_canonical_hash_ignores_execution_closed_trade_and_account_operational_ids() -> (
+    None
+):
+    policy = BacktestPolicySnapshot(
+        mode=BacktestMode.DETERMINISTIC,
+        strategy_type="quant",
+        policy=MomentumPolicy(
+            lookback_bars=2,
+            entry_threshold=0.01,
+            exit_threshold=-0.01,
+            target_position_pct=0.8,
+        ),
+    )
+    spec = BacktestRunSpec(
+        strategy_id="strategy-a",
+        strategy_name="Frozen Momentum",
+        ticker="AAPL",
+        date_from=date(2024, 1, 2),
+        date_to=date(2024, 1, 5),
+        benchmark="SPY",
+        mode=BacktestMode.DETERMINISTIC,
+        strategy_execution_frequency="daily",
+        run_frequency="daily",
+        policy=policy,
+        strategy_snapshot_hash="a" * 64,
+        policy_hash="b" * 64,
+        broker_config=FrozenBrokerConfig(
+            initial_cash=100_000.0,
+            max_position_pct=0.8,
+        ),
+        max_drawdown_limit_pct=0.2,
+    )
+    execution = TradeView(
+        order_id="order-a",
+        timestamp=datetime(2024, 1, 3, tzinfo=UTC),
+        ticker="AAPL",
+        side="sell",
+        quantity=15.0,
+        price=120.0,
+        fee=6.0,
+        slippage=0.0,
+        trade_value=1_800.0,
+        realized_pnl=63.75,
+        cash_after=98_473.0,
+        equity_after=100_123.0,
+        shares_after=15.0,
+        avg_cost_after=106.05,
+        strategy_id=spec.strategy_id,
+        account_id="account-a",
+        session_id="session-a",
+        decision_id="decision-a",
+    )
+    closed_trade = ClosedTradeView(
+        entry_at=datetime(2024, 1, 2, tzinfo=UTC),
+        exit_at=datetime(2024, 1, 5, tzinfo=UTC),
+        ticker="AAPL",
+        quantity=20.0,
+        entry_vwap=105.0,
+        exit_vwap=97.5,
+        average_cost_basis=106.05,
+        net_realized_pnl=-190.5,
+        fees=40.5,
+        slippage=0.0,
+        holding_period_trading_days=3,
+        strategy_id=spec.strategy_id,
+        account_id="account-a",
+        session_id="session-a",
+        decision_id="decision-a",
+    )
+    first = BacktestResultView(
+        config=BacktestConfigView(
+            ticker=spec.ticker,
+            start_date=spec.date_from.isoformat(),
+            end_date=spec.date_to.isoformat(),
+            strategy_id=spec.strategy_id,
+            account_id="account-a",
+        ),
+        summary=PerformanceMetricsView(
+            number_of_fills=1,
+            number_of_closed_trades=1,
+            realized_pnl_usd=-190.5,
+        ),
+        trades=[execution],
+        executions=[execution],
+        closed_trades=[closed_trade],
+    )
+    changed_identity_execution = execution.model_copy(
+        update={
+            "order_id": "order-b",
+            "account_id": "account-b",
+            "session_id": "session-b",
+            "decision_id": "decision-b",
+        }
+    )
+    changed_identity_closed_trade = closed_trade.model_copy(
+        update={
+            "account_id": "account-b",
+            "session_id": "session-b",
+            "decision_id": "decision-b",
+        }
+    )
+    same_economics = first.model_copy(
+        update={
+            "config": first.config.model_copy(update={"account_id": "account-b"}),
+            "trades": [changed_identity_execution],
+            "executions": [changed_identity_execution],
+            "closed_trades": [changed_identity_closed_trade],
+        }
+    )
+
+    assert _canonical_economic_result_hash(
+        spec, first
+    ) == _canonical_economic_result_hash(spec, same_economics)
+
+    changed_economics = same_economics.model_copy(
+        update={
+            "executions": [
+                changed_identity_execution.model_copy(update={"price": 121.0})
+            ]
+        }
+    )
+    assert _canonical_economic_result_hash(
+        spec, first
+    ) != _canonical_economic_result_hash(spec, changed_economics)
+
+    changed_historical_timestamp = same_economics.model_copy(
+        update={
+            "executions": [
+                changed_identity_execution.model_copy(
+                    update={"timestamp": datetime(2024, 1, 4, tzinfo=UTC)}
+                )
+            ]
+        }
+    )
+    assert _canonical_economic_result_hash(
+        spec, first
+    ) != _canonical_economic_result_hash(spec, changed_historical_timestamp)

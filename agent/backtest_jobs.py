@@ -218,14 +218,20 @@ class ActiveBacktestJobRunner:
             snapshot_benchmark_df=dataset.benchmark_history,
         ).view
         warnings = [
+            *result.warnings,
             "max_drawdown_limit_not_enforced",
             "capacity_model_not_modeled",
             "provider_adjusted_prices_are_synthetic",
+            *_sample_size_warnings(
+                evaluation_bar_count=len(dataset.target),
+                closed_trade_count=len(result.closed_trades),
+            ),
         ]
         if spec.mode is BacktestMode.AGENT_EXPERIMENT:
             warnings.append("experimental_provider_dependent_result")
-        if not result.trades:
+        if not result.closed_trades:
             warnings.append("completed_with_no_trades_not_trusted_performance")
+        warnings = list(dict.fromkeys(warnings))
         data_snapshot_hash = getattr(observer, "input_snapshot_hash", None)
         if not isinstance(data_snapshot_hash, str) or not _SHA256_HEX.fullmatch(
             data_snapshot_hash
@@ -289,13 +295,17 @@ class ActiveBacktestJobRunner:
             ),
             data_timezone_normalization=("exchange_session_date_to_UTC_midnight"),
             warmup_bars=dataset.warmup_bar_count,
+            risk_free_rate=0.0,
+            periods_per_year=252,
             evaluation_bar_count=len(dataset.target),
             sample_first_date=str(dataset.target.index[0])[:10],
             sample_last_date=str(dataset.target.index[-1])[:10],
         )
         return result.model_copy(
             update={
-                "outcome": "completed" if result.trades else "completed_no_trades",
+                "outcome": (
+                    "completed" if result.closed_trades else "completed_no_trades"
+                ),
                 "config": config,
                 "warnings": warnings,
                 "provenance": BacktestProvenanceView(
@@ -308,6 +318,19 @@ class ActiveBacktestJobRunner:
         )
 
 
+def _sample_size_warnings(
+    *, evaluation_bar_count: int, closed_trade_count: int
+) -> list[str]:
+    warnings: list[str] = []
+    if evaluation_bar_count < 63:
+        warnings.append("insufficient_evaluation_bars_lt_63")
+    if evaluation_bar_count < 252:
+        warnings.append("insufficient_evaluation_bars_lt_252")
+    if closed_trade_count < 30:
+        warnings.append("insufficient_closed_trades_lt_30")
+    return warnings
+
+
 def _canonical_economic_result_hash(
     spec: BacktestRunSpec,
     result: BacktestResultView,
@@ -315,14 +338,19 @@ def _canonical_economic_result_hash(
     data_snapshot_hash: str | None = None,
 ) -> str:
     payload = result.model_dump(mode="json", exclude={"provenance"})
-    for trade in payload.get("trades", []):
-        if isinstance(trade, dict):
-            for operational_field in (
-                "order_id",
-                "session_id",
-                "decision_id",
-            ):
-                trade.pop(operational_field, None)
+    for record_type in ("trades", "executions", "closed_trades"):
+        for record in payload.get(record_type, []):
+            if isinstance(record, dict):
+                for operational_field in (
+                    "order_id",
+                    "account_id",
+                    "session_id",
+                    "decision_id",
+                ):
+                    record.pop(operational_field, None)
+    config = payload.get("config")
+    if isinstance(config, dict):
+        config.pop("account_id", None)
     for order in payload.get("orders", []):
         if isinstance(order, dict):
             order.pop("order_id", None)

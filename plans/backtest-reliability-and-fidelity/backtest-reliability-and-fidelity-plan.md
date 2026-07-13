@@ -475,7 +475,7 @@ Phase 内仅并行互不写同一 owner 的 research/test lanes；`agent/backtes
 
   **Commit：** Y；`fix: enforce point-in-time next-open backtest execution`。
 
-- [ ] 7. 重建 initial-capital accounting、positions 与 closed-trade ledger
+- [x] 7. 重建 initial-capital accounting、positions 与 closed-trade ledger
 
   **问题分析：** return denominator 排除首日 costs；fills 被当 trades；entry fee 是 losing realized P/L；open positions 的 realized/unrealized/end state 不完整。
 
@@ -498,7 +498,7 @@ Phase 内仅并行互不写同一 owner 的 research/test lanes；`agent/backtes
 
   **Commit：** N；与 Todo 8 一起完成 Phase 4。
 
-- [ ] 8. 修正 benchmark、risk metrics、sample warnings 与 zero-trade semantics
+- [x] 8. 修正 benchmark、risk metrics、sample warnings 与 zero-trade semantics
 
   **问题分析：** current benchmark 是简单 rebased closes；strategy/benchmark costs 不同；duration unit 不明；0 trades 被无警告显示为 completed。
 

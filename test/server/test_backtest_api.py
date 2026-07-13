@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import sqlite3
 from threading import Event
+from time import sleep
 
 import pandas as pd
 import pytest
@@ -771,6 +772,73 @@ def test_active_backtest_fingerprint_is_stable_across_cache_hits_and_restart(
         == first.result.provenance.data_snapshot_hash
     )
     reopened.shutdown()
+
+
+def test_active_61_bar_hold_run_persists_sample_and_no_trade_warnings(
+    backtest_api: tuple[TestClient, ContextStore, FastAPI],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    client, store, _ = backtest_api
+    market_store = MarketDataStore(tmp_path / "sample-warnings-market.db")
+    dates = pd.bdate_range("2025-01-02", periods=81)
+    for ticker, price in (("AAPL", 100.0), ("SPY", 400.0)):
+        market_store.upsert_ohlcv(
+            ticker,
+            [
+                {
+                    "date": trading_date.strftime("%Y-%m-%d"),
+                    "open": price,
+                    "high": price + 1,
+                    "low": price - 1,
+                    "close": price,
+                    "volume": 1000,
+                }
+                for trading_date in dates
+            ],
+        )
+    service = BacktestJobService(
+        store=store,
+        runner=ActiveBacktestJobRunner(
+            market_store,
+            history_loader=_NoOpHistoryLoader(),
+        ),
+    )
+    monkeypatch.setattr(agent_routes, "get_backtest_job_service", lambda: service)
+
+    backtest_id = client.post(
+        "/api/agent/backtest",
+        json={
+            **_request_payload(),
+            "date_from": dates[20].strftime("%Y-%m-%d"),
+            "date_to": dates[-1].strftime("%Y-%m-%d"),
+            "frequency": "daily",
+        },
+    ).json()["backtest_id"]
+    for _ in range(200):
+        completed = BacktestJobResponse.model_validate(
+            client.get(f"/api/agent/backtest/{backtest_id}").json()
+        )
+        if completed.status in {"completed", "failed"}:
+            break
+        sleep(0.01)
+    else:
+        raise AssertionError("61-bar backtest did not reach a terminal status")
+
+    assert completed.status == "completed"
+    assert completed.result is not None
+    assert completed.result.outcome == "completed_no_trades"
+    assert completed.result.config.evaluation_bar_count == 61
+    assert {
+        "completed_with_no_trades_not_trusted_performance",
+        "insufficient_evaluation_bars_lt_63",
+        "insufficient_evaluation_bars_lt_252",
+        "insufficient_closed_trades_lt_30",
+    }.issubset(completed.result.warnings)
+    assert [reason.model_dump() for reason in completed.result.no_trade_reasons] == [
+        {"code": "all_hold", "count": 60}
+    ]
+    service.shutdown()
 
 
 def test_input_snapshot_redacts_unknown_provenance_and_hashes_adjustment_mode() -> None:
