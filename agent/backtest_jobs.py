@@ -10,7 +10,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from decimal import Decimal
-from datetime import date
+from datetime import date, timedelta
 from os import getenv
 from collections.abc import Callable
 from typing import Final, Literal, Protocol, runtime_checkable
@@ -36,7 +36,11 @@ from broker.backtest_data import (
     BacktestDatasetPreparer,
     HistoricalPriceLoader,
 )
-from broker.backtest_runner import BacktestRunObserver, BacktestRunner
+from broker.backtest_runner import (
+    BacktestInsufficientHistoryError,
+    BacktestRunObserver,
+    BacktestRunner,
+)
 from broker.config import BrokerConfig
 from broker.views import (
     BacktestConfigView,
@@ -67,6 +71,7 @@ type BacktestJobErrorCode = Literal[
     "decision_transient_exhausted",
     "provider_failed",
     "decision_schema_invalid",
+    "insufficient_history",
 ]
 
 _SESSION_TIMESTAMP: Final = re.compile(r"^\d{4}-\d{2}-\d{2}T00:00:00Z$")
@@ -159,6 +164,9 @@ class _DiscardingBacktestRunObserver:
     def record_decision(self, decision: BacktestDecisionView) -> None:
         del decision
 
+    def record_execution(self, sequence: int, execution_date: str) -> None:
+        del sequence, execution_date
+
 
 class ActiveBacktestJobRunner:
     def __init__(
@@ -187,6 +195,7 @@ class ActiveBacktestJobRunner:
             benchmark_symbol=spec.benchmark,
             date_from=spec.date_from.isoformat(),
             date_to=spec.date_to.isoformat(),
+            warmup_bars=spec.policy.required_lookback_bars,
         )
         runner = BacktestRunner(
             BrokerConfig(**spec.broker_config.model_dump()),
@@ -205,6 +214,8 @@ class ActiveBacktestJobRunner:
             strategy_id=spec.strategy_id,
             policy_hash=spec.policy_hash,
             observer=observer,
+            history_df=dataset.target_history,
+            snapshot_benchmark_df=dataset.benchmark_history,
         ).view
         warnings = [
             "max_drawdown_limit_not_enforced",
@@ -252,6 +263,35 @@ class ActiveBacktestJobRunner:
             allow_short=spec.broker_config.allow_short,
             max_drawdown_limit_pct=spec.max_drawdown_limit_pct,
             max_drawdown_limit_enforced=spec.max_drawdown_limit_enforced,
+            data_provider=str(
+                dataset.target_history.attrs["backtest_data_provenance"]["provider"]
+            ),
+            data_provider_version=str(
+                dataset.target_history.attrs["backtest_data_provenance"][
+                    "library_version"
+                ]
+            ),
+            data_interval="1d",
+            data_auto_adjust=True,
+            data_actions=False,
+            data_end_exclusive=(spec.date_to + timedelta(days=1)).isoformat(),
+            data_lookback_days=int(
+                dataset.target_history.attrs["backtest_data_provenance"][
+                    "lookback_days"
+                ]
+            ),
+            data_provider_buffer_days=100,
+            data_provider_end_semantics="exclusive",
+            data_provider_timezone=str(
+                dataset.target_history.attrs["backtest_data_provenance"][
+                    "provider_timezone"
+                ]
+            ),
+            data_timezone_normalization=("exchange_session_date_to_UTC_midnight"),
+            warmup_bars=dataset.warmup_bar_count,
+            evaluation_bar_count=len(dataset.target),
+            sample_first_date=str(dataset.target.index[0])[:10],
+            sample_last_date=str(dataset.target.index[-1])[:10],
         )
         return result.model_copy(
             update={
@@ -283,6 +323,9 @@ def _canonical_economic_result_hash(
                 "decision_id",
             ):
                 trade.pop(operational_field, None)
+    for order in payload.get("orders", []):
+        if isinstance(order, dict):
+            order.pop("order_id", None)
     canonical = {
         "engine_version": spec.engine_version,
         "policy_hash": spec.policy_hash,
@@ -382,6 +425,16 @@ class _JobObservabilitySink:
         )
         self._pending = None
 
+    def record_execution(self, sequence: int, execution_date: str) -> None:
+        safe_execution_date = _safe_session_timestamp(execution_date)
+        if safe_execution_date is None:
+            raise BacktestObservabilityError()
+        updated = self._store.update_backtest_decision_execution(
+            self._job_id, sequence, safe_execution_date
+        )
+        if not updated:
+            raise BacktestObservabilityError()
+
     def record_failure(self, error: BacktestDecisionError) -> None:
         pending = self._pending
         if pending is None:
@@ -409,12 +462,30 @@ class _JobObservabilitySink:
 def _canonical_input_snapshot(
     target: pd.DataFrame, benchmark: pd.DataFrame
 ) -> BacktestInputSnapshotContent:
-    canonical_bytes = (
-        '{"benchmark":'
-        + _canonical_frame_json(benchmark)
-        + ',"schema_version":1,"target":'
-        + _canonical_frame_json(target)
-        + "}"
+    expected_columns = ["Open", "High", "Low", "Close", "Volume"]
+    if (
+        list(target.columns) != expected_columns
+        or list(benchmark.columns) != expected_columns
+    ):
+        raise BacktestDataError("backtest input snapshot requires canonical OHLCV")
+    payload: dict[str, object] = {
+        "benchmark": json.loads(_canonical_frame_json(benchmark)),
+        "schema_version": 1,
+        "target": json.loads(_canonical_frame_json(target)),
+    }
+    target_provenance = _canonical_data_provenance(target)
+    benchmark_provenance = _canonical_data_provenance(benchmark)
+    if target_provenance is not None and benchmark_provenance is not None:
+        payload["data_provenance"] = {
+            "target": target_provenance,
+            "benchmark": benchmark_provenance,
+        }
+    canonical_bytes = json.dumps(
+        payload,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
     ).encode("utf-8")
     return BacktestInputSnapshotContent(
         content_hash=hashlib.sha256(canonical_bytes).hexdigest(),
@@ -423,6 +494,39 @@ def _canonical_input_snapshot(
         row_count_target=len(target),
         row_count_benchmark=len(benchmark),
     )
+
+
+def _canonical_data_provenance(frame: pd.DataFrame) -> dict[str, object] | None:
+    raw = frame.attrs.get("backtest_data_provenance")
+    if not isinstance(raw, dict):
+        return None
+    keys = (
+        "actions",
+        "auto_adjust",
+        "corporate_actions_mode",
+        "date_from",
+        "date_to",
+        "end_exclusive",
+        "interval",
+        "library_version",
+        "lookback_days",
+        "provider",
+        "provider_buffer_days",
+        "provider_end_semantics",
+        "provider_timezone",
+        "ticker",
+        "timezone_normalization",
+        "warmup_bars",
+    )
+    safe: dict[str, object] = {}
+    for key in keys:
+        value = raw.get(key)
+        if isinstance(value, str | int | bool):
+            safe[key] = value
+    modes = frame.attrs.get("adjustment_modes")
+    if isinstance(modes, tuple):
+        safe["row_adjustment_modes"] = sorted({str(mode) for mode in modes})
+    return safe
 
 
 def _safe_session_timestamp(value: str | None) -> str | None:
@@ -674,6 +778,16 @@ class BacktestJobService:
                 ).model_dump_json(),
             )
             return
+        except BacktestInsufficientHistoryError:
+            self._store.fail_backtest_job(
+                job_id,
+                BacktestJobError(
+                    code="insufficient_history",
+                    stage="data",
+                    message="Historical data is insufficient for the frozen policy",
+                ).model_dump_json(exclude_none=True),
+            )
+            return
         except BacktestDecisionError as error:
             safe_failure = _safe_decision_failure(error)
             try:
@@ -696,6 +810,16 @@ class BacktestJobService:
                     decision_date=safe_failure.decision_date,
                     attempt=safe_failure.attempt,
                     message=safe_failure.message,
+                ).model_dump_json(exclude_none=True),
+            )
+            return
+        except BacktestObservabilityError:
+            self._store.fail_backtest_job(
+                job_id,
+                BacktestJobError(
+                    code="backtest_failed",
+                    stage="persistence",
+                    message="Backtest evidence could not be persisted",
                 ).model_dump_json(exclude_none=True),
             )
             return

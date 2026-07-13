@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TypedDict
+from typing import Literal, TypedDict
 
 from broker.config import BrokerConfig
 from broker.events import (
@@ -63,48 +64,104 @@ class MockBrokerEngine(BrokerGateway):
             Callable[[Fill, Position, AccountSnapshot], None]
         ] = []
         self._on_order_callbacks: list[Callable[[Order], None]] = []
+        self._order_submission_context: tuple[str, datetime, str] | None = None
 
-    def on_bar(self, bars: dict[str, BarData]) -> None:
-        self._latest_bars.update(bars)
-        for account_state in self._accounts.values():
-            for order in list(account_state.orders.values()):
-                if order.status is not OrderStatus.NEW or order.ticker not in bars:
-                    continue
-                if (
-                    order.type is OrderType.MARKET
-                    and self._config.execution_timing == "next_open"
-                ):
-                    open_price = float(bars[order.ticker]["open"])
-                    account_before = self.get_account(account_id=order.account_id)
-                    passed, reason = self._risk_checker.check(
-                        order,
-                        account_before,
-                        reference_price=open_price,
-                    )
-                    if not passed:
-                        order.status = OrderStatus.REJECTED
-                        order.updated_at = _utc_now()
-                        self._record_event(
-                            "risk_check_failed",
-                            order=order,
-                            details={"reason": reason},
-                        )
-                        self._record_order_event(
-                            "order_rejected",
-                            order,
-                            details={"reason": reason},
-                        )
-                        self._notify_order_callbacks(order)
+    @property
+    def execution_timing(self) -> Literal["close_bar", "next_open"]:
+        return self._config.execution_timing
+
+    def on_bar(
+        self,
+        bars: dict[str, BarData],
+        *,
+        timestamp: datetime | None = None,
+    ) -> None:
+        event_time = timestamp if timestamp is not None else _utc_now()
+        is_next_open = self._config.execution_timing == "next_open"
+        if is_next_open:
+            self._latest_bars.update(
+                {
+                    ticker: {
+                        "open": float(bar["open"]),
+                        "high": float(bar["open"]),
+                        "low": float(bar["open"]),
+                        "close": float(bar["open"]),
+                    }
+                    for ticker, bar in bars.items()
+                }
+            )
+        else:
+            self._latest_bars.update(bars)
+        try:
+            for account_state in self._accounts.values():
+                for order in list(account_state.orders.values()):
+                    if order.status is not OrderStatus.NEW or order.ticker not in bars:
                         continue
-                    self._try_fill_market(order, open_price)
-                elif order.type is OrderType.LIMIT:
-                    self._try_fill_limit(order, bars[order.ticker])
+                    if order.type is OrderType.MARKET and is_next_open:
+                        open_price = float(bars[order.ticker]["open"])
+                        account_before = self._account_at_open(
+                            account_id=order.account_id, bars=bars
+                        )
+                        passed, reason = self._risk_checker.check(
+                            order,
+                            account_before,
+                            reference_price=open_price,
+                        )
+                        if not passed:
+                            order.status = OrderStatus.REJECTED
+                            order.updated_at = event_time
+                            self._record_event(
+                                "risk_check_failed",
+                                order=order,
+                                details={"reason": reason},
+                            )
+                            self._record_order_event(
+                                "order_rejected",
+                                order,
+                                details={"reason": reason},
+                            )
+                            self._notify_order_callbacks(order)
+                            continue
+                        self._try_fill_market(order, open_price, timestamp=event_time)
+                    elif order.type is OrderType.LIMIT:
+                        self._try_fill_limit(
+                            order,
+                            bars[order.ticker],
+                            timestamp=event_time,
+                        )
+        finally:
+            if is_next_open:
+                self._latest_bars.update(bars)
 
     def get_account(self, account_id: str = "default") -> AccountSnapshot:
         account_state = self._get_account_state(account_id)
         positions = self.get_positions(account_id=account_id)
         equity = account_state.cash + sum(
             position.shares * self._get_mark_price(position.ticker, position.avg_cost)
+            for position in positions
+        )
+        return AccountSnapshot(
+            cash=account_state.cash,
+            equity=equity,
+            positions=positions,
+            strategy_id=self._latest_identity_value(account_state, "strategy_id"),
+            account_id=account_id,
+            session_id=self._latest_identity_value(account_state, "session_id"),
+            decision_id=self._latest_identity_value(account_state, "decision_id"),
+        )
+
+    def _account_at_open(
+        self, *, account_id: str, bars: dict[str, BarData]
+    ) -> AccountSnapshot:
+        account_state = self._get_account_state(account_id)
+        positions = self.get_positions(account_id=account_id)
+        equity = account_state.cash + sum(
+            position.shares
+            * (
+                float(bars[position.ticker]["open"])
+                if position.ticker in bars
+                else self._get_mark_price(position.ticker, position.avg_cost)
+            )
             for position in positions
         )
         return AccountSnapshot(
@@ -143,6 +200,44 @@ class MockBrokerEngine(BrokerGateway):
     def register_on_order(self, callback: Callable[[Order], None]) -> None:
         self._on_order_callbacks.append(callback)
 
+    @contextmanager
+    def historical_order_submission(
+        self,
+        *,
+        session_id: str,
+        timestamp: datetime,
+        decision_id: str,
+    ) -> Iterator[None]:
+        prior_context = self._order_submission_context
+        self._order_submission_context = (session_id, timestamp, decision_id)
+        try:
+            yield
+        finally:
+            self._order_submission_context = prior_context
+
+    def stamp_pending_orders(
+        self,
+        *,
+        session_id: str,
+        timestamp: datetime,
+        decision_id: str,
+        order_ids: set[str] | None = None,
+    ) -> None:
+        for account_state in self._accounts.values():
+            for order in account_state.orders.values():
+                if (
+                    order.session_id != session_id
+                    or order.status is not OrderStatus.NEW
+                ):
+                    continue
+                if order_ids is None and order.decision_id:
+                    continue
+                if order_ids is not None and order.id not in order_ids:
+                    continue
+                order.created_at = timestamp
+                order.updated_at = timestamp
+                order.decision_id = decision_id
+
     def get_event_log(
         self,
         *,
@@ -177,10 +272,28 @@ class MockBrokerEngine(BrokerGateway):
             if existing_order is not None:
                 return existing_order
         stored_order = order.model_copy(deep=True)
-        stored_order.updated_at = _utc_now()
+        submission_context = self._order_submission_context
+        submission_time: datetime | None = None
+        if (
+            submission_context is not None
+            and stored_order.session_id == submission_context[0]
+        ):
+            _session_id, timestamp, decision_id = submission_context
+            submission_time = timestamp
+            stored_order.created_at = timestamp
+            stored_order.updated_at = timestamp
+            stored_order.decision_id = decision_id
+        else:
+            stored_order.updated_at = stored_order.created_at
         account_state.orders[stored_order.id] = stored_order
         self._record_order_event("order_placed", stored_order)
         self._notify_order_callbacks(stored_order)
+
+        if (
+            stored_order.type is OrderType.MARKET
+            and self._config.execution_timing == "next_open"
+        ):
+            return stored_order.model_copy(deep=True)
 
         reference_price = self._get_reference_price(stored_order.ticker)
         account_before = self.get_account(account_id=stored_order.account_id)
@@ -192,7 +305,7 @@ class MockBrokerEngine(BrokerGateway):
 
         if reference_price is None:
             stored_order.status = OrderStatus.REJECTED
-            stored_order.updated_at = _utc_now()
+            stored_order.updated_at = submission_time or _utc_now()
             account_state.orders[stored_order.id] = stored_order
             self._record_event(
                 "risk_check_failed",
@@ -209,7 +322,7 @@ class MockBrokerEngine(BrokerGateway):
 
         if not passed:
             stored_order.status = OrderStatus.REJECTED
-            stored_order.updated_at = _utc_now()
+            stored_order.updated_at = submission_time or _utc_now()
             account_state.orders[stored_order.id] = stored_order
             self._record_event(
                 "risk_check_failed",
@@ -241,7 +354,11 @@ class MockBrokerEngine(BrokerGateway):
         if order.status is not OrderStatus.NEW:
             return order.model_copy(deep=True)
         order.status = OrderStatus.CANCELED
-        order.updated_at = _utc_now()
+        submission_context = self._order_submission_context
+        if submission_context is not None and order.session_id == submission_context[0]:
+            order.updated_at = submission_context[1]
+        else:
+            order.updated_at = _utc_now()
         account_state.orders[order.id] = order
         self._record_order_event("order_canceled", order)
         self._notify_order_callbacks(order)
@@ -294,17 +411,32 @@ class MockBrokerEngine(BrokerGateway):
             return fills
         return [fill for fill in fills if fill.order_id == order_id]
 
-    def _try_fill_market(self, order: Order, reference_price: float) -> None:
+    def _try_fill_market(
+        self,
+        order: Order,
+        reference_price: float,
+        *,
+        timestamp: datetime | None = None,
+    ) -> None:
         if order.side is OrderSide.BUY:
             fill_price = reference_price * (1 + self._config.slippage_rate)
         else:
             fill_price = reference_price * (1 - self._config.slippage_rate)
 
         self._execute_fill(
-            order, fill_price=fill_price, reference_price=reference_price
+            order,
+            fill_price=fill_price,
+            reference_price=reference_price,
+            timestamp=timestamp,
         )
 
-    def _try_fill_limit(self, order: Order, bar: BarData) -> None:
+    def _try_fill_limit(
+        self,
+        order: Order,
+        bar: BarData,
+        *,
+        timestamp: datetime | None = None,
+    ) -> None:
         limit_price = order.limit_price
         if limit_price is None:
             return
@@ -325,7 +457,7 @@ class MockBrokerEngine(BrokerGateway):
         )
         if not passed:
             order.status = OrderStatus.REJECTED
-            order.updated_at = _utc_now()
+            order.updated_at = timestamp if timestamp is not None else _utc_now()
             self._record_event(
                 "risk_check_failed",
                 order=order,
@@ -339,7 +471,12 @@ class MockBrokerEngine(BrokerGateway):
             self._notify_order_callbacks(order)
             return
 
-        self._execute_fill(order, fill_price=limit_price, reference_price=limit_price)
+        self._execute_fill(
+            order,
+            fill_price=limit_price,
+            reference_price=limit_price,
+            timestamp=timestamp,
+        )
 
     def _execute_fill(
         self,
@@ -347,7 +484,9 @@ class MockBrokerEngine(BrokerGateway):
         *,
         fill_price: float,
         reference_price: float,
+        timestamp: datetime | None = None,
     ) -> None:
+        execution_time = timestamp if timestamp is not None else _utc_now()
         account_state = self._get_account_state(order.account_id)
         signed_qty = order.qty if order.side is OrderSide.BUY else -order.qty
         signed_trade_value = fill_price * signed_qty
@@ -382,10 +521,11 @@ class MockBrokerEngine(BrokerGateway):
             account_id=order.account_id,
             session_id=order.session_id,
             decision_id=order.decision_id,
+            timestamp=execution_time,
         )
         account_state.fills.append(fill)
         order.status = OrderStatus.FILLED
-        order.updated_at = _utc_now()
+        order.updated_at = execution_time
         account_state.orders[order.id] = order
         position_after = self.get_position(order.ticker, account_id=order.account_id)
         if position_after is None:
@@ -399,6 +539,7 @@ class MockBrokerEngine(BrokerGateway):
                 decision_id=order.decision_id,
             )
         account_after = self.get_account(account_id=order.account_id)
+        account_after.timestamp = execution_time
         account_after.strategy_id = order.strategy_id
         account_after.account_id = order.account_id
         account_after.session_id = order.session_id
@@ -538,6 +679,7 @@ class MockBrokerEngine(BrokerGateway):
                 session_id=order.session_id,
                 decision_id=order.decision_id,
                 ticker=order.ticker,
+                timestamp=order.updated_at,
                 payload=details,
                 details=details,
             )

@@ -653,6 +653,19 @@ ACTIVE route never invokes a legacy analysis pipeline.
       "execution_timing": "next_open",
       "max_position_pct": 0.5,
       "allow_short": false,
+      "data_provider": "yfinance",
+      "data_provider_version": "1.2.0",
+      "data_interval": "1d",
+      "data_auto_adjust": true,
+      "data_actions": false,
+      "data_end_exclusive": "2025-04-01",
+      "data_lookback_days": 166,
+      "data_provider_buffer_days": 100,
+      "data_provider_end_semantics": "exclusive",
+      "data_provider_timezone": "America/New_York",
+      "data_timezone_normalization": "exchange_session_date_to_UTC_midnight",
+      "corporate_actions_mode": "provider_adjusted_prices",
+      "warmup_bars": 50,
       "max_drawdown_limit_enforced": false
     },
     "summary": {
@@ -702,8 +715,15 @@ marks abandoned pending/running jobs as failed with `code: "interrupted"`.
 trusted performance result. Closed-trade statistics exclude open positions;
 gross and net metrics remain distinct as later numerical-contract fields land.
 Stable failure codes are `market_data_unavailable`, `agent_failed`,
-`backtest_failed`, `interrupted`, and `storage_corrupt`; messages never expose
-provider responses, prompts, credentials, paths, or stacks.
+`insufficient_history`, `backtest_failed`, `interrupted`, and `storage_corrupt`;
+messages never expose provider responses, prompts, credentials, paths, or
+stacks. The frozen input snapshot includes exactly the policy-required trading
+bar warm-up plus the evaluation window for target and benchmark. Warm-up bars
+can make a feature ready but never enter performance series or metrics.
+YFinance requests are fixed to `interval=1d`, `auto_adjust=true`, and
+`actions=false`; adjusted prices therefore do not dispatch separate dividend or
+split cash/quantity events. A missing interior benchmark session is aligned
+past-only and cannot remove a target decision date.
 
 ### `GET /api/agent/backtest/{backtest_id}/trades.csv`
 

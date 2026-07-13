@@ -96,6 +96,31 @@ def test_position_transition_rejects_short_or_over_limit_targets() -> None:
         derive_position_transition(20.0, 81.0, max_position_pct=80.0)
 
 
+def test_momentum_hold_band_rebalances_an_overweight_position_to_policy_cap() -> None:
+    policy = BacktestPolicySnapshot(
+        mode=BacktestMode.DETERMINISTIC,
+        strategy_type="quant",
+        policy=MomentumPolicy(
+            lookback_bars=2,
+            entry_threshold=0.10,
+            exit_threshold=-0.10,
+            target_position_pct=0.8,
+        ),
+    )
+    features = PointInTimeFeatureSnapshot(
+        ticker="AAPL",
+        as_of="2026-01-05T00:00:00Z",
+        closes=(100.0, 101.0, 101.0),
+    )
+
+    decision = BacktestPolicyExecutor(policy).decide(
+        features, current_position_pct=80.2
+    )
+
+    assert decision.target_position_pct == 80.0
+    assert decision.action == "SELL"
+
+
 class _ScriptedProvider:
     def __init__(self, outputs: list[object]) -> None:
         self.outputs = outputs

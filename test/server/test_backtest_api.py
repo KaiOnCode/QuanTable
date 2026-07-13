@@ -4,6 +4,7 @@ from collections.abc import Iterator
 from datetime import date
 import gzip
 import hashlib
+import json
 from pathlib import Path
 import sqlite3
 from threading import Event
@@ -20,6 +21,7 @@ from agent.backtest_jobs import (
     BacktestJobService,
     BacktestReplayUnavailableError,
     BacktestRequest,
+    _canonical_input_snapshot,
     default_backtest_job_service,
 )
 from agent.backtest_policy import (
@@ -43,6 +45,7 @@ from storage.store import (
     ContextStore,
 )
 from agent.backtest_jobs import ActiveBacktestJobRunner
+from broker.backtest_data import BacktestDataError
 from dataflow.store import MarketDataStore
 
 
@@ -66,7 +69,15 @@ class _CompletedRunner:
         self, spec: BacktestRunSpec, observer: BacktestRunObserver
     ) -> BacktestResultView:
         target = pd.DataFrame(
-            [{"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.0}],
+            [
+                {
+                    "Open": 100.0,
+                    "High": 101.0,
+                    "Low": 99.0,
+                    "Close": 100.0,
+                    "Volume": 1000.0,
+                }
+            ],
             index=pd.to_datetime([spec.date_from.isoformat()]),
         )
         observer.bind_input_snapshot(target, target)
@@ -78,7 +89,15 @@ class _FeatureHashRunner(_CompletedRunner):
         self, spec: BacktestRunSpec, observer: BacktestRunObserver
     ) -> BacktestResultView:
         target = pd.DataFrame(
-            [{"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.0}],
+            [
+                {
+                    "Open": 100.0,
+                    "High": 101.0,
+                    "Low": 99.0,
+                    "Close": 100.0,
+                    "Volume": 1000.0,
+                }
+            ],
             index=pd.to_datetime([spec.date_from.isoformat()]),
         )
         signal_date = f"{spec.date_from.isoformat()}T00:00:00Z"
@@ -96,6 +115,40 @@ class _FeatureHashRunner(_CompletedRunner):
                 policy_hash=spec.policy_hash,
             )
         )
+        return self.run(spec)
+
+
+class _ExecutionEvidenceRunner(_CompletedRunner):
+    def run_with_observability(
+        self, spec: BacktestRunSpec, observer: BacktestRunObserver
+    ) -> BacktestResultView:
+        target = pd.DataFrame(
+            [
+                {
+                    "Open": 100.0,
+                    "High": 101.0,
+                    "Low": 99.0,
+                    "Close": 100.0,
+                    "Volume": 1000.0,
+                }
+            ],
+            index=pd.to_datetime([spec.date_from.isoformat()]),
+        )
+        signal_date = f"{spec.date_from.isoformat()}T00:00:00Z"
+        observer.bind_input_snapshot(target, target)
+        observer.begin_decision(1, signal_date, spec.policy_hash)
+        observer.record_decision(
+            BacktestDecisionView(
+                sequence=1,
+                signal_date=signal_date,
+                status="completed",
+                target_position_pct=40.0,
+                confidence=0.8,
+                feature_hash="f" * 64,
+                policy_hash=spec.policy_hash,
+            )
+        )
+        observer.record_execution(1, signal_date)
         return self.run(spec)
 
 
@@ -175,7 +228,15 @@ class _NthDecisionFailingObservabilityRunner:
         self, spec: BacktestRunSpec, observer: BacktestRunObserver
     ) -> BacktestResultView:
         target = pd.DataFrame(
-            [{"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.0}],
+            [
+                {
+                    "Open": 100.0,
+                    "High": 101.0,
+                    "Low": 99.0,
+                    "Close": 100.0,
+                    "Volume": 1000.0,
+                }
+            ],
             index=pd.to_datetime(["2025-01-02"]),
         )
         benchmark = target * 2.0
@@ -232,8 +293,14 @@ class _ReplayMustNotRunRunner:
 
 
 class _NoOpHistoryLoader:
-    def preload(self, ticker: str, date_from: str, date_to: str) -> None:
-        del ticker, date_from, date_to
+    def preload(
+        self,
+        ticker: str,
+        date_from: str,
+        date_to: str,
+        warmup_bars: int = 0,
+    ) -> None:
+        del ticker, date_from, date_to, warmup_bars
 
 
 @pytest.fixture
@@ -600,6 +667,199 @@ def test_backtest_converts_empty_price_window_to_safe_failed_job(
     service.shutdown()
 
 
+def test_active_backtest_fingerprint_is_stable_across_cache_hits_and_restart(
+    backtest_api: tuple[TestClient, ContextStore, FastAPI],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    client, store, _ = backtest_api
+    market_store = MarketDataStore(tmp_path / "fingerprint-market.db")
+    dates = pd.bdate_range("2024-12-02", periods=24)
+    for ticker, offset in (("AAPL", 100.0), ("SPY", 400.0)):
+        market_store.upsert_ohlcv(
+            ticker,
+            [
+                {
+                    "date": trading_date.strftime("%Y-%m-%d"),
+                    "open": offset + index,
+                    "high": offset + index + 1,
+                    "low": offset + index - 1,
+                    "close": offset + index + 0.5,
+                    "volume": 1000,
+                }
+                for index, trading_date in enumerate(dates)
+            ],
+        )
+    service = BacktestJobService(
+        store=store,
+        runner=ActiveBacktestJobRunner(
+            market_store,
+            history_loader=_NoOpHistoryLoader(),
+        ),
+    )
+    monkeypatch.setattr(agent_routes, "get_backtest_job_service", lambda: service)
+    payload = {
+        **_request_payload(),
+        "date_from": dates[20].strftime("%Y-%m-%d"),
+        "date_to": dates[23].strftime("%Y-%m-%d"),
+        "frequency": "daily",
+    }
+
+    first = _poll_until_terminal(
+        client, client.post("/api/agent/backtest", json=payload).json()["backtest_id"]
+    )
+    second = _poll_until_terminal(
+        client, client.post("/api/agent/backtest", json=payload).json()["backtest_id"]
+    )
+
+    assert first.status == second.status == "completed"
+    assert first.result is not None and second.result is not None
+    assert (
+        first.result.provenance.data_snapshot_hash
+        == second.result.provenance.data_snapshot_hash
+    )
+    assert first.result.config.warmup_bars == 20
+    assert first.result.config.data_auto_adjust is True
+    assert first.result.config.data_actions is False
+    assert first.result.config.data_end_exclusive == (
+        dates[23] + pd.Timedelta(days=1)
+    ).strftime("%Y-%m-%d")
+    assert first.result.config.data_lookback_days == 39
+    assert first.result.config.data_provider_buffer_days == 100
+    assert first.result.config.data_provider_end_semantics == "exclusive"
+    assert (
+        first.result.config.data_timezone_normalization
+        == "exchange_session_date_to_UTC_midnight"
+    )
+    assert first.result.config.evaluation_bar_count == 4
+    assert first.result.config.sample_first_date == dates[20].strftime("%Y-%m-%d")
+    assert first.result.config.sample_last_date == dates[23].strftime("%Y-%m-%d")
+    assert first.progress.decisions_not_ready == 0
+    assert first.decisions[0].status == "completed"
+    assert len(first.result.series) == 4
+    persisted = store.get_backtest_job(first.backtest_id)
+    assert persisted is not None
+    assert persisted.input_snapshot_hash == first.result.config.data_snapshot_hash
+    snapshot = store.get_backtest_input_snapshot(persisted.input_snapshot_hash or "")
+    assert snapshot is not None
+    canonical = json.loads(gzip.decompress(snapshot.payload))
+    assert canonical["data_provenance"]["target"] == {
+        "actions": False,
+        "auto_adjust": True,
+        "corporate_actions_mode": "provider_adjusted_prices",
+        "date_from": dates[20].strftime("%Y-%m-%d"),
+        "date_to": dates[23].strftime("%Y-%m-%d"),
+        "end_exclusive": (dates[23] + pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
+        "interval": "1d",
+        "library_version": first.result.config.data_provider_version,
+        "lookback_days": 39,
+        "provider": "yfinance",
+        "provider_buffer_days": 100,
+        "provider_end_semantics": "exclusive",
+        "row_adjustment_modes": ["unknown"],
+        "ticker": "AAPL",
+        "provider_timezone": "unknown",
+        "timezone_normalization": "exchange_session_date_to_UTC_midnight",
+        "warmup_bars": 20,
+    }
+    service.shutdown()
+    reopened = BacktestJobService(store=store, runner=_CompletedRunner())
+    restored = reopened.get(first.backtest_id)
+    assert restored is not None and restored.result is not None
+    assert (
+        restored.result.provenance.data_snapshot_hash
+        == first.result.provenance.data_snapshot_hash
+    )
+    reopened.shutdown()
+
+
+def test_input_snapshot_redacts_unknown_provenance_and_hashes_adjustment_mode() -> None:
+    index = pd.to_datetime(["2025-01-02"], utc=True)
+    frame = pd.DataFrame(
+        {
+            "Open": [100.0],
+            "High": [101.0],
+            "Low": [99.0],
+            "Close": [100.5],
+            "Volume": [1000.0],
+        },
+        index=index,
+    )
+    frame.attrs["backtest_data_provenance"] = {
+        "provider": "yfinance",
+        "api_key": "SNAPSHOT_SECRET",
+    }
+    frame.attrs["adjustment_modes"] = ("raw_prices",)
+    raw = _canonical_input_snapshot(frame, frame)
+    adjusted_frame = frame.copy()
+    adjusted_frame.attrs["adjustment_modes"] = ("provider_adjusted_prices",)
+    adjusted = _canonical_input_snapshot(adjusted_frame, adjusted_frame)
+
+    assert raw.content_hash != adjusted.content_hash
+    assert b"SNAPSHOT_SECRET" not in gzip.decompress(raw.payload)
+    payload = json.loads(gzip.decompress(raw.payload))
+    assert payload["data_provenance"]["target"]["row_adjustment_modes"] == [
+        "raw_prices"
+    ]
+    with pytest.raises(BacktestDataError, match="canonical OHLCV"):
+        _canonical_input_snapshot(frame.assign(secret_numeric=123456), frame)
+
+
+def test_active_backtest_fails_typed_when_all_decisions_are_not_ready(
+    backtest_api: tuple[TestClient, ContextStore, FastAPI],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    client, store, _ = backtest_api
+    market_store = MarketDataStore(tmp_path / "insufficient-market.db")
+    dates = pd.bdate_range("2025-01-02", periods=2)
+    for ticker, offset in (("AAPL", 100.0), ("SPY", 400.0)):
+        market_store.upsert_ohlcv(
+            ticker,
+            [
+                {
+                    "date": trading_date.strftime("%Y-%m-%d"),
+                    "open": offset + index,
+                    "high": offset + index + 1,
+                    "low": offset + index - 1,
+                    "close": offset + index + 0.5,
+                    "volume": 1000,
+                }
+                for index, trading_date in enumerate(dates)
+            ],
+        )
+    service = BacktestJobService(
+        store=store,
+        runner=ActiveBacktestJobRunner(
+            market_store, history_loader=_NoOpHistoryLoader()
+        ),
+    )
+    monkeypatch.setattr(agent_routes, "get_backtest_job_service", lambda: service)
+
+    failed = _poll_until_terminal(
+        client,
+        client.post(
+            "/api/agent/backtest",
+            json={
+                **_request_payload(),
+                "date_from": dates[0].strftime("%Y-%m-%d"),
+                "date_to": dates[-1].strftime("%Y-%m-%d"),
+                "frequency": "daily",
+            },
+        ).json()["backtest_id"],
+    )
+
+    assert failed.status == "failed"
+    assert failed.error is not None
+    assert failed.error.code == "insufficient_history"
+    assert failed.error.stage == "data"
+    assert failed.progress.decisions_total == 1
+    assert failed.progress.decisions_not_ready == 1
+    assert failed.progress.decisions_completed == 0
+    assert [decision.status for decision in failed.decisions] == ["not_ready"]
+    service.shutdown()
+
+
 def test_backtest_persists_feature_hash_and_attempt_evidence(
     backtest_api: tuple[TestClient, ContextStore, FastAPI],
     monkeypatch: pytest.MonkeyPatch,
@@ -617,6 +877,29 @@ def test_backtest_persists_feature_hash_and_attempt_evidence(
     persisted = store.get_backtest_decisions(completed.backtest_id)
     assert persisted[0].feature_hash == "f" * 64
     assert persisted[0].attempts == 2
+    service.shutdown()
+
+
+def test_backtest_fails_when_execution_evidence_update_is_not_persisted(
+    backtest_api: tuple[TestClient, ContextStore, FastAPI],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, store, _ = backtest_api
+    monkeypatch.setattr(
+        store,
+        "update_backtest_decision_execution",
+        lambda _job_id, _sequence, _execution_date: False,
+    )
+    service = BacktestJobService(store=store, runner=_ExecutionEvidenceRunner())
+    monkeypatch.setattr(agent_routes, "get_backtest_job_service", lambda: service)
+
+    created = client.post("/api/agent/backtest", json=_request_payload())
+    failed = _poll_until_terminal(client, created.json()["backtest_id"])
+
+    assert failed.status == "failed"
+    assert failed.error is not None
+    assert failed.error.code == "backtest_failed"
+    assert failed.error.stage == "persistence"
     service.shutdown()
 
 

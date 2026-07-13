@@ -216,6 +216,20 @@ class BacktestConfigView(BaseModel):
     allow_short: bool = False
     provider_adjustment_mode: str = "auto_adjusted_prices_v1"
     corporate_actions_mode: str = "provider_adjusted_prices"
+    data_provider: str = "yfinance"
+    data_provider_version: str = ""
+    data_interval: Literal["1d"] = "1d"
+    data_auto_adjust: bool = True
+    data_actions: bool = False
+    data_end_exclusive: str = ""
+    data_lookback_days: int = 0
+    data_provider_buffer_days: int = 100
+    data_provider_end_semantics: Literal["exclusive"] = "exclusive"
+    data_provider_timezone: str = "unknown"
+    data_timezone_normalization: Literal["exchange_session_date_to_UTC_midnight"] = (
+        "exchange_session_date_to_UTC_midnight"
+    )
+    warmup_bars: int = 0
     risk_free_rate: float = 0.0
     max_drawdown_limit_pct: float = 0.0
     max_drawdown_limit_enforced: bool = False

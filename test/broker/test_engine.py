@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 
 from broker.config import BrokerConfig
 from broker.engine import MockBrokerEngine
 from broker.events import InMemoryBrokerEventSink, ORDER_EVENT_PAYLOAD_KEYS
+from broker.ledger import TradeLedger
 from broker.models import Order, OrderSide, OrderStatus, OrderType
 
 
@@ -141,6 +144,165 @@ def test_next_open_market_order_revalidates_risk_at_open_price() -> None:
         "risk_check_failed",
         "order_rejected",
     ]
+
+
+def test_next_open_risk_rejection_events_use_historical_execution_clock() -> None:
+    broker = MockBrokerEngine(
+        BrokerConfig(
+            initial_cash=1_000.0,
+            commission_rate=0.0,
+            slippage_rate=0.0,
+            execution_timing="next_open",
+        )
+    )
+    signal_time = datetime(2024, 1, 2, tzinfo=UTC)
+    execution_time = datetime(2024, 1, 3, tzinfo=UTC)
+    broker.on_bar(
+        {
+            "AAPL": {"open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0},
+        },
+        timestamp=signal_time,
+    )
+    broker.place_order(
+        Order(
+            ticker="AAPL",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            qty=100,
+            created_at=signal_time,
+            updated_at=signal_time,
+        )
+    )
+
+    broker.on_bar(
+        {
+            "AAPL": {"open": 20.0, "high": 20.0, "low": 20.0, "close": 20.0},
+        },
+        timestamp=execution_time,
+    )
+
+    assert [event.timestamp for event in broker.get_event_log()] == [
+        signal_time,
+        execution_time,
+        execution_time,
+    ]
+
+
+def test_next_open_fill_callback_uses_open_valuation_not_same_bar_close() -> None:
+    broker = MockBrokerEngine(
+        BrokerConfig(
+            initial_cash=100_000.0,
+            commission_rate=0.0,
+            slippage_rate=0.0,
+            execution_timing="next_open",
+        )
+    )
+    ledger = TradeLedger()
+    broker.register_on_fill(ledger.record_fill)
+    fill_accounts = []
+    broker.register_on_fill(
+        lambda _fill, _position, account: fill_accounts.append(account)
+    )
+    broker.on_bar(
+        {
+            "AAPL": {"open": 99.0, "high": 101.0, "low": 98.0, "close": 100.0},
+        },
+        timestamp=datetime(2024, 1, 2, tzinfo=UTC),
+    )
+    broker.place_order(
+        Order(ticker="AAPL", side=OrderSide.BUY, type=OrderType.MARKET, qty=10)
+    )
+
+    broker.on_bar(
+        {
+            "AAPL": {"open": 109.0, "high": 151.0, "low": 108.0, "close": 150.0},
+        },
+        timestamp=datetime(2024, 1, 3, tzinfo=UTC),
+    )
+
+    recorded_trade = ledger.to_trades_dataframe().iloc[0]
+    assert recorded_trade["equity_after"] == pytest.approx(100_000.0)
+    assert fill_accounts[0].timestamp == datetime(2024, 1, 3, tzinfo=UTC)
+    assert broker.get_account().equity == pytest.approx(100_410.0)
+
+
+def test_backtest_order_events_use_the_historical_signal_and_execution_clock() -> None:
+    broker = MockBrokerEngine(
+        BrokerConfig(
+            initial_cash=100_000.0,
+            commission_rate=0.0,
+            slippage_rate=0.0,
+            execution_timing="next_open",
+        )
+    )
+    signal_time = datetime(2024, 1, 2, tzinfo=UTC)
+    execution_time = datetime(2024, 1, 3, tzinfo=UTC)
+    broker.on_bar(
+        {
+            "AAPL": {"open": 99.0, "high": 101.0, "low": 98.0, "close": 100.0},
+        },
+        timestamp=signal_time,
+    )
+    broker.place_order(
+        Order(
+            ticker="AAPL",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            qty=10,
+            created_at=signal_time,
+            updated_at=signal_time,
+        )
+    )
+
+    broker.on_bar(
+        {
+            "AAPL": {"open": 109.0, "high": 110.0, "low": 108.0, "close": 109.0},
+        },
+        timestamp=execution_time,
+    )
+
+    events = broker.get_event_log()
+    assert [event.event_type for event in events] == ["order_placed", "order_filled"]
+    assert [event.timestamp for event in events] == [signal_time, execution_time]
+
+
+def test_limit_order_fill_uses_the_historical_bar_timestamp() -> None:
+    broker = MockBrokerEngine(
+        BrokerConfig(
+            initial_cash=100_000.0,
+            commission_rate=0.0,
+            slippage_rate=0.0,
+        )
+    )
+    broker.on_bar(
+        {
+            "AAPL": {"open": 100.0, "high": 101.0, "low": 99.5, "close": 100.0},
+        }
+    )
+    placed_order = broker.place_order(
+        Order(
+            ticker="AAPL",
+            side=OrderSide.BUY,
+            type=OrderType.LIMIT,
+            qty=10,
+            limit_price=99.0,
+        )
+    )
+    execution_time = datetime(2024, 1, 3, tzinfo=UTC)
+
+    broker.on_bar(
+        {
+            "AAPL": {"open": 100.0, "high": 101.0, "low": 98.0, "close": 99.0},
+        },
+        timestamp=execution_time,
+    )
+
+    stored_order = broker.get_order(placed_order.id)
+    fills = broker.get_fills(placed_order.id)
+    assert stored_order is not None
+    assert stored_order.updated_at == execution_time
+    assert len(fills) == 1
+    assert fills[0].timestamp == execution_time
 
 
 def test_limit_buy_order_stays_pending_until_a_future_bar_touches_the_limit() -> None:

@@ -115,6 +115,61 @@ Evidence:
 - `.omo/evidence/backtest-reliability-and-fidelity/phase-2/phase2-debug-audit.txt`
 - `.omo/evidence/backtest-reliability-and-fidelity/phase-2/review-work-final.md`
 
+### Phase 3: Historical Data and Execution Fidelity ✅
+
+Completed on 2026-07-13: Todo 5 and Todo 6 are closed. The immutable Goal
+baseline recorded above remains unchanged.
+
+- Policy-derived warm-up now selects exact prior trading bars, freezes them in
+  the input snapshot, and excludes them from evaluation performance.
+- YFinance history uses explicit daily adjusted-price/no-actions/exclusive-end
+  semantics with provider/library/timezone/full-args provenance. Adjustment
+  modes cannot silently mix and are part of the canonical data fingerprint.
+- SMA20/SMA50, RSI14, MACD12/26/9, and ATR14 expose full-window readiness;
+  all-not-ready runs terminate as typed `insufficient_history` with exact
+  decision evidence.
+- Invalid/malformed input, future sentinels, unsafe provenance, and noncanonical
+  snapshots are rejected. Interior benchmark gaps preserve the target schedule;
+  split/dividend columns do not dispatch separate cash or quantity events.
+- Todo 6 fixes point-in-time runner event order: pending orders execute at the
+  next historical open; weekly/monthly signals use executable period ends; the
+  final partial period does not queue an order; and end-of-window positions are
+  retained rather than force-liquidated.
+- Historical order, fill, rejection, cancellation, and decision evidence use
+  their relevant session clocks. Direct-Agent reconciliation records a prior
+  pending cancellation in the signal session, while a multi-order decision
+  retains its first terminal execution date.
+- A production-browser-created deterministic job
+  `0d4af87e65c248edb16aa9ddd4f59ff9` completed with 61/61 bars, 60/60 eligible
+  and completed daily decisions, and 23 executed orders/trades. Each execution
+  occurred on the immediately next historical session after its signal.
+- Final Phase 3 gates: `466 passed, 1 skipped, 1 warning` full pytest;
+  `145 passed, 1 warning` focused Phase 3 pytest; BasedPyright `0 errors,
+  0 warnings, 0 notes`; Ruff check and format passed; frontend Node tests
+  passed 10/10, lint exited with 0 errors (66 existing warnings), and the
+  production build completed 20 pages.
+- Current review-work lanes (goal, code-quality, QA, security, and context)
+  reported PASS. The H1-H15 debug audit passed.
+- This is execution-fidelity evidence only. It is not a trusted-performance
+  claim.
+
+Deferred explicitly from this Phase 3 closeout:
+
+- Todo 8 benchmark, risk-metric, sample-warning, and zero-trade semantics.
+- Todo 10's full strategy-aware, truthful diagnostic result surface.
+- Todo 11 canonical result hashing, replay verification, and sample-truth
+  work.
+
+Evidence:
+
+- `.omo/evidence/backtest-reliability-and-fidelity/phase-3/task-5-data.txt`
+- `.omo/evidence/backtest-reliability-and-fidelity/phase-3/task-5-debug-audit.txt`
+- `.omo/evidence/backtest-reliability-and-fidelity/phase-3/review-work-goal.md`
+- `.omo/evidence/backtest-reliability-and-fidelity/phase-3/task-6-execution.txt`
+- `.omo/evidence/backtest-reliability-and-fidelity/phase-3/task-6-current-execution-receipt.md`
+- `.omo/evidence/backtest-reliability-and-fidelity/phase-3/phase3-debug-audit.txt`
+- `.omo/evidence/backtest-reliability-and-fidelity/phase-3/phase3-final.md`
+
 ## Frontend Demo Integration: Backtest Running Persistence ✅
 
 Completed on 2026-07-12 after product-owner reproduction of the Backtest

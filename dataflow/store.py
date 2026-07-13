@@ -75,6 +75,7 @@ class MarketDataStore:
                     open REAL, high REAL, low REAL, close REAL,
                     volume REAL,
                     source TEXT DEFAULT 'yfinance',
+                    adjustment_mode TEXT DEFAULT 'unknown',
                     fetched_at TEXT NOT NULL,
                     PRIMARY KEY (ticker, date)
                 );
@@ -107,6 +108,13 @@ class MarketDataStore:
                     db.execute(f"ALTER TABLE fundamentals ADD COLUMN {col} REAL")
                 except Exception:
                     pass  # column already exists
+            ohlcv_columns = {
+                str(row[1]) for row in db.execute("PRAGMA table_info(ohlcv)").fetchall()
+            }
+            if "adjustment_mode" not in ohlcv_columns:
+                db.execute(
+                    "ALTER TABLE ohlcv ADD COLUMN adjustment_mode TEXT DEFAULT 'unknown'"
+                )
             db.executescript("""
                 -- News articles
                 CREATE TABLE IF NOT EXISTS news (
@@ -170,28 +178,37 @@ class MarketDataStore:
         ticker: str,
         rows: list[dict],
         source: str = "yfinance",
+        adjustment_mode: str = "unknown",
     ) -> int:
         """Insert or replace OHLCV rows. Returns count of rows written.
 
         Each row must have: date, open, high, low, close (volume optional).
         """
+        parsed_dates = [_parse_ohlcv_date(row) for row in rows]
+        if parsed_dates != sorted(parsed_dates) or len(parsed_dates) != len(
+            set(parsed_dates)
+        ):
+            raise ValueError("OHLCV dates must be unique and monotonic")
+
         now = _now()
         count = 0
         with self._conn() as db:
-            for row in rows:
+            for row, parsed_date in zip(rows, parsed_dates, strict=True):
                 db.execute(
                     """INSERT OR REPLACE INTO ohlcv
-                       (ticker, date, open, high, low, close, volume, source, fetched_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       (ticker, date, open, high, low, close, volume, source,
+                        adjustment_mode, fetched_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         ticker.upper(),
-                        _parse_ohlcv_date(row),
+                        parsed_date,
                         row.get("open", row.get("o")),
                         row.get("high", row.get("h")),
                         row.get("low", row.get("l")),
                         row.get("close", row.get("c")),
                         row.get("volume", row.get("v")),
                         source,
+                        adjustment_mode,
                         now,
                     ),
                 )
@@ -211,7 +228,7 @@ class MarketDataStore:
 
         with self._conn() as db:
             rows = db.execute(
-                """SELECT date, open, high, low, close, volume, source
+                """SELECT date, open, high, low, close, volume, source, adjustment_mode
                    FROM ohlcv
                    WHERE ticker = ? AND date >= ? AND date <= ?
                    ORDER BY date ASC""",
@@ -227,6 +244,21 @@ class MarketDataStore:
                 (ticker.upper(),),
             ).fetchone()
         return row[0] if row and row[0] else None
+
+    def get_ohlcv_tail(
+        self, ticker: str, *, through_date: str, limit: int
+    ) -> list[dict]:
+        if limit <= 0:
+            return []
+        with self._conn() as db:
+            rows = db.execute(
+                """SELECT date, open, high, low, close, volume, source, adjustment_mode
+                   FROM ohlcv
+                   WHERE ticker = ? AND date <= ?
+                   ORDER BY date DESC LIMIT ?""",
+                (ticker.upper(), through_date, limit),
+            ).fetchall()
+        return [dict(row) for row in reversed(rows)]
 
     def list_known_tickers(self) -> list[str]:
         """Return the sorted distinct ticker union already present in cached tables."""

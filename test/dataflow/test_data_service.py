@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+
 import pytest
 
 from broker.config import BrokerConfig
@@ -121,6 +124,92 @@ def test_history_loader_persists_when_general_market_cache_is_disabled(
 
     # Then: the Backtest-owned store still receives the fetched row.
     assert len(store.get_ohlcv("AAPL", "2024-01-02", "2024-01-02")) == 1
+
+
+def test_history_loader_requests_trading_bar_warmup_without_future_execution_bar(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, int, str | None]] = []
+
+    def fake_get_prices(
+        ticker: str, lookback_days: int, end_date: str | None
+    ) -> dict[str, object]:
+        calls.append((ticker, lookback_days, end_date))
+        return {
+            "rows": [
+                {
+                    "ts": trading_date,
+                    "o": close,
+                    "h": close + 1,
+                    "l": close - 1,
+                    "c": close,
+                    "v": 1000,
+                }
+                for trading_date, close in (
+                    ("2023-12-28T00:00:00Z", 98.0),
+                    ("2023-12-29T00:00:00Z", 99.0),
+                    ("2024-01-02T00:00:00Z", 100.0),
+                )
+            ]
+        }
+
+    monkeypatch.setattr("dataflow.service.df_get_prices", fake_get_prices)
+    store = MarketDataStore(tmp_path / "market.db")
+
+    DataServiceHistoryLoader(store).preload(
+        "AAPL", "2024-01-02", "2024-01-02", warmup_bars=2
+    )
+
+    assert calls == [("AAPL", 11, "2024-01-03")]
+    assert [
+        row["date"] for row in store.get_ohlcv("AAPL", "2023-12-01", "2024-01-31")
+    ] == ["2023-12-28", "2023-12-29", "2024-01-02"]
+
+
+def test_history_loader_keeps_provenance_scoped_to_each_backtest_window(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    barrier = Barrier(2)
+
+    def fake_get_prices(
+        _ticker: str, _lookback_days: int, end_date: str | None = None
+    ) -> dict:
+        barrier.wait(timeout=1)
+        return {
+            "rows": [],
+            "tz": (
+                "America/New_York"
+                if end_date == "2024-01-03"
+                else "America/Los_Angeles"
+            ),
+        }
+
+    monkeypatch.setattr(
+        "dataflow.service.df_get_prices",
+        fake_get_prices,
+    )
+    loader = DataServiceHistoryLoader(MarketDataStore(tmp_path / "market.db"))
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first_preload = executor.submit(
+            loader.preload, "AAPL", "2024-01-02", "2024-01-02"
+        )
+        second_preload = executor.submit(
+            loader.preload, "AAPL", "2024-02-01", "2024-02-10"
+        )
+        first_preload.result()
+        second_preload.result()
+
+    first = loader.provenance_for("AAPL", "2024-01-02", "2024-01-02", 0)
+    second = loader.provenance_for("AAPL", "2024-02-01", "2024-02-10", 0)
+    assert first is not None
+    assert second is not None
+    assert first["lookback_days"] == 1
+    assert second["lookback_days"] == 10
+    assert first["provider_timezone"] == "America/New_York"
+    assert second["provider_timezone"] == "America/Los_Angeles"
 
 
 def test_history_loader_propagates_backtest_store_write_failure(

@@ -1,7 +1,7 @@
 # dataflow/providers/YFinance.py
 import math
-from datetime import datetime, timedelta
-from typing import Any, Dict, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Any, cast, Dict, Hashable, Optional
 
 import pandas as pd
 import pandas_ta as ta
@@ -28,12 +28,16 @@ def _get_price_history(
     t = yf.Ticker(ticker)
 
     # 更改：如果未提供 end_date_dt，则默认为 "now"
-    end_date = end_date_dt or datetime.utcnow()
+    end_date = end_date_dt or datetime.now(timezone.utc).replace(tzinfo=None)
     start_date = end_date - timedelta(days=lookback_days)
 
     # +100天是为了给技术指标计算留足缓冲期
     df = t.history(
-        start=start_date - timedelta(days=100), end=end_date, interval=interval
+        start=start_date - timedelta(days=100),
+        end=end_date,
+        interval="1d",
+        auto_adjust=True,
+        actions=False,
     )
 
     if df is None or df.empty:
@@ -49,7 +53,12 @@ def _get_price_history(
         }
     )
     df.index = pd.to_datetime(df.index).tz_localize(None)
-    df = df[["open", "high", "low", "close", "volume"]].reset_index(names="date")
+    df = cast(
+        pd.DataFrame,
+        df[["open", "high", "low", "close", "volume"]].reset_index(),
+    )
+    index_column = cast(Hashable, df.columns[0])
+    df = df.rename(columns={index_column: "date"})
     return df
 
 
@@ -72,10 +81,9 @@ def df_get_prices(
     end_date_dt: Optional[datetime] = None
     if end_date:
         try:
-            # 假设 end_date 是 "YYYY-MM-DDTHH:MM:SSZ" 格式
             end_date_dt = datetime.fromisoformat(end_date.rstrip("Z"))
-        except ValueError:
-            print(f"[yfinance] 无法解析 end_date: {end_date}. 回退到最新时间。")
+        except ValueError as error:
+            raise ValueError("invalid historical end_date") from error
 
     df = _get_price_history(ticker, lookback_days, end_date_dt=end_date_dt)
     if df.empty:
@@ -83,18 +91,21 @@ def df_get_prices(
 
     # 更改：cutoff_date 现在基于 end_date
     cutoff_date = (end_date_dt or datetime.utcnow()) - timedelta(days=lookback_days)
-    df = df[df["date"] >= cutoff_date]
+    df = cast(pd.DataFrame, df.loc[df["date"] >= cutoff_date])
+    if end_date_dt is not None:
+        df = cast(pd.DataFrame, df.loc[df["date"] < end_date_dt])
 
-    rows = []
-    for row in df.itertuples():
+    rows: list[dict[str, Any]] = []
+    for row in cast(list[dict[str, Any]], df.to_dict(orient="records")):
+        trading_timestamp = cast(pd.Timestamp, pd.Timestamp(row["date"]))
         rows.append(
             {
-                "ts": row.date.isoformat() + "Z",  # 匹配规范 [cite: 144]
-                "o": row.open,
-                "h": row.high,
-                "l": row.low,
-                "c": row.close,
-                "v": row.volume,
+                "ts": trading_timestamp.isoformat() + "Z",
+                "o": row["open"],
+                "h": row["high"],
+                "l": row["low"],
+                "c": row["close"],
+                "v": row["volume"],
             }
         )
 
@@ -123,18 +134,22 @@ def df_get_indicators(
     if df_prices.empty or len(df_prices) < 50:  # 确保有足够数据
         return {}
 
+    close = cast(pd.Series, df_prices["close"])
+    high = cast(pd.Series, df_prices["high"])
+    low = cast(pd.Series, df_prices["low"])
+
     # 显式调用 pandas_ta，避免依赖 DataFrame.ta accessor 的隐式注册。
-    df_prices["RSI_14"] = ta.rsi(df_prices["close"], length=14)
-    df_prices["SMA_20"] = ta.sma(df_prices["close"], length=20)
-    df_prices["SMA_50"] = ta.sma(df_prices["close"], length=50)
+    df_prices["RSI_14"] = ta.rsi(close, length=14)
+    df_prices["SMA_20"] = ta.sma(close, length=20)
+    df_prices["SMA_50"] = ta.sma(close, length=50)
     df_prices["ATRr_20"] = ta.atr(
-        high=df_prices["high"],
-        low=df_prices["low"],
-        close=df_prices["close"],
+        high=high,
+        low=low,
+        close=close,
         length=20,
     )
 
-    macd = ta.macd(df_prices["close"], fast=12, slow=26, signal=9)
+    macd = ta.macd(close, fast=12, slow=26, signal=9)
     if macd is not None:
         df_prices = df_prices.join(macd)
 

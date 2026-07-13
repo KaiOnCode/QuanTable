@@ -134,8 +134,8 @@ def test_context_store_binds_snapshot_before_decision_and_cascades_job_evidence(
         content_hash=hashlib.sha256(canonical).hexdigest(),
         payload=gzip.compress(canonical, mtime=0),
         uncompressed_bytes=len(canonical),
-        row_count_target=2,
-        row_count_benchmark=2,
+        row_count_target=0,
+        row_count_benchmark=0,
     )
     try:
         job = store.create_backtest_job(

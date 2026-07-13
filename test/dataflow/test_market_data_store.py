@@ -48,3 +48,34 @@ def test_store_initialization_removes_legacy_non_iso_ohlcv_dates(tmp_path) -> No
     assert repaired.get_ohlcv("AAPL", "2024-01-01", "2024-01-03")[0]["date"] == (
         "2024-01-02"
     )
+
+
+def test_store_migrates_and_persists_adjustment_mode(tmp_path) -> None:
+    db_path = tmp_path / "legacy-market.db"
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            """CREATE TABLE ohlcv (
+               ticker TEXT NOT NULL, date TEXT NOT NULL,
+               open REAL, high REAL, low REAL, close REAL, volume REAL,
+               source TEXT DEFAULT 'yfinance', fetched_at TEXT NOT NULL,
+               PRIMARY KEY (ticker, date))"""
+        )
+
+    store = MarketDataStore(db_path)
+    store.upsert_ohlcv(
+        "AAPL",
+        [
+            {
+                "date": "2024-01-02",
+                "open": 99,
+                "high": 101,
+                "low": 98,
+                "close": 100,
+                "volume": 1000,
+            }
+        ],
+        adjustment_mode="provider_adjusted_prices",
+    )
+
+    row = store.get_ohlcv("AAPL", "2024-01-02", "2024-01-02")[0]
+    assert row["adjustment_mode"] == "provider_adjusted_prices"

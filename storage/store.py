@@ -16,7 +16,8 @@ import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+import math
 from pathlib import Path
 from typing import Final, Literal, Mapping
 
@@ -1189,6 +1190,11 @@ class ContextStore:
             raise RuntimeError("backtest input snapshot byte count is invalid")
         if hashlib.sha256(canonical_payload).hexdigest() != snapshot.content_hash:
             raise RuntimeError("backtest input snapshot content hash is invalid")
+        _validate_backtest_snapshot_payload(
+            canonical_payload,
+            row_count_target=snapshot.row_count_target,
+            row_count_benchmark=snapshot.row_count_benchmark,
+        )
         db = self._system_db()
         db.execute("BEGIN IMMEDIATE")
         try:
@@ -1333,6 +1339,20 @@ class ContextStore:
             .fetchall()
         )
         return [_backtest_decision_from_row(row) for row in rows]
+
+    def update_backtest_decision_execution(
+        self, job_id: str, sequence: int, execution_date: str
+    ) -> bool:
+        self._init_backtest_jobs_db()
+        db = self._system_db()
+        cursor = db.execute(
+            """UPDATE backtest_decisions
+               SET execution_date = ?, updated_at = ?
+               WHERE job_id = ? AND sequence = ? AND status = 'completed'""",
+            (execution_date, _now(), job_id, sequence),
+        )
+        db.commit()
+        return cursor.rowcount == 1
 
     def get_backtest_job(self, job_id: str) -> BacktestJobRecord | None:
         self._init_backtest_jobs_db()
@@ -1855,6 +1875,111 @@ def _backtest_job_from_row(row: sqlite3.Row) -> BacktestJobRecord:
         completed_at=(str(row["completed_at"]) if row["completed_at"] else None),
         updated_at=str(row["updated_at"]),
     )
+
+
+def _validate_backtest_snapshot_payload(
+    canonical_payload: bytes,
+    *,
+    row_count_target: int,
+    row_count_benchmark: int,
+) -> None:
+    try:
+        payload = json.loads(canonical_payload)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise RuntimeError("backtest input snapshot JSON is invalid") from error
+    if not isinstance(payload, dict) or set(payload) not in (
+        {"benchmark", "schema_version", "target"},
+        {"benchmark", "data_provenance", "schema_version", "target"},
+    ):
+        raise RuntimeError("backtest input snapshot schema is invalid")
+    if payload.get("schema_version") != 1:
+        raise RuntimeError("backtest input snapshot schema is invalid")
+    for name, expected_rows in (
+        ("target", row_count_target),
+        ("benchmark", row_count_benchmark),
+    ):
+        frame = payload.get(name)
+        if (
+            not isinstance(frame, dict)
+            or set(frame) != {"columns", "rows"}
+            or not isinstance(frame.get("columns"), list)
+            or not isinstance(frame.get("rows"), list)
+            or len(frame["rows"]) != expected_rows
+        ):
+            raise RuntimeError("backtest input snapshot frame is invalid")
+        columns = frame["columns"]
+        rows = frame["rows"]
+        canonical_columns = ["Open", "High", "Low", "Close", "Volume"]
+        if columns not in ([], canonical_columns) or (rows and not columns):
+            raise RuntimeError("backtest input snapshot frame is invalid")
+        for row in rows:
+            if not isinstance(row, list) or len(row) != len(columns) + 1:
+                raise RuntimeError("backtest input snapshot row is invalid")
+            try:
+                date.fromisoformat(str(row[0]))
+                values = [float(value) for value in row[1:]]
+            except (TypeError, ValueError) as error:
+                raise RuntimeError("backtest input snapshot row is invalid") from error
+            if any(not math.isfinite(value) for value in values):
+                raise RuntimeError("backtest input snapshot row is invalid")
+            open_price, high, low, close, volume = values
+            if (
+                min(open_price, high, low, close) <= 0
+                or high < max(open_price, close, low)
+                or low > min(open_price, close, high)
+                or volume < 0
+            ):
+                raise RuntimeError("backtest input snapshot row is invalid")
+    provenance = payload.get("data_provenance")
+    if provenance is not None:
+        allowed_keys = {
+            "actions",
+            "auto_adjust",
+            "corporate_actions_mode",
+            "date_from",
+            "date_to",
+            "end_exclusive",
+            "interval",
+            "library_version",
+            "lookback_days",
+            "provider",
+            "provider_buffer_days",
+            "provider_end_semantics",
+            "provider_timezone",
+            "row_adjustment_modes",
+            "ticker",
+            "timezone_normalization",
+            "warmup_bars",
+        }
+        if not isinstance(provenance, dict) or set(provenance) != {
+            "target",
+            "benchmark",
+        }:
+            raise RuntimeError("backtest input snapshot provenance is invalid")
+        for value in provenance.values():
+            if not isinstance(value, dict) or not set(value).issubset(allowed_keys):
+                raise RuntimeError("backtest input snapshot provenance is invalid")
+            for key, item in value.items():
+                if key == "row_adjustment_modes":
+                    if (
+                        not isinstance(item, list)
+                        or len(item) != 1
+                        or item[0]
+                        not in {"unknown", "raw_prices", "provider_adjusted_prices"}
+                    ):
+                        raise RuntimeError(
+                            "backtest input snapshot provenance is invalid"
+                        )
+                elif not isinstance(item, str | int | bool):
+                    raise RuntimeError("backtest input snapshot provenance is invalid")
+            if value.get("provider") not in {None, "yfinance"}:
+                raise RuntimeError("backtest input snapshot provenance is invalid")
+            if value.get("interval") not in {None, "1d"}:
+                raise RuntimeError("backtest input snapshot provenance is invalid")
+            if value.get("auto_adjust") not in {None, True}:
+                raise RuntimeError("backtest input snapshot provenance is invalid")
+            if value.get("actions") not in {None, False}:
+                raise RuntimeError("backtest input snapshot provenance is invalid")
 
 
 def _backtest_input_snapshot_from_row(

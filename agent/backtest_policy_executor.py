@@ -134,7 +134,9 @@ class BacktestPolicyExecutor:
             return policy.target_position_pct * 100, "momentum_entry"
         if momentum <= policy.exit_threshold:
             return 0.0, "momentum_exit"
-        return current_position_pct, "momentum_hold_band"
+        return min(current_position_pct, policy.target_position_pct * 100), (
+            "momentum_hold_band"
+        )
 
     @staticmethod
     def _sma_target(

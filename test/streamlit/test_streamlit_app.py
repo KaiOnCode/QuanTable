@@ -487,6 +487,7 @@ def test_multibar_backtest_result_renders_dashboard_for_explicit_date_range() ->
             initial_cash=100_000.0,
             commission_rate=0.0,
             slippage_rate=0.0,
+            execution_timing="next_open",
         )
     )
     runner = BacktestRunner(
@@ -494,6 +495,7 @@ def test_multibar_backtest_result_renders_dashboard_for_explicit_date_range() ->
             initial_cash=100_000.0,
             commission_rate=0.0,
             slippage_rate=0.0,
+            execution_timing="next_open",
         ),
         broker=broker,
         agent=_BuyThenHoldExecutionAgent(broker),

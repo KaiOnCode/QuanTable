@@ -426,7 +426,7 @@ Phase 内仅并行互不写同一 owner 的 research/test lanes；`agent/backtes
 
   **Commit：** Y；`fix: make backtest decisions typed and strategy aware`。
 
-- [ ] 5. 建立 policy-derived warm-up、explicit adjusted data 与 run fingerprint
+- [x] 5. 建立 policy-derived warm-up、explicit adjusted data 与 run fingerprint
 
   **问题分析：** current loader 只 preload evaluation window；早期 SMA 用 1-5 bars 计算且无 readiness；已有 cache 中碰巧存在的旧数据会改变结果。yfinance adjustment 依赖默认值，run 无 data provenance。
 
@@ -450,7 +450,7 @@ Phase 内仅并行互不写同一 owner 的 research/test lanes；`agent/backtes
 
   **Commit：** N；与 Todo 6 一起完成 Phase 3。
 
-- [ ] 6. 修正 cadence、next-open execution、historical timestamps 与 end-of-window
+- [x] 6. 修正 cadence、next-open execution、historical timestamps 与 end-of-window
 
   **问题分析：** current engine 先 publish close，再 decision，再 same close fill；Order/Fill 默认 runtime `_utc_now`。weekly/monthly 取 period first bar，且 timing 未定义。
 
