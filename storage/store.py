@@ -108,6 +108,7 @@ type BacktestDecisionStatus = Literal[
 type BacktestDecisionAction = Literal["BUY", "SELL", "HOLD"]
 type ScanRunStatus = Literal["running", "completed", "failed"]
 type ReportJobStatus = Literal["pending", "running", "completed", "failed"]
+type InsightGenerationStatus = Literal["pending", "running", "completed", "failed"]
 
 
 class BacktestMigrationContractError(RuntimeError):
@@ -218,6 +219,20 @@ class ReportJobRecord:
     parameters_json: str
     status: ReportJobStatus
     artifact_name: str | None
+    error: str | None
+    created_at: str
+    started_at: str | None
+    completed_at: str | None
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class InsightGenerationRecord:
+    id: str
+    hours: int
+    status: InsightGenerationStatus
+    progress_json: str
+    result_insight_id: str | None
     error: str | None
     created_at: str
     started_at: str | None
@@ -1017,11 +1032,11 @@ class ContextStore:
                 brief.get("title", ""),
                 brief.get("summary", ""),
                 brief.get("content", ""),
-                json.dumps(brief.get("sections", [])),
-                json.dumps(brief.get("key_events", [])),
-                json.dumps(brief.get("tickers_covered", [])),
-                json.dumps(brief.get("market_data", {})),
-                json.dumps(brief.get("news_sources", [])),
+                _json_dumps_finite(brief.get("sections", [])),
+                _json_dumps_finite(brief.get("key_events", [])),
+                _json_dumps_finite(brief.get("tickers_covered", [])),
+                _json_dumps_finite(brief.get("market_data", {})),
+                _json_dumps_finite(brief.get("news_sources", [])),
                 brief.get("generated_at", now),
             ),
         )
@@ -1707,6 +1722,123 @@ class ContextStore:
         )
         db.execute(
             "CREATE INDEX IF NOT EXISTS idx_scan_runs_status ON scan_runs(status)"
+        )
+        db.commit()
+
+    def create_insight_generation(
+        self, generation_id: str, hours: int
+    ) -> InsightGenerationRecord:
+        self._init_insight_generations_db()
+        now = _now()
+        db = self._system_db()
+        db.execute(
+            """INSERT OR IGNORE INTO insight_generations
+               (id, hours, status, progress_json, result_insight_id, error,
+                created_at, started_at, completed_at, updated_at)
+               VALUES (?, ?, 'pending', '{}', NULL, NULL, ?, NULL, NULL, ?)""",
+            (generation_id, hours, now, now),
+        )
+        db.commit()
+        generation = self.get_insight_generation(generation_id)
+        if generation is None:
+            raise RuntimeError("insight generation was not persisted")
+        return generation
+
+    def get_insight_generation(
+        self, generation_id: str
+    ) -> InsightGenerationRecord | None:
+        self._init_insight_generations_db()
+        row = (
+            self._system_db()
+            .execute("SELECT * FROM insight_generations WHERE id = ?", (generation_id,))
+            .fetchone()
+        )
+        return _insight_generation_from_row(row) if row is not None else None
+
+    def mark_insight_generation_running(self, generation_id: str) -> bool:
+        self._init_insight_generations_db()
+        now = _now()
+        cursor = self._system_db().execute(
+            """UPDATE insight_generations
+               SET status = 'running', started_at = ?, updated_at = ?
+               WHERE id = ? AND status = 'pending'""",
+            (now, now, generation_id),
+        )
+        self._system_db().commit()
+        return cursor.rowcount == 1
+
+    def update_insight_generation_progress(
+        self, generation_id: str, progress_json: str
+    ) -> bool:
+        self._init_insight_generations_db()
+        cursor = self._system_db().execute(
+            """UPDATE insight_generations SET progress_json = ?, updated_at = ?
+               WHERE id = ? AND status = 'running'""",
+            (progress_json, _now(), generation_id),
+        )
+        self._system_db().commit()
+        return cursor.rowcount == 1
+
+    def complete_insight_generation(
+        self, generation_id: str, insight_id: str
+    ) -> bool:
+        self._init_insight_generations_db()
+        now = _now()
+        cursor = self._system_db().execute(
+            """UPDATE insight_generations
+               SET status = 'completed', result_insight_id = ?, error = NULL,
+                   completed_at = ?, updated_at = ?
+               WHERE id = ? AND status = 'running'""",
+            (insight_id, now, now, generation_id),
+        )
+        self._system_db().commit()
+        return cursor.rowcount == 1
+
+    def fail_insight_generation(self, generation_id: str, error: str) -> bool:
+        self._init_insight_generations_db()
+        now = _now()
+        cursor = self._system_db().execute(
+            """UPDATE insight_generations
+               SET status = 'failed', result_insight_id = NULL, error = ?,
+                   completed_at = ?, updated_at = ?
+               WHERE id = ? AND status IN ('pending', 'running')""",
+            (error, now, now, generation_id),
+        )
+        self._system_db().commit()
+        return cursor.rowcount == 1
+
+    def recover_interrupted_insight_generations(self) -> int:
+        self._init_insight_generations_db()
+        now = _now()
+        cursor = self._system_db().execute(
+            """UPDATE insight_generations
+               SET status = 'failed', result_insight_id = NULL,
+                   error = 'Insight generation interrupted by server restart',
+                   completed_at = ?, updated_at = ?
+               WHERE status IN ('pending', 'running')""",
+            (now, now),
+        )
+        self._system_db().commit()
+        return cursor.rowcount
+
+    def _init_insight_generations_db(self) -> None:
+        db = self._system_db()
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS insight_generations (
+                id TEXT PRIMARY KEY,
+                hours INTEGER NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed')),
+                progress_json TEXT NOT NULL DEFAULT '{}',
+                result_insight_id TEXT,
+                error TEXT,
+                created_at TEXT NOT NULL,
+                started_at TEXT,
+                completed_at TEXT,
+                updated_at TEXT NOT NULL
+            )"""
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_insight_generations_status ON insight_generations(status)"
         )
         db.commit()
 
@@ -2606,6 +2738,35 @@ def _report_job_from_row(row: sqlite3.Row) -> ReportJobRecord:
     )
 
 
+def _insight_generation_from_row(row: sqlite3.Row) -> InsightGenerationRecord:
+    status = str(row["status"])
+    match status:
+        case "pending":
+            normalized_status: InsightGenerationStatus = "pending"
+        case "running":
+            normalized_status = "running"
+        case "completed":
+            normalized_status = "completed"
+        case "failed":
+            normalized_status = "failed"
+        case _:
+            raise RuntimeError("invalid persisted insight generation status")
+    return InsightGenerationRecord(
+        id=str(row["id"]),
+        hours=int(row["hours"]),
+        status=normalized_status,
+        progress_json=str(row["progress_json"]),
+        result_insight_id=(
+            str(row["result_insight_id"]) if row["result_insight_id"] else None
+        ),
+        error=str(row["error"]) if row["error"] else None,
+        created_at=str(row["created_at"]),
+        started_at=str(row["started_at"]) if row["started_at"] else None,
+        completed_at=(str(row["completed_at"]) if row["completed_at"] else None),
+        updated_at=str(row["updated_at"]),
+    )
+
+
 def _report_row_to_dict(row) -> dict:
     d = dict(row)
     for k in (
@@ -2633,12 +2794,26 @@ def _brief_row_to_dict(row) -> dict:
         "news_sources_json",
     ):
         try:
-            d[k.replace("_json", "")] = json.loads(d.pop(k, "{}"))
+            d[k.replace("_json", "")] = json.loads(
+                d.pop(k, "{}"), parse_constant=_non_finite_json_constant
+            )
         except Exception:
             d[k.replace("_json", "")] = (
                 [] if k.endswith("s_json") or k.endswith("d_json") else {}
             )
     return d
+
+
+def _non_finite_json_constant(_: str) -> None:
+    return None
+
+
+def _json_dumps_finite(value) -> str:
+    normalized = json.loads(
+        json.dumps(value, ensure_ascii=False),
+        parse_constant=_non_finite_json_constant,
+    )
+    return json.dumps(normalized, ensure_ascii=False, allow_nan=False)
 
 
 # Singleton
@@ -2658,3 +2833,7 @@ def recover_interrupted_backtest_jobs() -> int:
 
 def recover_interrupted_report_jobs() -> int:
     return get_store().recover_interrupted_report_jobs()
+
+
+def recover_interrupted_insight_generations() -> int:
+    return get_store().recover_interrupted_insight_generations()

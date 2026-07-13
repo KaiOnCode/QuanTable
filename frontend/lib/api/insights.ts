@@ -1,5 +1,10 @@
 import { api } from "./client";
-import type { DailyBrief, InsightFeedback } from "@/lib/types/models";
+import type {
+  DailyBrief,
+  InsightFeedback,
+  InsightGenerationJob,
+} from "@/lib/types/models";
+import { encodeInsightGenerationIdPathSegment } from "@/lib/insight-generation-state";
 
 export const insightsApi = {
   list(params?: {
@@ -16,6 +21,20 @@ export const insightsApi = {
 
   get(insightId: string): Promise<DailyBrief> {
     return api.get(`/insights/${insightId}`);
+  },
+
+  generate(generationId: string, hours: number): Promise<InsightGenerationJob> {
+    return api.post(
+      `/insights/generate?hours=${hours}&generation_id=${encodeInsightGenerationIdPathSegment(generationId)}`,
+      undefined,
+      { keepalive: true },
+    );
+  },
+
+  getGeneration(generationId: string): Promise<InsightGenerationJob> {
+    return api.get(
+      `/insights/generate/${encodeInsightGenerationIdPathSegment(generationId)}`,
+    );
   },
 
   feedback(

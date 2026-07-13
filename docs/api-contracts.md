@@ -1061,6 +1061,41 @@ Benchmark factors against a universe.
 
 **Response:** DailyInsight (full)
 
+### `POST /api/insights/generate`
+
+**Query params:** `?hours=24&generation_id={id}` (`0` means the provider
+default window). The web client allocates and stores the 32-character lowercase
+hexadecimal ID before sending the request; repeated POSTs with the same ID are
+idempotent. Omitting the ID remains supported for non-browser callers.
+
+**Response:** `202` with a persisted generation job. The client keeps the active
+job ID in same-tab storage before the request, sends the small request with
+navigation-safe keepalive, and polls it, so navigation or reload does not own or
+cancel the backend work.
+
+```json
+{
+  "id": "32-character lowercase hexadecimal ID",
+  "hours": 24,
+  "status": "pending",
+  "progress": {},
+  "result_insight_id": null,
+  "error": null,
+  "created_at": "2026-07-14T00:00:00+00:00",
+  "started_at": null,
+  "completed_at": null,
+  "updated_at": "2026-07-14T00:00:00+00:00"
+}
+```
+
+### `GET /api/insights/generate/{generation_id}`
+
+**Response:** the same job envelope with `pending`, `running`, `completed`, or
+`failed` status. `progress` is keyed by stage (`market`, `news`, `llm`, `store`).
+Completed jobs set `result_insight_id`; failed jobs expose a safe error message.
+Jobs interrupted by a backend restart become terminal `failed` records rather
+than remaining permanently `running`.
+
 ### `POST /api/insights/{insight_id}/feedback`
 
 **Request:**

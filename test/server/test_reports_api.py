@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from reporting.repository import ReportRepository
 from reporting.service import ReportService
 from reporting.source import ReportSourceResolver
+from server import main
 from server.main import app
 from storage.store import ContextStore
 
@@ -77,7 +78,7 @@ def _scan(store: ContextStore, run_id: str = "scan-1", *, matches: bool = True) 
 
 
 @pytest.fixture
-def reports_api(tmp_path: Path):
+def reports_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from server.routes import reports
 
     store = ContextStore(tmp_path / "data")
@@ -88,6 +89,7 @@ def reports_api(tmp_path: Path):
     )
     app.dependency_overrides[reports.get_report_repository] = lambda: repository
     app.dependency_overrides[reports.get_report_service] = lambda: service
+    monkeypatch.setattr(main, "recover_interrupted_insight_generations", lambda: 0)
     with TestClient(app) as client:
         yield client, store, history, repository
     app.dependency_overrides.clear()
@@ -222,7 +224,9 @@ def test_pending_missing_and_deleted_download_are_not_served(reports_api) -> Non
     assert client.get(f"/api/reports/{pending.id}/download").status_code == 404
 
 
-def test_renderer_failure_becomes_safe_failed_job(tmp_path: Path) -> None:
+def test_renderer_failure_becomes_safe_failed_job(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from server.routes import reports
 
     store = ContextStore(tmp_path / "data")
@@ -234,6 +238,7 @@ def test_renderer_failure_becomes_safe_failed_job(tmp_path: Path) -> None:
     )
     app.dependency_overrides[reports.get_report_repository] = lambda: repository
     app.dependency_overrides[reports.get_report_service] = lambda: service
+    monkeypatch.setattr(main, "recover_interrupted_insight_generations", lambda: 0)
     with TestClient(app) as client:
         created = client.post(
             "/api/reports/stock",

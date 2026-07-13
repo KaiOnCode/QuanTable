@@ -277,6 +277,31 @@ export interface DailyBrief {
   generated_at: string;
 }
 
+export type InsightGenerationStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed";
+
+export type InsightGenerationProgressStep = {
+  readonly stage: string;
+  readonly status: string;
+  readonly detail: string;
+};
+
+export type InsightGenerationJob = {
+  readonly id: string;
+  readonly hours: number;
+  readonly status: InsightGenerationStatus;
+  readonly progress: Readonly<Record<string, InsightGenerationProgressStep>>;
+  readonly result_insight_id: string | null;
+  readonly error: string | null;
+  readonly created_at: string;
+  readonly started_at: string | null;
+  readonly completed_at: string | null;
+  readonly updated_at: string;
+};
+
 export interface InsightFeedback {
   insight_id: string; rating: number; was_direction_correct: boolean | null;
   comment: string;

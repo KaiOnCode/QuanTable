@@ -3134,6 +3134,8 @@ def test_backtest_recreates_completed_store_and_recovers_interrupted_jobs(
         "recover_interrupted_backtest_jobs",
         rebuilt_store.recover_interrupted_backtest_jobs,
     )
+    monkeypatch.setattr(main, "recover_interrupted_report_jobs", lambda: 0)
+    monkeypatch.setattr(main, "recover_interrupted_insight_generations", lambda: 0)
     with TestClient(main.app):
         pass
 

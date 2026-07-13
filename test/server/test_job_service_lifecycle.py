@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from reporting.models import ReportStatus, ReportType
 from reporting.repository import ReportRepository
 from server import main
-from server.routes import reports
+from server.routes import insights, reports
 from storage.store import ContextStore
 
 
@@ -37,6 +37,7 @@ def test_lifespan_recovers_interrupted_reports_before_read_only_get(
         store.recover_interrupted_report_jobs,
         raising=False,
     )
+    monkeypatch.setattr(main, "recover_interrupted_insight_generations", lambda: 0)
     main.app.dependency_overrides[reports.get_report_repository] = lambda: repository
 
     # When: the restarted API serves only a read request, without constructing ReportService.
@@ -63,6 +64,7 @@ def test_lifespan_releases_cached_job_services_on_shutdown(
     monkeypatch.setattr(
         main, "recover_interrupted_report_jobs", lambda: 0, raising=False
     )
+    monkeypatch.setattr(main, "recover_interrupted_insight_generations", lambda: 0)
     monkeypatch.setattr(
         agent, "shutdown_backtest_job_service", lambda: released.append("backtest")
     )
@@ -71,13 +73,18 @@ def test_lifespan_releases_cached_job_services_on_shutdown(
         "shutdown_report_service",
         lambda: released.append("report"),
     )
+    monkeypatch.setattr(
+        insights,
+        "shutdown_insight_generation_executor",
+        lambda: released.append("insight"),
+    )
 
     # When: the FastAPI lifespan exits normally.
     with TestClient(main.app):
         pass
 
     # Then: both cached executor owners are released exactly once.
-    assert released == ["backtest", "report"]
+    assert released == ["backtest", "report", "insight"]
 
 
 def test_lifespan_releases_cached_job_services_on_exception(
@@ -89,6 +96,7 @@ def test_lifespan_releases_cached_job_services_on_exception(
     released: list[str] = []
     monkeypatch.setattr(main, "recover_interrupted_backtest_jobs", lambda: 0)
     monkeypatch.setattr(main, "recover_interrupted_report_jobs", lambda: 0)
+    monkeypatch.setattr(main, "recover_interrupted_insight_generations", lambda: 0)
     monkeypatch.setattr(
         agent, "shutdown_backtest_job_service", lambda: released.append("backtest")
     )
@@ -96,6 +104,11 @@ def test_lifespan_releases_cached_job_services_on_exception(
         reports,
         "shutdown_report_service",
         lambda: released.append("report"),
+    )
+    monkeypatch.setattr(
+        insights,
+        "shutdown_insight_generation_executor",
+        lambda: released.append("insight"),
     )
 
     async def fail_inside_lifespan() -> None:
@@ -107,7 +120,34 @@ def test_lifespan_releases_cached_job_services_on_exception(
         anyio.run(fail_inside_lifespan)
 
     # Then: executor owners are still released exactly once.
-    assert released == ["backtest", "report"]
+    assert released == ["backtest", "report", "insight"]
+
+
+def test_lifespan_recovers_interrupted_insight_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given: an insight generation was running when the process stopped.
+    store = ContextStore(tmp_path / "data")
+    generation = store.create_insight_generation("a" * 32, 24)
+    assert store.mark_insight_generation_running(generation.id)
+    monkeypatch.setattr(main, "recover_interrupted_backtest_jobs", lambda: 0)
+    monkeypatch.setattr(main, "recover_interrupted_report_jobs", lambda: 0)
+    monkeypatch.setattr(
+        main,
+        "recover_interrupted_insight_generations",
+        store.recover_interrupted_insight_generations,
+    )
+    monkeypatch.setattr(insights, "get_store", lambda: store)
+
+    # When: the API restarts and the client reconnects to the persisted job.
+    with TestClient(main.app) as client:
+        response = client.get(f"/api/insights/generate/{generation.id}")
+
+    # Then: startup recovery makes the orphaned job terminal instead of stuck.
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"
+    assert response.json()["error"] == "Insight generation interrupted by server restart"
+    store.close()
 
 
 def test_report_service_has_one_owner_during_concurrent_first_access(

@@ -7,6 +7,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 import pytest
 
+from server import main
 from server.main import app
 from server.routes import settings
 
@@ -14,6 +15,7 @@ from server.routes import settings
 @pytest.fixture
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
     monkeypatch.setattr(settings, "CONFIG_PATH", tmp_path / "settings.json")
+    monkeypatch.setattr(main, "recover_interrupted_insight_generations", lambda: 0)
     with TestClient(app) as test_client:
         yield test_client
 

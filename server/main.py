@@ -17,6 +17,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from storage.store import (
     recover_interrupted_backtest_jobs,
+    recover_interrupted_insight_generations,
     recover_interrupted_report_jobs,
 )
 
@@ -44,6 +45,11 @@ async def lifespan(app: FastAPI):
     recovered_reports = recover_interrupted_report_jobs()
     if recovered_reports:
         logger.warning("Recovered %d interrupted report jobs", recovered_reports)
+    recovered_insights = recover_interrupted_insight_generations()
+    if recovered_insights:
+        logger.warning(
+            "Recovered %d interrupted insight generations", recovered_insights
+        )
 
     # Start data collector and monitor runner if enabled
     if os.getenv("START_COLLECTOR", "").lower() == "true":

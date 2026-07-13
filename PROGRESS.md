@@ -2,6 +2,42 @@
 
 Last updated: 2026-07-14 | Branch: `dev`
 
+## Backtest UI and Daily Insights Reliability Follow-up ✅
+
+Completed on 2026-07-14 on `dev`.
+
+Delivered:
+
+- Backtest strategies are grouped Quant → Agent → HITL while preserving API
+  order inside each group. The Strategy trigger and popup use the widest actual
+  rendered label as their intrinsic width, capped by the responsive grid cell.
+- HITL eligibility and Agent provider-preflight failures now render in a
+  semantic destructive notice between Configuration and the job/result area;
+  the HITL strategy-configuration link remains available.
+- Daily Insights generation now uses a client-owned, pre-persisted idempotency
+  ID, navigation-safe POST, persisted backend status/progress, bounded worker
+  ownership, polling restoration, and restart-to-failed recovery.
+- New and legacy Daily Insights JSON project non-finite provider values as
+  standard `null`, eliminating the observed `/api/insights` 500 without deleting
+  the two pre-existing briefs.
+
+Verification:
+
+- Final `uv run pytest -q` passed 645 tests with 1 skipped and the existing
+  Starlette/httpx deprecation warning; the focused Insights/lifecycle suite
+  passed 8 tests.
+- Ruff and BasedPyright passed with zero diagnostics; frontend TypeScript and all
+  five Node test files passed. Scoped ESLint had zero errors and retained existing
+  page warnings.
+- Production Chromium verified Quant → Agent → HITL ordering, 199px
+  trigger/popup under the 272px neighboring field, both Backtest notices, and the
+  same Insights generation ID after navigation and reload. A real job completed
+  in 55.2 seconds and a fresh Insights load no longer showed `Failed to load`.
+- The production Next build passed before the final phrase-wrapping, semantic
+  token, accessibility, client-owned-ID, and bounded-worker review hardening.
+  Subsequent TypeScript, Node, Ruff, BasedPyright, ESLint, and focused tests pass;
+  a second build and post-fix screenshot were blocked by the host approval quota.
+
 ## Backtest Reliability and Fidelity Goal
 
 Immutable session baseline (recorded once; continuations must read, not recompute):

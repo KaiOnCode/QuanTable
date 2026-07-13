@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useMemo } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Shell } from "@/components/layout/shell";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,15 +13,16 @@ import {
 } from "@/components/ui/accordion";
 import { EmptyState } from "@/components/shared/empty-state";
 import { api } from "@/lib/api/client";
+import { insightsApi } from "@/lib/api/insights";
+import { createInsightGenerationId } from "@/lib/insight-generation-state";
 import { formatDateTime } from "@/lib/utils";
 import type { DailyBrief, Watchlist } from "@/lib/types/models";
+import { usePersistedInsightGenerationId } from "@/lib/use-persisted-insight-generation-id";
 import { Markdown } from "@/components/markdown";
 import {
   Loader2, RefreshCw, CheckCircle2, Globe, ExternalLink,
   X, Newspaper, List, Circle, AlertCircle,
 } from "lucide-react";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 type Tab = "briefs" | "watchlist";
 type TimeRange = 24 | 72 | 168 | 720;
@@ -42,7 +43,6 @@ function renderCitations(content: string, sources: any[]): string {
   });
 }
 
-type ProgressStep = { stage: string; status: string; detail: string };
 const STAGE_ORDER = ["market", "news", "llm", "store"] as const;
 const STAGE_LABELS: Record<string, string> = {
   market: "Market Data", news: "News Collection", llm: "AI Generation", store: "Saving",
@@ -52,9 +52,15 @@ export default function InsightsPage() {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<Tab>("briefs");
   const [selected, setSelected] = useState<DailyBrief | null>(null);
+  const [dismissedGeneratedInsightId, setDismissedGeneratedInsightId] = useState<
+    string | null
+  >(null);
   const [hours24, setHours24] = useState(true);
-  const [generating, setGenerating] = useState(false);
-  const [progress, setProgress] = useState<Record<string, ProgressStep>>({});
+  const {
+    generationId,
+    persistGenerationId,
+    syncGenerationStatus,
+  } = usePersistedInsightGenerationId();
 
   // Watchlist news state
   const [wlId, setWlId] = useState<string>("");
@@ -69,6 +75,66 @@ export default function InsightsPage() {
     enabled: tab === "briefs",
   });
   const briefs = data?.insights ?? [];
+
+  const generationMutation = useMutation({
+    mutationFn: ({ id, hours }: { id: string; hours: number }) =>
+      insightsApi.generate(id, hours),
+    onSuccess: (generation) => {
+      persistGenerationId(generation.id, generation.status);
+    },
+  });
+  const generationQuery = useQuery({
+    queryKey: ["insight-generation", generationId],
+    queryFn: () => insightsApi.getGeneration(generationId ?? ""),
+    enabled: generationId !== null,
+    retry: (failureCount, queryError) =>
+      failureCount < 20 &&
+      queryError instanceof Error &&
+      queryError.message.startsWith("HTTP 404:"),
+    retryDelay: 250,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === "pending" || status === "running" ? 1000 : false;
+    },
+  });
+  const generation = generationQuery.data;
+  const generating = generationMutation.isPending ||
+    generation?.status === "pending" ||
+    generation?.status === "running" ||
+    (generationId !== null && generationQuery.isLoading);
+  const progress = generation?.progress ?? {};
+  const completedStageCount = STAGE_ORDER.filter(
+    (stage) => progress[stage]?.status === "done",
+  ).length;
+  const generationError = generationMutation.isError
+    ? generationMutation.error instanceof Error
+      ? generationMutation.error.message
+      : "Insight generation could not start."
+    : generation?.error ??
+      (generationQuery.isError ? "Unable to restore insight generation status." : null);
+
+  useEffect(() => {
+    if (generation === undefined) return;
+    syncGenerationStatus(generation.id, generation.status);
+    if (generation.status === "completed") {
+      void queryClient.invalidateQueries({ queryKey: ["insights"] });
+    }
+  }, [generation, queryClient, syncGenerationStatus]);
+
+  const completedInsightId = generation?.status === "completed"
+    ? generation.result_insight_id
+    : null;
+  const generatedInsightQuery = useQuery({
+    queryKey: ["insights", completedInsightId],
+    queryFn: () => insightsApi.get(completedInsightId ?? ""),
+    enabled: completedInsightId !== null,
+  });
+
+  const selectedBrief = selected ?? (
+    completedInsightId !== dismissedGeneratedInsightId
+      ? generatedInsightQuery.data ?? null
+      : null
+  );
 
   // Fetch watchlists for selector
   const { data: wlData } = useQuery({
@@ -90,7 +156,7 @@ export default function InsightsPage() {
   const hasTickers = (selectedWatchlist?.tickers?.length ?? 0) > 0;
 
   // Fetch news — called on watchlist change AND on Search button
-  const fetchWatchlistNews = (hours?: TimeRange) => {
+  const fetchWatchlistNews = useCallback((hours?: TimeRange) => {
     const h = hours ?? wlHours;
     if (!wlId) return;
     setWlLoading(true);
@@ -99,51 +165,19 @@ export default function InsightsPage() {
       .then((d) => setWlNews((d as any).articles || []))
       .catch(() => setWlNews([]))
       .finally(() => setWlLoading(false));
-  };
+  }, [wlHours, wlId]);
 
   // Auto-fetch when wlId changes (user picks a different watchlist)
   useEffect(() => {
     if (wlId && tab === "watchlist") fetchWatchlistNews();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wlId]);
+  }, [fetchWatchlistNews, tab, wlId]);
 
-  const startGenerate = useCallback(() => {
-    setGenerating(true);
-    setProgress({});
-    const url = `${API_BASE}/insights/generate?hours=${hours24 ? 24 : 0}`;
-    fetch(url, { method: "POST", headers: { Accept: "text/event-stream" } })
-      .then(async (resp) => {
-        const reader = resp.body!.getReader();
-        const decoder = new TextDecoder();
-        let buf = "", ev = "message", dataLines: string[] = [];
-        const flush = () => {
-          const dataStr = dataLines.join("\n");
-          const currentEvent = ev;
-          dataLines = []; ev = "message";
-          if (!dataStr.trim()) return;
-          try {
-            const p = JSON.parse(dataStr);
-            if (currentEvent === "progress") setProgress((prev) => ({ ...prev, [p.stage]: p }));
-            else if (currentEvent === "done") { setGenerating(false); setSelected(p as any); queryClient.invalidateQueries({ queryKey: ["insights"] }); }
-            else if (currentEvent === "error") { setGenerating(false); setProgress((prev) => ({ ...prev, error: { stage: "error", status: "error", detail: p.message } })); }
-          } catch { /* skip */ }
-        };
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buf += decoder.decode(value, { stream: true });
-          const lines = buf.split(/\r?\n/);
-          buf = lines.pop() ?? "";
-          for (const line of lines) {
-            if (line === "") flush();
-            else if (line.startsWith("event:")) ev = line.slice(6).trim();
-            else if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
-          }
-        }
-        if (dataLines.length) flush();
-      })
-      .catch((err) => { if (err.name !== "AbortError") { setProgress((prev) => ({ ...prev, error: { stage: "error", status: "error", detail: String(err) } })); setGenerating(false); } });
-  }, [hours24, queryClient]);
+  const startGenerate = () => {
+    generationMutation.reset();
+    const generationId = createInsightGenerationId();
+    persistGenerationId(generationId, "pending");
+    generationMutation.mutate({ id: generationId, hours: hours24 ? 24 : 0 });
+  };
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
@@ -152,9 +186,9 @@ export default function InsightsPage() {
   };
 
   // ── Selected Brief Detail View ──
-  if (selected) {
-    const sources = (selected as any).sources || (selected as any).news_sources || [];
-    const allArticles = (selected as any).all_articles || [];
+  if (selectedBrief) {
+    const sources = (selectedBrief as any).sources || (selectedBrief as any).news_sources || [];
+    const allArticles = (selectedBrief as any).all_articles || [];
     const byCategory: Record<string, any[]> = {};
     for (const a of allArticles) {
       const cat = a.category || "other";
@@ -165,16 +199,19 @@ export default function InsightsPage() {
     return (
       <Shell>
         <div className="p-6 max-w-6xl mx-auto space-y-4">
-          <Button variant="ghost" size="sm" onClick={() => setSelected(null)}>← Back</Button>
+          <Button variant="ghost" size="sm" onClick={() => {
+            setSelected(null);
+            setDismissedGeneratedInsightId(completedInsightId);
+          }}>← Back</Button>
           <Card>
             <CardHeader>
-              <div className="flex items-center gap-2"><Badge>Morning Brief</Badge><CardTitle className="text-lg">{selected.title}</CardTitle></div>
-              <div className="text-xs text-muted-foreground">{formatDateTime(selected.generated_at)}{selected.news_count != null && <> · {selected.news_count} articles</>}{selected.elapsed_s != null && <> · {selected.elapsed_s}s</>}</div>
+              <div className="flex items-center gap-2"><Badge>Morning Brief</Badge><CardTitle className="text-lg">{selectedBrief.title}</CardTitle></div>
+              <div className="text-xs text-muted-foreground">{formatDateTime(selectedBrief.generated_at)}{selectedBrief.news_count != null && <> · {selectedBrief.news_count} articles</>}{selectedBrief.elapsed_s != null && <> · {selectedBrief.elapsed_s}s</>}</div>
             </CardHeader>
             <CardContent>
               <div className="text-sm leading-relaxed prose prose-sm dark:prose-invert max-w-none">
                 <Markdown components={{ a: ({ href, children, ...p }: any) => href?.startsWith("http") ? <a href={href} target="_blank" rel="noopener noreferrer" {...p}>{children}</a> : <a href={href} {...p}>{children}</a> }}>
-                  {renderCitations(selected.content, sources)}
+                  {renderCitations(selectedBrief.content, sources)}
                 </Markdown>
               </div>
               {sources.length > 0 && (
@@ -183,7 +220,7 @@ export default function InsightsPage() {
             </CardContent>
           </Card>
           {Object.keys(byCategory).length > 0 && (
-            <Card><CardHeader><CardTitle className="text-base"><Globe className="inline h-4 w-4 mr-1" />All Articles ({allArticles.length})</CardTitle></CardHeader><CardContent><Accordion className="space-y-1">{Object.entries(byCategory).sort().map(([cat, arts]) => (<AccordionItem key={cat} value={cat}><AccordionTrigger className="text-sm py-2"><span className="font-mono text-xs text-muted-foreground mr-2">{cat}</span><span className="text-xs">({arts.length})</span></AccordionTrigger><AccordionContent><div className="max-h-48 overflow-y-auto space-y-1 text-xs pl-4">{arts.map((a: any, i: number) => (<div key={i} className="flex items-start gap-2 py-1 border-b border-muted/10 last:border-0"><span className="shrink-0">{a.url ? <a href={a.url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline"><ExternalLink className="h-3 w-3" /></a> : null}</span><div className="min-w-0"><p className="leading-snug">{a.title}</p><span className="text-muted-foreground">{a.source}</span></div></div>))}</div></AccordionContent></AccordionItem>))}</Accordion></CardContent></Card>
+            <Card><CardHeader><CardTitle className="text-base"><Globe className="inline h-4 w-4 mr-1" />All Articles ({allArticles.length})</CardTitle></CardHeader><CardContent><Accordion className="space-y-1">{Object.entries(byCategory).sort().map(([cat, arts]) => (<AccordionItem key={cat} value={cat}><AccordionTrigger className="text-sm py-2"><span className="font-mono text-xs text-muted-foreground mr-2">{cat}</span><span className="text-xs">({arts.length})</span></AccordionTrigger><AccordionContent><div className="max-h-48 overflow-y-auto space-y-1 text-xs pl-4">{arts.map((a: any) => (<div key={`${a.url ?? ""}-${a.published_at ?? ""}-${a.title ?? ""}`} className="flex items-start gap-2 py-1 border-b border-muted/10 last:border-0"><span className="shrink-0">{a.url ? <a href={a.url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline"><ExternalLink className="h-3 w-3" /></a> : null}</span><div className="min-w-0"><p className="leading-snug">{a.title}</p><span className="text-muted-foreground">{a.source}</span></div></div>))}</div></AccordionContent></AccordionItem>))}</Accordion></CardContent></Card>
           )}
         </div>
       </Shell>
@@ -216,13 +253,15 @@ export default function InsightsPage() {
         {/* ── Briefs Tab ── */}
         {tab === "briefs" && (
           <>
-            {generating && (
+            {(generating || generationError !== null) && (
               <Card>
-                <CardHeader className="pb-2"><CardTitle className="text-base">Generating Brief</CardTitle></CardHeader>
+                <CardHeader className="pb-2"><CardTitle className="text-base">{generationError ? "Brief Generation Failed" : "Generating Brief"}</CardTitle></CardHeader>
                 <CardContent className="space-y-3">
-                  <Progress value={
-                    STAGE_ORDER.filter((s) => progress[s]?.status === "done").length / STAGE_ORDER.length * 100
-                  } />
+                  <Progress
+                    value={completedStageCount / STAGE_ORDER.length * 100}
+                    aria-label="Brief generation progress"
+                    aria-valuetext={`${completedStageCount} of ${STAGE_ORDER.length} stages complete`}
+                  />
                   {STAGE_ORDER.map((stage) => {
                     const p = progress[stage];
                     const done = p?.status === "done";
@@ -230,9 +269,9 @@ export default function InsightsPage() {
                     return (
                       <div key={stage} className={`flex items-center gap-3 text-sm transition-opacity duration-300 ${!p ? "opacity-40" : "opacity-100"}`}>
                         {done ? (
-                          <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0 transition-all duration-300 scale-110" />
+                          <CheckCircle2 className="h-4 w-4 text-foreground shrink-0 transition-all duration-300 scale-110" />
                         ) : active ? (
-                          <Loader2 className="h-4 w-4 animate-spin text-blue-500 shrink-0" />
+                          <Loader2 className="h-4 w-4 animate-spin text-primary shrink-0" />
                         ) : (
                           <Circle className="h-4 w-4 text-muted-foreground/30 shrink-0" />
                         )}
@@ -245,10 +284,10 @@ export default function InsightsPage() {
                       </div>
                     );
                   })}
-                  {progress.error && (
-                    <div className="flex items-center gap-3 text-sm text-red-500">
+                  {generationError && (
+                    <div className="flex items-center gap-3 text-sm text-destructive" role="alert">
                       <AlertCircle className="h-4 w-4 shrink-0" />
-                      <span>{progress.error.detail}</span>
+                      <span>{generationError}</span>
                     </div>
                   )}
                 </CardContent>
@@ -263,11 +302,11 @@ export default function InsightsPage() {
                         <div className="flex items-center gap-2"><Badge variant="default">Morning</Badge><CardTitle className="text-base">{brief.title}</CardTitle></div>
                         <div className="flex items-center gap-2">
                           <span className="text-xs text-muted-foreground">{formatDateTime(brief.generated_at)}</span>
-                          <button onClick={(e) => handleDelete(e, brief.id)} className="p-1 rounded hover:bg-destructive/10 transition-colors opacity-0 group-hover:opacity-100" title="Delete"><X className="h-3.5 w-3.5 text-muted-foreground hover:text-destructive" /></button>
+                          <button type="button" onClick={(e) => handleDelete(e, brief.id)} className="p-1 rounded hover:bg-destructive/10 transition-colors opacity-0 group-hover:opacity-100" title="Delete"><X className="h-3.5 w-3.5 text-muted-foreground hover:text-destructive" /></button>
                         </div>
                       </div>
                     </CardHeader>
-                    <CardContent><p className="text-sm text-muted-foreground line-clamp-2">{brief.summary}</p></CardContent>
+                    <CardContent><p className="text-sm text-muted-foreground line-clamp-2 [word-break:auto-phrase] [text-wrap:pretty]">{brief.summary}</p></CardContent>
                   </Card>
                 ))}
               </div>
@@ -280,7 +319,7 @@ export default function InsightsPage() {
           <div className="space-y-4">
             {/* Watchlist selector — button group for reliable display */}
             <div className="space-y-1">
-              <label className="text-xs text-muted-foreground font-medium">Watchlist</label>
+              <p className="text-xs text-muted-foreground font-medium">Watchlist</p>
               <div className="flex gap-1 flex-wrap">
                 {watchlists.map((w) => (
                   <Button
@@ -298,14 +337,14 @@ export default function InsightsPage() {
             {/* Time + Search */}
             <div className="flex items-end gap-4 flex-wrap">
               <div className="space-y-1">
-                <label className="text-xs text-muted-foreground font-medium">Time Range</label>
+                <p className="text-xs text-muted-foreground font-medium">Time Range</p>
                 <div className="flex gap-0.5">
                   {TIME_OPTIONS.map((t) => (<Button key={t.value} variant={wlHours === t.value ? "default" : "outline"} size="sm" className="h-8 text-xs" onClick={() => setWlHours(t.value)}>{t.label}</Button>))}
                 </div>
               </div>
               <div className="space-y-1">
-                <label className="text-xs text-muted-foreground font-medium">Filter</label>
-                <Input placeholder="Ticker or keyword..." value={wlSearch} onChange={(e) => setWlSearch(e.target.value)} className="h-8 w-40 text-xs" />
+                <label htmlFor="watchlist-news-filter" className="text-xs text-muted-foreground font-medium">Filter</label>
+                <Input id="watchlist-news-filter" placeholder="Ticker or keyword..." value={wlSearch} onChange={(e) => setWlSearch(e.target.value)} className="h-8 w-40 text-xs" />
               </div>
               <Button size="sm" onClick={() => fetchWatchlistNews()} disabled={wlLoading || !wlId}>
                 {wlLoading ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1 h-3.5 w-3.5" />}
@@ -421,8 +460,8 @@ function WatchlistNewsList({ articles, search }: { articles: any[]; search: stri
                       Summarize
                     </Button>
                   </div>
-                  {arts.map((a: any, i: number) => (
-                    <div key={i} className="flex items-start gap-2 py-1.5 border-b border-muted/10 last:border-0">
+                  {arts.map((a: any) => (
+                    <div key={`${a.url ?? ""}-${a.published_at ?? ""}-${a.title ?? ""}`} className="flex items-start gap-2 py-1.5 border-b border-muted/10 last:border-0">
                       <div className="shrink-0 mt-0.5">
                         <Badge variant="secondary" className="text-[9px] px-1 py-0 h-4 font-normal">{a.source}</Badge>
                       </div>

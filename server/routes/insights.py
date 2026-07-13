@@ -2,26 +2,118 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
+from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from queue import Empty, Queue
-from threading import Thread
+from contextlib import asynccontextmanager
+from threading import Lock
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import StreamingResponse
 
 from server.llm_defaults import DEFAULT_QUICK_THINK_MODEL
 from storage import get_store
+from storage.store import InsightGenerationRecord
 
-router = APIRouter(tags=["insights"])
 logger = logging.getLogger(__name__)
+_insight_generation_executor: ThreadPoolExecutor | None = None
+_insight_generation_executor_lock = Lock()
 
 
-def _sse_event(event: str, data: dict) -> str:
-    payload = json.dumps(data, ensure_ascii=False, default=str)
-    return f"event: {event}\ndata: {payload}\n\n"
+@asynccontextmanager
+async def insight_lifespan(_app: object) -> AsyncIterator[None]:
+    try:
+        yield
+    finally:
+        shutdown_insight_generation_executor()
+
+
+router = APIRouter(tags=["insights"], lifespan=insight_lifespan)
+
+
+def get_insight_generation_executor() -> ThreadPoolExecutor:
+    global _insight_generation_executor
+    with _insight_generation_executor_lock:
+        if _insight_generation_executor is None:
+            _insight_generation_executor = ThreadPoolExecutor(
+                max_workers=2,
+                thread_name_prefix="insight-generation",
+            )
+        return _insight_generation_executor
+
+
+def shutdown_insight_generation_executor() -> None:
+    global _insight_generation_executor
+    with _insight_generation_executor_lock:
+        executor = _insight_generation_executor
+        _insight_generation_executor = None
+    if executor is not None:
+        executor.shutdown(wait=True)
+
+
+def _run_morning_brief(*, hours: int, progress_queue):
+    from server.morning_brief import run
+
+    return run(hours=hours, progress_queue=progress_queue)
+
+
+def _generation_payload(generation: InsightGenerationRecord) -> dict:
+    return {
+        "id": generation.id,
+        "hours": generation.hours,
+        "status": generation.status,
+        "progress": json.loads(generation.progress_json),
+        "result_insight_id": generation.result_insight_id,
+        "error": generation.error,
+        "created_at": generation.created_at,
+        "started_at": generation.started_at,
+        "completed_at": generation.completed_at,
+        "updated_at": generation.updated_at,
+    }
+
+
+class _PersistedProgressSink:
+    def __init__(self, generation_id: str) -> None:
+        self._generation_id = generation_id
+
+    def put(self, item: tuple[str, dict]) -> None:
+        event, payload = item
+        if event != "progress":
+            return
+        store = get_store()
+        generation = store.get_insight_generation(self._generation_id)
+        if generation is None:
+            return
+        progress = json.loads(generation.progress_json)
+        stage = payload.get("stage")
+        if isinstance(stage, str):
+            progress[stage] = payload
+            store.update_insight_generation_progress(
+                self._generation_id,
+                json.dumps(progress, ensure_ascii=False),
+            )
+
+
+def _generate_insight(generation_id: str, hours: int) -> None:
+    store = get_store()
+    if not store.mark_insight_generation_running(generation_id):
+        return
+    try:
+        result = _run_morning_brief(
+            hours=hours,
+            progress_queue=_PersistedProgressSink(generation_id),
+        )
+        insight_id = result.get("id")
+        if not isinstance(insight_id, str) or not insight_id:
+            raise RuntimeError("generated insight was not persisted")
+        store.complete_insight_generation(generation_id, insight_id)
+    except Exception:
+        logger.exception("Insight generation %s failed", generation_id)
+        store.fail_insight_generation(
+            generation_id,
+            "Insight generation failed. Check the server log for details.",
+        )
 
 
 # ── CRUD ──
@@ -183,57 +275,24 @@ async def delete_insight(insight_id: str):
     return {"ok": True}
 
 
-# ── Generation (SSE) ──
+@router.post("/insights/generate", status_code=202)
+async def generate_insight(
+    hours: int = Query(0, ge=0, le=720),
+    generation_id: str | None = Query(default=None, pattern=r"^[0-9a-f]{32}$"),
+):
+    generation_id = generation_id or uuid4().hex
+    store = get_store()
+    existing = store.get_insight_generation(generation_id)
+    if existing is not None:
+        return _generation_payload(existing)
+    generation = store.create_insight_generation(generation_id, hours)
+    get_insight_generation_executor().submit(_generate_insight, generation_id, hours)
+    return _generation_payload(generation)
 
 
-@router.post("/insights/generate")
-async def generate_insight(hours: int = Query(0)):
-    """SSE streaming brief generation with real-time progress."""
-
-    async def event_stream():
-        queue: Queue = Queue()
-
-        def _worker():
-            try:
-                from server.morning_brief import run
-
-                result = run(hours=hours, progress_queue=queue)
-                queue.put(("done", result))
-            except Exception as exc:
-                queue.put(("error", str(exc)))
-
-        thread = Thread(target=_worker, daemon=True)
-        thread.start()
-
-        loop = asyncio.get_event_loop()
-
-        while True:
-            try:
-                msg_type, payload = await loop.run_in_executor(
-                    None, lambda: queue.get(timeout=300)
-                )
-            except Empty:
-                yield _sse_event("error", {"message": "Timeout after 5 minutes"})
-                break
-
-            if msg_type == "done":
-                yield _sse_event("done", {"ok": True, **payload})
-                break
-
-            if msg_type == "error":
-                yield _sse_event("error", {"message": str(payload)[:500]})
-                break
-
-            if msg_type == "progress":
-                yield _sse_event("progress", payload)
-                continue
-
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
+@router.get("/insights/generate/{generation_id}")
+async def get_insight_generation(generation_id: str):
+    generation = get_store().get_insight_generation(generation_id)
+    if generation is None:
+        raise HTTPException(404, "Insight generation not found")
+    return _generation_payload(generation)
