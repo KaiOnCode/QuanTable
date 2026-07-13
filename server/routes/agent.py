@@ -16,12 +16,18 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Lock, Thread
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    model_validator,
+)
 
 from agent.backtest_jobs import (
     BacktestJobResponse,
@@ -299,12 +305,31 @@ async def delete_session(session_id: str):
     return {"ok": True}
 
 
+async def _parse_backtest_request(
+    payload: object = Body(...),
+) -> BacktestRequest:
+    try:
+        return BacktestRequest.model_validate(payload)
+    except ValidationError as exc:
+        detail = [
+            {
+                key: value
+                for key, value in error.items()
+                if key not in {"ctx", "input", "url"}
+            }
+            for error in exc.errors()
+        ]
+        raise HTTPException(422, detail=detail) from exc
+
+
 @router.post(
     "/agent/backtest",
     status_code=202,
     response_model=BacktestJobResponse,
 )
-async def create_backtest(request: BacktestRequest) -> BacktestJobResponse:
+async def create_backtest(
+    request: Annotated[BacktestRequest, Depends(_parse_backtest_request)],
+) -> BacktestJobResponse:
     service = get_backtest_job_service()
     try:
         return service.create(request)

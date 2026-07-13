@@ -10,13 +10,10 @@ from broker.backtest_data import ToolDataService
 from broker.gateway import BrokerGateway
 
 from agent.run_context import AgentRunContext, bind_agent_run_context
+from agent.backtest_errors import BacktestDecisionError
 
 if TYPE_CHECKING:
     from agent.loop import AgentLoop
-
-
-class BacktestDecisionError(RuntimeError):
-    pass
 
 
 class LoopMessage(TypedDict):
@@ -61,9 +58,9 @@ class _AgentLoopInvoker:
         session_id = kwargs.get("session_id")
         system_prompt = kwargs.get("system_prompt")
         if session_id is not None and not isinstance(session_id, str):
-            raise BacktestDecisionError("backtest session_id must be a string")
+            raise RuntimeError("backtest session_id must be a string")
         if system_prompt is not None and not isinstance(system_prompt, str):
-            raise BacktestDecisionError("backtest system_prompt must be a string")
+            raise RuntimeError("backtest system_prompt must be a string")
         result = self._loop.run(
             user_message,
             session_id=session_id,
@@ -71,7 +68,7 @@ class _AgentLoopInvoker:
         )
         raw_messages = result.get("messages", [])
         if not isinstance(raw_messages, list):
-            raise BacktestDecisionError("backtest loop returned invalid messages")
+            raise RuntimeError("backtest loop returned invalid messages")
         messages: list[LoopMessage] = []
         for raw_message in raw_messages:
             if not isinstance(raw_message, dict):
@@ -115,10 +112,11 @@ class BacktestDecisionAdapter:
         session_id: str,
         context: AgentRunContext | None = None,
     ) -> BacktestDecisionResult:
-        del date, execution_enabled
+        del execution_enabled
         run_context = context or self._build_context(
             ticker=ticker,
             as_of=as_of,
+            decision_date=date,
             strategy_id=strategy_id,
             account_id=account_id,
             session_id=session_id,
@@ -143,7 +141,12 @@ class BacktestDecisionAdapter:
                     system_prompt=system_prompt,
                 )
         except Exception as error:
-            raise BacktestDecisionError("backtest agent execution failed") from error
+            raise BacktestDecisionError(
+                code="agent_failed",
+                stage="agent_execution",
+                decision_date=date,
+                attempt=1,
+            ) from error
         decision_messages: list[LoopMessage] = [
             message
             for message in result.get("messages", [])
@@ -152,18 +155,27 @@ class BacktestDecisionAdapter:
         ]
         if len(decision_messages) != 1:
             raise BacktestDecisionError(
-                "backtest requires exactly one decision tool call"
+                code="decision_schema_invalid",
+                stage="tool_call",
+                decision_date=date,
+                attempt=1,
             )
         content = decision_messages[0].get("content")
         if not isinstance(content, str):
             raise BacktestDecisionError(
-                "backtest decision tool returned invalid content"
+                code="decision_schema_invalid",
+                stage="tool_payload",
+                decision_date=date,
+                attempt=1,
             )
         try:
             decision = BacktestDecisionPayload.model_validate_json(content)
         except (json.JSONDecodeError, ValidationError) as error:
             raise BacktestDecisionError(
-                "backtest decision tool returned invalid structured decision"
+                code="decision_schema_invalid",
+                stage="structured_output",
+                decision_date=date,
+                attempt=1,
             ) from error
         return {
             "status": decision.status,
@@ -179,13 +191,17 @@ class BacktestDecisionAdapter:
         *,
         ticker: str,
         as_of: str,
+        decision_date: str,
         strategy_id: str,
         account_id: str,
         session_id: str,
     ) -> AgentRunContext:
         if self._data_service is None or self._broker is None:
             raise BacktestDecisionError(
-                "backtest adapter requires scoped data and broker"
+                code="decision_context_invalid",
+                stage="context",
+                decision_date=decision_date,
+                attempt=1,
             )
         return AgentRunContext(
             data_service=self._data_service,

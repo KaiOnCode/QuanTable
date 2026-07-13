@@ -115,7 +115,7 @@ def test_backtest_adapter_rejects_prose_or_multiple_decision_calls(tmp_path) -> 
     adapter = BacktestDecisionAdapter(loop_factory=lambda: loop)
 
     # When / Then: the job fails rather than guessing from final prose.
-    with pytest.raises(BacktestDecisionError, match="exactly one"):
+    with pytest.raises(BacktestDecisionError) as raised:
         adapter.run(
             context=_context(tmp_path),
             ticker="AAPL",
@@ -128,10 +128,14 @@ def test_backtest_adapter_rejects_prose_or_multiple_decision_calls(tmp_path) -> 
             session_id="session-1",
         )
 
+    assert raised.value.code == "decision_schema_invalid"
+    assert raised.value.stage == "tool_call"
+    assert raised.value.decision_date == "2026-01-02T00:00:00Z"
+    assert raised.value.attempt == 1
     assert current_agent_run_context() is None
 
 
-def test_characterizes_current_nth_invalid_structured_decision_as_generic_failure(
+def test_backtest_adapter_preserves_nth_invalid_decision_metadata(
     tmp_path,
 ) -> None:
     valid_content = json.dumps(
@@ -173,10 +177,7 @@ def test_characterizes_current_nth_invalid_structured_decision_as_generic_failur
         )
         assert result["status"] == "ok"
 
-    with pytest.raises(
-        BacktestDecisionError,
-        match="backtest decision tool returned invalid structured decision",
-    ):
+    with pytest.raises(BacktestDecisionError) as raised:
         adapter.run(
             context=_context(tmp_path),
             ticker="AAPL",
@@ -188,6 +189,11 @@ def test_characterizes_current_nth_invalid_structured_decision_as_generic_failur
             account_id="account-1",
             session_id="session-1",
         )
+
+    assert raised.value.code == "decision_schema_invalid"
+    assert raised.value.stage == "structured_output"
+    assert raised.value.decision_date == "2026-01-03T00:00:00Z"
+    assert raised.value.attempt == 1
 
 
 def test_backtest_adapter_converts_agent_runtime_failure_to_typed_error(
@@ -245,7 +251,7 @@ def test_backtest_adapter_rejects_status_only_success_payload(tmp_path) -> None:
         )
     )
 
-    with pytest.raises(BacktestDecisionError, match="invalid structured decision"):
+    with pytest.raises(BacktestDecisionError) as raised:
         adapter.run(
             context=_context(tmp_path),
             ticker="AAPL",
@@ -257,3 +263,6 @@ def test_backtest_adapter_rejects_status_only_success_payload(tmp_path) -> None:
             account_id="account-1",
             session_id="session-1",
         )
+
+    assert raised.value.code == "decision_schema_invalid"
+    assert raised.value.stage == "structured_output"

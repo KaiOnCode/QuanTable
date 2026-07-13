@@ -199,6 +199,7 @@ class BacktestConfigView(BaseModel):
     strategy_id: str = ""
     account_id: str = "default"
     mode: Literal["deterministic", "agent_experiment"] = "deterministic"
+    agent_model: str | None = None
     strategy_snapshot_hash: str = ""
     policy_hash: str = ""
     data_snapshot_hash: str = ""
@@ -224,9 +225,13 @@ class BacktestConfigView(BaseModel):
 
 
 class BacktestProgressView(BaseModel):
+    bars_total: int = 0
+    bars_processed: int = 0
+    decisions_total: int = 0
     decisions_eligible: int = 0
     decisions_not_ready: int = 0
     decisions_completed: int = 0
+    current_decision_date: str | None = None
 
 
 class BacktestDecisionView(BaseModel):
@@ -234,7 +239,13 @@ class BacktestDecisionView(BaseModel):
     signal_date: str
     execution_date: str | None = None
     status: Literal["not_ready", "completed", "failed", "unfilled_end_of_window"]
+    attempts: int = 1
     target_position_pct: float | None = None
+    confidence: float | None = None
+    feature_hash: str | None = None
+    policy_hash: str = ""
+    error_code: str | None = None
+    error_stage: str | None = None
 
 
 class BacktestOrderEvidenceView(BaseModel):
@@ -257,7 +268,7 @@ class BacktestProvenanceView(BaseModel):
     strategy_snapshot_hash: str = ""
     policy_hash: str = ""
     data_snapshot_hash: str = ""
-    canonical_result_hash: str = ""
+    canonical_result_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class BacktestSeriesPointView(BaseModel):
@@ -286,7 +297,9 @@ class BacktestResultView(BaseModel):
     end_position: BacktestEndPositionView = Field(
         default_factory=BacktestEndPositionView
     )
-    provenance: BacktestProvenanceView = Field(default_factory=BacktestProvenanceView)
+    provenance: BacktestProvenanceView = Field(
+        default_factory=lambda: BacktestProvenanceView(canonical_result_hash="0" * 64)
+    )
 
     @model_validator(mode="after")
     def derive_counts_and_outcome(self) -> BacktestResultView:

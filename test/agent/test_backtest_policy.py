@@ -64,6 +64,7 @@ def test_freezes_stable_typed_momentum_policy_and_run_override() -> None:
     assert first.policy.policy.target_position_pct == 0.4
     assert first.policy_hash == second.policy_hash
     assert len(first.policy_hash) == 64
+    assert first.engine_version == "backtest-engine/v1"
     assert first.strategy_execution_frequency == "monthly"
     assert first.run_frequency == "weekly"
     assert first.broker_config.initial_cash == 250_000

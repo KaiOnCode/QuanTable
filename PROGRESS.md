@@ -64,6 +64,57 @@ Evidence:
 - `.omo/evidence/backtest-reliability-and-fidelity/phase-1/task-2-migration-concurrency-fix.txt`
 - `.omo/evidence/backtest-reliability-and-fidelity/phase-1/review-work-final.md`
 
+### Phase 2: Typed Decisions and Durable Observability ✅
+
+Completed on 2026-07-13 under
+`plans/backtest-reliability-and-fidelity/backtest-reliability-and-fidelity-plan.md`.
+
+Delivered:
+
+- Todo 3 exact v1 job/snapshot/decision persistence with semantic migration
+  certification, transactional legacy rebuild, snapshot-required completion,
+  isolated per-decision progress, typed secret-safe failures, and frozen replay
+  without Strategy/provider rereads.
+- Todo 4 deterministic momentum/SMA policy execution without `AgentLoop`, plus
+  bounded one-shot experimental structured decisions, typed retry/failure
+  categories, exact long-only target transitions, and provider capability
+  preflight without silent HOLD.
+- Canonical economic hashing retains historical fill time, excludes operational
+  IDs, and binds the exact aligned persisted input snapshot hash into result
+  config and provenance. Error types now have a neutral ACTIVE owner, and route
+  track rules document the typed-policy backtest exception.
+- API validation, observer persistence fallback, storage failure metadata, and
+  API projection are defense-in-depth redacted and allowlisted.
+
+Fresh verification:
+
+- `.venv/bin/pytest -q` passed `422 passed, 1 skipped, 1 warning`; the warning
+  is the existing Starlette/httpx deprecation warning.
+- BasedPyright reported zero diagnostics; Ruff check/format, architecture,
+  migration integrity, forbidden-path, and diff checks passed.
+- Real API/runtime and numerical oracles verified daily/weekly/monthly execution
+  without LLM calls, exact target transitions, typed provider retry/exhaustion,
+  restart/replay isolation, snapshot/hash consistency, and secret exclusion.
+- Five review-work lanes returned PASS/HIGH after fixing track documentation,
+  canonical provenance, request redaction, persistence fallback, and storage
+  allowlisting. The H1-H4 debugging audit passed. Phase 2 changed no UI, so
+  visual/Chromium QA is not applicable to this phase.
+
+Downstream boundaries:
+
+- Current `61/13/3` cadence and `execution_date=null` remain explicit Todo 5/6
+  inputs, not final fidelity claims. Warm-up, `60/12/2`, next-open fills,
+  historical timestamps, and performance accounting remain unclaimed.
+- `completed_no_trades` and agent-experiment outputs remain non-credible
+  performance until their downstream gates pass.
+
+Evidence:
+
+- `.omo/evidence/backtest-reliability-and-fidelity/phase-2/task-3-adversarial-verifier.txt`
+- `.omo/evidence/backtest-reliability-and-fidelity/phase-2/task-4-adversarial-verifier.txt`
+- `.omo/evidence/backtest-reliability-and-fidelity/phase-2/phase2-debug-audit.txt`
+- `.omo/evidence/backtest-reliability-and-fidelity/phase-2/review-work-final.md`
+
 ## Frontend Demo Integration: Backtest Running Persistence ✅
 
 Completed on 2026-07-12 after product-owner reproduction of the Backtest

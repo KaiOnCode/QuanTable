@@ -11,8 +11,14 @@ import pandas as pd
 from broker.config import BrokerConfig
 from broker.engine import BarData, MockBrokerEngine
 from broker.ledger import TradeLedger
-from broker.models import AccountSnapshot
-from broker.views import BacktestConfigView, BacktestResultView, to_backtest_result_view
+from broker.models import AccountSnapshot, Order, OrderSide, OrderType
+from broker.views import (
+    BacktestConfigView,
+    BacktestDecisionView,
+    BacktestProgressView,
+    BacktestResultView,
+    to_backtest_result_view,
+)
 
 
 class BacktestRunError(RuntimeError):
@@ -32,6 +38,44 @@ class BacktestAgent(Protocol):
         account_id: str,
         session_id: str,
     ) -> dict: ...
+
+
+@dataclass(frozen=True, slots=True)
+class BacktestTargetDecision:
+    action: Literal["BUY", "SELL", "HOLD"]
+    target_position_pct: float
+    confidence: float
+    rationale: str
+    feature_hash: str
+    attempts: int
+
+
+class BacktestDecisionExecutor(Protocol):
+    @property
+    def minimum_close_count(self) -> int: ...
+
+    def decide(
+        self,
+        ticker: str,
+        *,
+        as_of: str,
+        closes: tuple[float, ...],
+        current_position_pct: float,
+    ) -> BacktestTargetDecision: ...
+
+
+class BacktestRunObserver(Protocol):
+    def bind_input_snapshot(
+        self, target: pd.DataFrame, benchmark: pd.DataFrame
+    ) -> None: ...
+
+    def record_progress(self, progress: BacktestProgressView) -> None: ...
+
+    def begin_decision(
+        self, sequence: int, decision_date: str, policy_hash: str
+    ) -> None: ...
+
+    def record_decision(self, decision: BacktestDecisionView) -> None: ...
 
 
 BacktestScopedAgentFactory = Callable[[str, MockBrokerEngine], BacktestAgent]
@@ -62,16 +106,20 @@ class BacktestRunner:
         ledger: TradeLedger | None = None,
         agent: BacktestAgent | None = None,
         scoped_agent_factory: BacktestScopedAgentFactory | None = None,
+        decision_executor: BacktestDecisionExecutor | None = None,
     ) -> None:
-        if (agent is None) == (scoped_agent_factory is None):
-            raise BacktestRunError(
-                "provide exactly one of agent or scoped_agent_factory"
-            )
+        configured = sum(
+            item is not None
+            for item in (agent, scoped_agent_factory, decision_executor)
+        )
+        if configured != 1:
+            raise BacktestRunError("provide exactly one decision implementation")
         self._config = config
         self.broker = broker if broker is not None else MockBrokerEngine(config)
         self.ledger = ledger if ledger is not None else TradeLedger()
         self._agent = agent
         self._scoped_agent_factory = scoped_agent_factory
+        self._decision_executor = decision_executor
         self.broker.register_on_fill(self.ledger.record_fill)
 
     def run(
@@ -86,31 +134,131 @@ class BacktestRunner:
         frequency: str = "daily",
         strategy_id: str = "",
         account_id: str = "default",
+        policy_hash: str = "",
+        observer: BacktestRunObserver | None = None,
     ) -> BacktestResult:
         target, benchmark = self._aligned_windows(
             price_df, benchmark_df, start_date, end_date
         )
+        if observer is not None:
+            observer.bind_input_snapshot(target, benchmark)
         session_id = f"backtest-{ticker.lower()}-{uuid4().hex[:8]}"
         decision_dates, canonical_frequency = self._decision_dates(
             target.index, frequency
         )
+        progress = BacktestProgressView(
+            bars_total=len(target), decisions_total=len(decision_dates)
+        )
+        if observer is not None:
+            observer.record_progress(progress)
+        decision_sequence = 0
         for trading_date, row in target.iterrows():
             self.broker.on_bar({ticker: self._row_to_bar(row)})
             as_of = self._to_iso_date(trading_date)
+            progress = progress.model_copy(
+                update={"bars_processed": progress.bars_processed + 1}
+            )
+            if observer is not None:
+                observer.record_progress(progress)
             if trading_date in decision_dates:
-                agent = self._agent_for(as_of)
-                agent.run(
-                    ticker,
-                    date=as_of,
-                    as_of=as_of,
-                    current_position_pct=self._calculate_current_position_pct(
-                        ticker, account_id
-                    ),
-                    execution_enabled=True,
-                    strategy_id=strategy_id,
-                    account_id=account_id,
-                    session_id=session_id,
+                decision_sequence += 1
+                progress = progress.model_copy(
+                    update={
+                        "decisions_eligible": progress.decisions_eligible + 1,
+                        "current_decision_date": as_of,
+                    }
                 )
+                if observer is not None:
+                    observer.record_progress(progress)
+                    observer.begin_decision(decision_sequence, as_of, policy_hash)
+                current_position_pct = self._calculate_current_position_pct(
+                    ticker, account_id
+                )
+                if self._decision_executor is not None:
+                    closes = tuple(
+                        self._row_value(item, "Close", "close")
+                        for _, item in target.loc[:trading_date].iterrows()
+                    )
+                    if len(closes) < self._decision_executor.minimum_close_count:
+                        progress = progress.model_copy(
+                            update={
+                                "decisions_not_ready": (
+                                    progress.decisions_not_ready + 1
+                                )
+                            }
+                        )
+                        if observer is not None:
+                            observer.record_decision(
+                                BacktestDecisionView(
+                                    sequence=decision_sequence,
+                                    signal_date=as_of,
+                                    status="not_ready",
+                                    policy_hash=policy_hash,
+                                )
+                            )
+                            observer.record_progress(progress)
+                        self.ledger.record_daily_snapshot(
+                            date=self._to_timestamp(trading_date).strftime("%Y-%m-%d"),
+                            account=self._account_snapshot_for_date(
+                                trading_date,
+                                session_id,
+                                strategy_id,
+                                account_id,
+                            ),
+                        )
+                        continue
+                    typed_decision = self._decision_executor.decide(
+                        ticker,
+                        as_of=as_of,
+                        closes=closes,
+                        current_position_pct=current_position_pct,
+                    )
+                    self._place_target_order(
+                        ticker=ticker,
+                        target_position_pct=typed_decision.target_position_pct,
+                        current_position_pct=current_position_pct,
+                        strategy_id=strategy_id,
+                        account_id=account_id,
+                        session_id=session_id,
+                    )
+                    decision: dict[str, object] = {
+                        "target_position_pct": typed_decision.target_position_pct,
+                        "confidence": typed_decision.confidence,
+                        "attempts": typed_decision.attempts,
+                        "feature_hash": typed_decision.feature_hash,
+                    }
+                else:
+                    agent = self._agent_for(as_of)
+                    decision = agent.run(
+                        ticker,
+                        date=as_of,
+                        as_of=as_of,
+                        current_position_pct=current_position_pct,
+                        execution_enabled=True,
+                        strategy_id=strategy_id,
+                        account_id=account_id,
+                        session_id=session_id,
+                    )
+                progress = progress.model_copy(
+                    update={"decisions_completed": progress.decisions_completed + 1}
+                )
+                if observer is not None:
+                    observer.record_decision(
+                        BacktestDecisionView(
+                            sequence=decision_sequence,
+                            signal_date=as_of,
+                            execution_date=None,
+                            status="completed",
+                            target_position_pct=self._decision_float(
+                                decision, "target_position_pct"
+                            ),
+                            confidence=self._decision_float(decision, "confidence"),
+                            attempts=self._decision_int(decision, "attempts") or 1,
+                            feature_hash=self._decision_str(decision, "feature_hash"),
+                            policy_hash=policy_hash,
+                        )
+                    )
+                    observer.record_progress(progress)
             self.ledger.record_daily_snapshot(
                 date=self._to_timestamp(trading_date).strftime("%Y-%m-%d"),
                 account=self._account_snapshot_for_date(
@@ -143,6 +291,61 @@ class BacktestRunner:
                 trades=self.ledger.load_fill_records(session_id=session_id),
                 benchmark_return=self._calculate_benchmark_return(portfolio),
             ),
+        )
+
+    @staticmethod
+    def _decision_float(decision: dict, key: str) -> float | None:
+        value = decision.get(key)
+        if isinstance(value, int | float):
+            return float(value)
+        return None
+
+    @staticmethod
+    def _decision_int(decision: dict, key: str) -> int | None:
+        value = decision.get(key)
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    @staticmethod
+    def _decision_str(decision: dict, key: str) -> str | None:
+        value = decision.get(key)
+        return value if isinstance(value, str) else None
+
+    def _place_target_order(
+        self,
+        *,
+        ticker: str,
+        target_position_pct: float,
+        current_position_pct: float,
+        strategy_id: str,
+        account_id: str,
+        session_id: str,
+    ) -> None:
+        target = target_position_pct
+        if target < 0 or target > self._config.max_position_pct * 100:
+            raise BacktestRunError("typed decision violates long-only position limit")
+        delta = target - current_position_pct
+        if abs(delta) <= 1e-9:
+            return
+        account = self.broker.get_account(account_id=account_id)
+        price = self.broker.get_latest_price(ticker)
+        if price is None or price <= 0:
+            raise BacktestRunError("typed decision requires a positive reference price")
+        desired_shares = account.equity * target / 100 / price
+        position = self.broker.get_position(ticker, account_id=account_id)
+        current_shares = 0.0 if position is None else position.shares
+        quantity = abs(desired_shares - current_shares)
+        if quantity <= 1e-9:
+            return
+        self.broker.place_order(
+            Order(
+                ticker=ticker,
+                side=OrderSide.BUY if delta > 0 else OrderSide.SELL,
+                type=OrderType.MARKET,
+                qty=quantity,
+                strategy_id=strategy_id,
+                account_id=account_id,
+                session_id=session_id,
+            )
         )
 
     def _agent_for(self, as_of: str) -> BacktestAgent:

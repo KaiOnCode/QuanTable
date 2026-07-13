@@ -6,10 +6,10 @@ import pandas as pd
 import pytest
 
 from agentgraph.execution_node import create_execution_node
-from broker.backtest_runner import BacktestRunError, BacktestRunner
+from broker.backtest_runner import BacktestRunError, BacktestRunObserver, BacktestRunner
 from broker.config import BrokerConfig
 from broker.engine import MockBrokerEngine
-from broker.views import BacktestConfigView
+from broker.views import BacktestConfigView, BacktestDecisionView, BacktestProgressView
 
 
 class StubAgent:
@@ -24,6 +24,30 @@ class RecordingBacktestAgent:
     def run(self, ticker: str, **kwargs: object) -> dict[str, object]:
         self.calls.append({"ticker": ticker, **kwargs})
         return {"execution_report": "HOLD"}
+
+
+class RecordingBacktestRunObserver(BacktestRunObserver):
+    def __init__(self) -> None:
+        self.snapshots: list[tuple[pd.DataFrame, pd.DataFrame]] = []
+        self.progress: list[BacktestProgressView] = []
+        self.started: list[tuple[int, str, str]] = []
+        self.decisions: list[BacktestDecisionView] = []
+
+    def bind_input_snapshot(
+        self, target: pd.DataFrame, benchmark: pd.DataFrame
+    ) -> None:
+        self.snapshots.append((target.copy(), benchmark.copy()))
+
+    def record_progress(self, progress: BacktestProgressView) -> None:
+        self.progress.append(progress.model_copy(deep=True))
+
+    def begin_decision(
+        self, sequence: int, decision_date: str, policy_hash: str
+    ) -> None:
+        self.started.append((sequence, decision_date, policy_hash))
+
+    def record_decision(self, decision: BacktestDecisionView) -> None:
+        self.decisions.append(decision.model_copy(deep=True))
 
 
 class ScriptedExecutionAgent:
@@ -202,6 +226,48 @@ def test_backtest_runner_passes_as_of_to_each_agent_call() -> None:
         "2026-01-02T00:00:00Z",
         "2026-01-03T00:00:00Z",
     ]
+
+
+def test_backtest_runner_binds_snapshot_before_persisting_decision_progress() -> None:
+    # Given: a two-session target/benchmark window and a recorder owned outside the broker.
+    agent = RecordingBacktestAgent()
+    observer = RecordingBacktestRunObserver()
+    runner = BacktestRunner(BrokerConfig(), agent=agent)
+    prices = pd.DataFrame(
+        [
+            {"Open": 99.0, "High": 101.0, "Low": 98.0, "Close": 100.0},
+            {"Open": 109.0, "High": 111.0, "Low": 108.0, "Close": 110.0},
+        ],
+        index=pd.to_datetime(["2026-01-02", "2026-01-03"]),
+    )
+
+    # When: the runner receives an observer and immutable policy hash.
+    runner.run(
+        ticker="AAPL",
+        price_df=prices,
+        benchmark_df=_benchmark_prices(prices),
+        start_date="2026-01-02",
+        end_date="2026-01-03",
+        policy_hash="c" * 64,
+        observer=observer,
+    )
+
+    # Then: snapshot capture happens once before both decision records and final progress is exact.
+    assert len(observer.snapshots) == 1
+    assert len(agent.calls) == 2
+    assert [item[0] for item in observer.started] == [1, 2]
+    assert [decision.sequence for decision in observer.decisions] == [1, 2]
+    assert all(decision.execution_date is None for decision in observer.decisions)
+    assert all(decision.policy_hash == "c" * 64 for decision in observer.decisions)
+    assert observer.progress[-1].model_dump() == {
+        "bars_total": 2,
+        "bars_processed": 2,
+        "decisions_total": 2,
+        "decisions_eligible": 2,
+        "decisions_not_ready": 0,
+        "decisions_completed": 2,
+        "current_decision_date": "2026-01-03T00:00:00Z",
+    }
 
 
 def test_backtest_runner_builds_scoped_agent_for_each_as_of_boundary() -> None:

@@ -60,5 +60,16 @@ def test_backtest_jobs_migration_is_safe_for_concurrent_initializers(
 
     assert len(jobs) == initializer_count
     assert all(job.id == "legacy-job" for job in jobs)
+    assert all(job.contract_version == 0 for job in jobs)
     assert all(job.run_spec_json is None for job in jobs)
+    assert all(job.input_snapshot_hash is None for job in jobs)
+    assert all(job.progress_json is None for job in jobs)
     assert all(job.status == "pending" for job in jobs)
+    with sqlite3.connect(db_path) as db:
+        assert (
+            db.execute(
+                "SELECT COUNT(*) FROM schema_migrations WHERE name = ?",
+                ("20260712_backtest_contract_v1",),
+            ).fetchone()[0]
+            == 1
+        )

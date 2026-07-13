@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 import pandas as pd
 import pytest
+from pydantic import ValidationError
 
 from broker.events import BrokerEvent
 from broker.ledger import LedgerFillRecord
@@ -20,6 +21,7 @@ from broker.models import (
 from broker.views import (
     ApprovalSnapshotView,
     BacktestConfigView,
+    BacktestProvenanceView,
     BacktestResultView,
     to_broker_event_view,
     to_backtest_result_view,
@@ -31,6 +33,22 @@ from broker.views import (
     to_position_view,
     to_trade_view,
 )
+
+
+@pytest.mark.parametrize("value", ["", "A" * 64, "a" * 63, "a" * 65])
+def test_canonical_result_hash_requires_lowercase_sha256(value: str) -> None:
+    with pytest.raises(ValidationError):
+        BacktestProvenanceView(canonical_result_hash=value)
+
+
+def test_canonical_result_hash_accepts_lowercase_sha256() -> None:
+    provenance = BacktestProvenanceView(canonical_result_hash="a" * 64)
+    assert provenance.canonical_result_hash == "a" * 64
+
+
+def test_canonical_result_hash_is_required() -> None:
+    with pytest.raises(ValidationError):
+        BacktestProvenanceView.model_validate({})
 
 
 def test_order_view_maps_internal_enums_to_frontend_values() -> None:

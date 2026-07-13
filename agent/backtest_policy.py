@@ -88,8 +88,11 @@ class BacktestRunSpec(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     contract_version: Literal["backtest-run/v1"] = "backtest-run/v1"
+    engine_version: Literal["backtest-engine/v1"] = "backtest-engine/v1"
     strategy_id: str
     strategy_name: str
+    strategy_description: str = ""
+    strategy_beliefs: tuple[str, ...] = ()
     ticker: str
     date_from: date
     date_to: date
@@ -143,6 +146,8 @@ def freeze_backtest_run_spec(
     return BacktestRunSpec(
         strategy_id=request.strategy_id,
         strategy_name=str(strategy.get("name", "")),
+        strategy_description=str(strategy.get("description", "")),
+        strategy_beliefs=_strategy_beliefs(strategy),
         ticker=request.ticker,
         date_from=request.date_from,
         date_to=request.date_to,
@@ -155,6 +160,8 @@ def freeze_backtest_run_spec(
             {
                 "id": request.strategy_id,
                 "name": str(strategy.get("name", "")),
+                "description": str(strategy.get("description", "")),
+                "beliefs": _strategy_beliefs(strategy),
                 "type": strategy.get("type"),
                 "status": strategy.get("status"),
                 "tickers": strategy.get("tickers"),
@@ -266,6 +273,13 @@ def _finite_positive(strategy: dict[str, object], field: str) -> float:
     if not math.isfinite(number) or number <= 0:
         _invalid(f"{field} must be finite and greater than zero")
     return number
+
+
+def _strategy_beliefs(strategy: dict[str, object]) -> tuple[str, ...]:
+    raw = strategy.get("beliefs", [])
+    if not isinstance(raw, list) or any(not isinstance(item, str) for item in raw):
+        _invalid("beliefs must be a list of strings")
+    return tuple(cast(list[str], raw))
 
 
 def _finite_percent(strategy: dict[str, object], field: str) -> float:

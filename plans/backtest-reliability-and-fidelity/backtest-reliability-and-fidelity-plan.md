@@ -378,7 +378,7 @@ Phase 内仅并行互不写同一 owner 的 research/test lanes；`agent/backtes
 
   **Commit：** Y；`test: characterize and freeze backtest contracts`。
 
-- [ ] 3. 持久化 per-decision progress 与 secret-safe failure evidence
+- [x] 3. 持久化 per-decision progress 与 secret-safe failure evidence
 
   **问题分析：** 当前 `BacktestDecisionError` 抹掉 date/stage，failed job 只有通用 message；frequency 越高越需要知道第几个 decision 失败。没有 partial evidence 就无法区别 provider、schema、tool、timeout 与 logic failure。
 
@@ -401,7 +401,7 @@ Phase 内仅并行互不写同一 owner 的 research/test lanes；`agent/backtes
 
   **Commit：** N；与 Todo 4 一起完成 Phase 2。
 
-- [ ] 4. 用 strategy-aware typed policy executor 替换 per-date ReAct tool-call chain
+- [x] 4. 用 strategy-aware typed policy executor 替换 per-date ReAct tool-call chain
 
   **问题分析：** current loop 让模型先选择 `get_price/get_indicators`，再选择 decision tool；exact-one contract 对 provider/tool-call 行为高度敏感。模型还看不到 Strategy。修 retry 只能缓解，不解决随机性、成本、速度和可复现性。
 

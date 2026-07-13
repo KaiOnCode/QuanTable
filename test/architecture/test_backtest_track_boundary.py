@@ -81,3 +81,19 @@ def test_shared_strategies_route_does_not_import_active_or_legacy_code() -> None
         if module == "agent"
         or module.startswith(tuple(f"{name}." for name in forbidden))
     }, "SHARED strategies route must not import ACTIVE/LEGACY agent code"
+
+
+def test_production_backtest_job_path_does_not_depend_on_react_adapter() -> None:
+    source = Path("agent/backtest_jobs.py").read_text(encoding="utf-8")
+
+    assert "BacktestDecisionAdapter" not in source
+    assert "AgentLoop" not in source
+
+
+def test_route_track_rules_document_typed_backtest_exception() -> None:
+    rules = Path("server/routes/_TRACKS.md").read_text(encoding="utf-8")
+
+    assert (
+        "ACTIVE interactive routes must use `agentgraph.react_loop.AgentLoop`" in rules
+    )
+    assert "`/api/agent/backtest*` uses the typed policy executor" in rules
