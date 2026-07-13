@@ -43,6 +43,12 @@ The existing Tailwind 4px spacing scale is authoritative. Strategy forms use a c
 - **States:** shown only for quant strategies with a supported typed rule; malformed legacy data is described as unavailable, never presented as executable.
 - **Accessibility:** text labels include units and do not rely on color.
 
+### Backtest Error Notice
+
+- **Structure:** a dedicated semantic-status surface between Configuration and job/results, using the existing destructive color ramp, border, and card radius.
+- **States:** hidden when no blocking/request error exists; visible for local eligibility, validation, strategy-load, or server preflight failures.
+- **Accessibility:** `role="alert"`, an icon plus explicit heading and message, and the existing strategy-configuration link when remediation belongs there.
+
 ## 6. Motion & Interaction
 
 Use only existing shared transitions and the existing loading spinner. Conditional quant fields appear without decorative motion. Focus remains visible, keyboard submission is supported, and reduced-motion preferences are not overridden.

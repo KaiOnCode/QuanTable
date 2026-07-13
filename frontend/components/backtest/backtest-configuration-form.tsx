@@ -1,4 +1,3 @@
-import Link from "next/link";
 import type { BacktestMode, BacktestRequest, StrategyConfig } from "@/lib/types/models";
 import type { BacktestEligibility } from "@/lib/backtest-result-state";
 import { Badge } from "@/components/ui/badge";
@@ -24,9 +23,7 @@ type BacktestConfigurationFormProps = {
   readonly eligibility: BacktestEligibility;
   readonly isLoadingStrategies: boolean;
   readonly isSubmitting: boolean;
-  readonly validationError: string | null;
   readonly strategyError: string | null;
-  readonly requestError: string | null;
   readonly onStrategyChange: (strategyId: string) => void;
   readonly onTickerChange: (ticker: string) => void;
   readonly onDateFromChange: (date: string) => void;
@@ -45,7 +42,7 @@ function modeLabel(mode: BacktestMode): string {
   }
 }
 
-function eligibilityMessage(eligibility: BacktestEligibility): string {
+export function backtestEligibilityMessage(eligibility: BacktestEligibility): string {
   switch (eligibility.kind) {
     case "eligible":
       return eligibility.providerCheck === "not_required"
@@ -93,9 +90,7 @@ export function BacktestConfigurationForm({
   eligibility,
   isLoadingStrategies,
   isSubmitting,
-  validationError,
   strategyError,
-  requestError,
   onStrategyChange,
   onTickerChange,
   onDateFromChange,
@@ -104,10 +99,7 @@ export function BacktestConfigurationForm({
   onBenchmarkChange,
   onSubmit,
 }: BacktestConfigurationFormProps) {
-  const error = validationError ?? requestError;
   const canSubmit = eligibility.kind === "eligible" && !isSubmitting;
-  const configurationUrl = selectedStrategy ? `/strategies/${selectedStrategy.id}` : "/strategies";
-
   return (
     <Card>
       <CardHeader>
@@ -125,7 +117,7 @@ export function BacktestConfigurationForm({
           }}
         >
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <div className="space-y-2">
+            <div className="min-w-0 space-y-2">
               <Label htmlFor="backtest-strategy">Strategy</Label>
               <Select
                 value={selectedStrategyId}
@@ -134,9 +126,20 @@ export function BacktestConfigurationForm({
                 }}
                 disabled={isLoadingStrategies || strategyError !== null || strategies.length === 0}
               >
-                <SelectTrigger id="backtest-strategy" aria-label="Strategy">
-                  <span className="flex flex-1 truncate text-left">
-                    {selectedStrategy?.name ?? (isLoadingStrategies ? "Loading strategies" : "Select strategy")}
+                <SelectTrigger id="backtest-strategy" aria-label="Strategy" className="max-w-full">
+                  <span className="grid min-w-0 text-left">
+                    {strategies.map((strategy) => (
+                      <span
+                        key={strategy.id}
+                        aria-hidden
+                        className="invisible col-start-1 row-start-1 whitespace-nowrap"
+                      >
+                        {strategy.name}
+                      </span>
+                    ))}
+                    <span className="col-start-1 row-start-1 truncate">
+                      {selectedStrategy?.name ?? (isLoadingStrategies ? "Loading strategies" : "Select strategy")}
+                    </span>
                   </span>
                 </SelectTrigger>
                 <SelectContent>
@@ -153,7 +156,6 @@ export function BacktestConfigurationForm({
                   <Badge variant="secondary">{selectedStrategy.status}</Badge>
                 </div>
               ) : null}
-              {strategyError ? <p className="text-xs text-destructive" role="alert">{strategyError}</p> : null}
             </div>
 
             <div className="space-y-2">
@@ -223,7 +225,7 @@ export function BacktestConfigurationForm({
                     <RadioGroupItem id={`backtest-mode-${mode}`} value={mode} />
                     <span className="space-y-1">
                       <span className="block text-sm font-medium">{modeLabel(mode)}</span>
-                      <span className="block text-xs font-normal text-muted-foreground">{eligibilityMessage(eligibility)}</span>
+                      <span className="block text-xs font-normal text-muted-foreground">{backtestEligibilityMessage(eligibility)}</span>
                     </span>
                   </Label>
                 </RadioGroup>
@@ -240,13 +242,7 @@ export function BacktestConfigurationForm({
             </dl>
           ) : null}
 
-          {eligibility.kind === "ineligible" ? (
-            <p className="text-sm text-destructive" role="alert">
-              {eligibilityMessage(eligibility)} <Link className="underline underline-offset-4" href={configurationUrl}>Open strategy configuration</Link>
-            </p>
-          ) : null}
           {strategies.length === 0 && !isLoadingStrategies && strategyError === null ? <p className="text-sm text-muted-foreground">Create a strategy before starting a backtest.</p> : null}
-          {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
 
           <Button className="w-full sm:w-auto" type="submit" disabled={!canSubmit}>
             {isSubmitting ? <Loader2 className="animate-spin" /> : <Play />}

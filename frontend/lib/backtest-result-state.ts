@@ -115,6 +115,15 @@ export type BacktestJobDisplayState =
     };
 
 const VALID_FREQUENCIES = ["daily", "weekly", "monthly"] as const;
+const BACKTEST_STRATEGY_TYPE_ORDER = ["quant", "agent", "hitl"] as const;
+
+export function orderBacktestStrategies<
+  Strategy extends { readonly type: "agent" | "quant" | "hitl" },
+>(strategies: readonly Strategy[]): readonly Strategy[] {
+  return BACKTEST_STRATEGY_TYPE_ORDER.flatMap((type) =>
+    strategies.filter((strategy) => strategy.type === type),
+  );
+}
 
 export function syncBacktestFrequencySelection(
   current: BacktestFrequencySelection,

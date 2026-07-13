@@ -7,6 +7,7 @@ import {
   displayBacktestIdentifier,
   deriveBacktestEligibility,
   deriveBacktestJobState,
+  orderBacktestStrategies,
   syncBacktestFrequencySelection,
 } from "../lib/backtest-result-state.ts";
 
@@ -29,6 +30,26 @@ const VALID_QUANT_STRATEGY = {
   max_position_pct: 100,
   max_drawdown_pct: 20,
 };
+
+test("orders strategies by quant agent hitl while preserving each type order", () => {
+  // Given: the API default order interleaves strategy types.
+  const strategies = [
+    { id: "agent-new", type: "agent" },
+    { id: "hitl-new", type: "hitl" },
+    { id: "quant-new", type: "quant" },
+    { id: "agent-old", type: "agent" },
+    { id: "quant-old", type: "quant" },
+  ];
+
+  // When: the Backtest selector groups them for display.
+  const ordered = orderBacktestStrategies(strategies);
+
+  // Then: type groups follow the requested order and retain API order internally.
+  assert.deepEqual(
+    ordered.map((strategy) => strategy.id),
+    ["quant-new", "quant-old", "agent-new", "agent-old", "hitl-new"],
+  );
+});
 
 test("resets frequency from a newly selected strategy and preserves same-strategy override", () => {
   // Given: the user overrode a daily strategy to monthly.

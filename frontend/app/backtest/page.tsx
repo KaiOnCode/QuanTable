@@ -3,17 +3,26 @@
 import { Suspense, useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
-import { BacktestConfigurationForm } from "@/components/backtest/backtest-configuration-form";
+import Link from "next/link";
+import {
+  BacktestConfigurationForm,
+  backtestEligibilityMessage,
+} from "@/components/backtest/backtest-configuration-form";
 import { BacktestJobState } from "@/components/backtest/backtest-job-state";
 import { BacktestResultSurface } from "@/components/backtest/backtest-result-surface";
 import { Shell } from "@/components/layout/shell";
 import { backtestApi } from "@/lib/api/backtest";
 import { strategiesApi } from "@/lib/api/strategies";
 import { displayBacktestError, isBacktestNotFoundError } from "@/lib/backtest-api-error";
-import { backtestModeForStrategy, deriveBacktestEligibility, syncBacktestFrequencySelection } from "@/lib/backtest-result-state";
+import {
+  backtestModeForStrategy,
+  deriveBacktestEligibility,
+  orderBacktestStrategies,
+  syncBacktestFrequencySelection,
+} from "@/lib/backtest-result-state";
 import type { BacktestRequest } from "@/lib/types/models";
 import { usePersistedBacktestId } from "@/lib/use-persisted-backtest-id";
-import { LineChart } from "lucide-react";
+import { AlertTriangle, LineChart } from "lucide-react";
 
 const DEFAULT_DATE_FROM = "2024-01-02";
 const DEFAULT_DATE_TO = "2024-03-29";
@@ -40,7 +49,7 @@ function BacktestContent() {
     queryKey: ["strategies"],
     queryFn: () => strategiesApi.list(),
   });
-  const strategies = strategiesQuery.data?.items ?? [];
+  const strategies = orderBacktestStrategies(strategiesQuery.data?.items ?? []);
   const selectedStrategy = strategies.find((strategy) => strategy.id === strategyId) ?? strategies[0];
   const selectedStrategyId = selectedStrategy?.id ?? "";
   const mode = backtestModeForStrategy(selectedStrategy);
@@ -134,6 +143,13 @@ function BacktestContent() {
   const strategyError = strategiesQuery.isError ? `Failed to load strategies: ${messageFor(strategiesQuery.error)}` : null;
   const requestError = runMutation.isError ? messageFor(runMutation.error) : null;
   const actionError = replayMutation.isError ? messageFor(replayMutation.error) : requestError;
+  const eligibilityError = eligibility.kind === "ineligible"
+    ? backtestEligibilityMessage(eligibility)
+    : null;
+  const configurationNotice = strategyError ?? validationError ?? requestError ?? eligibilityError;
+  const configurationUrl = selectedStrategy
+    ? `/strategies/${selectedStrategy.id}`
+    : "/strategies";
 
   return (
     <Shell>
@@ -156,9 +172,7 @@ function BacktestContent() {
           eligibility={eligibility}
           isLoadingStrategies={strategiesQuery.isLoading}
           isSubmitting={runMutation.isPending}
-          validationError={validationError}
           strategyError={strategyError}
-          requestError={requestError}
           onStrategyChange={selectStrategy}
           onTickerChange={setTicker}
           onDateFromChange={setDateFrom}
@@ -172,6 +186,32 @@ function BacktestContent() {
           onBenchmarkChange={setBenchmark}
           onSubmit={submit}
         />
+
+        {configurationNotice ? (
+          <section
+            className="flex items-start gap-3 rounded-lg border border-destructive/40 bg-destructive/10 p-4"
+            role="alert"
+            aria-labelledby="backtest-configuration-error-title"
+          >
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-destructive/15 text-destructive">
+              <AlertTriangle className="size-4" />
+            </span>
+            <div className="min-w-0 space-y-1">
+              <h3 id="backtest-configuration-error-title" className="text-sm font-semibold text-foreground">
+                Backtest unavailable
+              </h3>
+              <p className="text-sm text-destructive">{configurationNotice}</p>
+              {eligibility.kind === "ineligible" ? (
+                <Link
+                  className="inline-flex text-sm font-medium text-destructive underline underline-offset-4"
+                  href={configurationUrl}
+                >
+                  Open strategy configuration
+                </Link>
+              ) : null}
+            </div>
+          </section>
+        ) : null}
 
         <BacktestJobState
           backtestId={backtestId}
