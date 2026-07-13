@@ -354,6 +354,7 @@ class BacktestRunDecisionExecutor:
             if spec.mode is BacktestMode.DETERMINISTIC
             else None
         )
+        self._deterministic_target_position_pct = 0.0
         if spec.mode is BacktestMode.AGENT_EXPERIMENT:
             policy = spec.policy.policy
             if not isinstance(policy, ExperimentalAgentPolicy):
@@ -376,6 +377,9 @@ class BacktestRunDecisionExecutor:
                 return 1
         raise AssertionError("unreachable policy variant")
 
+    def reset_for_run(self) -> None:
+        self._deterministic_target_position_pct = 0.0
+
     def decide(
         self,
         ticker: str,
@@ -387,8 +391,15 @@ class BacktestRunDecisionExecutor:
         features = PointInTimeFeatureSnapshot(ticker=ticker, as_of=as_of, closes=closes)
         if self._deterministic is not None:
             decision = self._deterministic.decide(
-                features, current_position_pct=current_position_pct
+                features,
+                current_position_pct=self._deterministic_target_position_pct,
             )
+            self._deterministic_target_position_pct = decision.target_position_pct
+            action = derive_position_transition(
+                current_position_pct,
+                decision.target_position_pct,
+                max_position_pct=self._spec.broker_config.max_position_pct * 100,
+            ).action
         else:
             if self._experimental is None:
                 raise AssertionError("experimental adapter is unavailable")
@@ -410,8 +421,9 @@ class BacktestRunDecisionExecutor:
                     mode="agent_experiment",
                 ),
             )
+            action = decision.action
         return BacktestTargetDecision(
-            action=decision.action,
+            action=action,
             target_position_pct=decision.target_position_pct,
             confidence=decision.confidence,
             rationale=decision.rationale,

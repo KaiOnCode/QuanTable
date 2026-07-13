@@ -2,12 +2,14 @@
 
 # Backtest Reliability, Fidelity, and Validation Plan
 
-> Status: planning complete, implementation not started  
+> Status: Complete — Todo 1-12 and final F1-F5 gates passed (2026-07-14).
 > Date: 2026-07-12  
 > Planning baseline: `dev` at `289d728869e1745d0e8e936855032e9a3341abf2`  
 > Remote baseline at diagnosis start: `HEAD == origin/dev == upstream/dev`  
 > Primary goal: 修复 daily/weekly backtest 的结构化 decision 失败，使 daily/weekly/monthly 都能可靠完成；同时把当前“能出页面但策略未生效、结果带有前视与会计偏差”的实现升级为可复现、可审计、数值可信的单标的回测。  
-> Scope lock: 本文件是下一 session 的 Goal-mode 执行依据。本轮不实现产品代码；执行时不得修改 `quick_ask/`、不得编辑 `properties.env`、不得 push/PR，除非用户另行明确授权。
+> Scope lock: 本文件是 Goal-mode 执行依据。执行时不得修改
+> `quick_ask/`、`server/routes/analyze.py` 或 `properties.env`，不得 push/PR，
+> 除非用户另行明确授权。
 
 ## TL;DR（给人读）
 
@@ -19,7 +21,7 @@
 
 **Effort:** XL，建议 6 个顺序 phase、12 个 implementation+test todos。  
 **Risk:** High，风险来自策略语义、historical timing、会计与 persisted API contract 同时变化；必须 TDD-first、numerical golden fixtures、真实 API 与 Chromium QA。  
-**下一步：** 在新的 Goal-mode session 中读取本计划，从 Todo 1 开始；只执行最早未完成 todo，所有 gate 通过后再进入下一项。
+**下一步：** 创建计划约定的本地 final closeout commit 后停止；不 push/PR。
 
 ## 1. 已确认事实与证据
 
@@ -173,7 +175,7 @@ frontend/app/backtest/page.tsx
 
 当前历史失败的精确 provider/tool 子原因无法从既有 DB 还原；本计划确认并消除 compound failure architecture，但不得在实施报告中伪称已经还原每个旧 job 的具体 provider 根因。
 
-`ContextStore` 是唯一 persistence owner。live repo 当前没有 migration registry，因此本 Goal 新建并唯一使用 `schema_migrations(name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`，本次固定 migration key=`20260712_backtest_contract_v1`；在一个 `BEGIN IMMEDIATE` transaction 内先创建 snapshot、再给 job 加 frozen references、再创建 decision FK/index，成功后插入 key，失败 rollback；启动时 key 存在即跳过，否则先用 `PRAGMA table_info` 做一致性检查，禁止再建 `PRAGMA user_version` 或第二套 registry。`ContextStore._get_conn()` 每个 connection 都执行 `PRAGMA foreign_keys=ON` 并断言返回 1；migration/restart tests 必须证明 invalid FK insert 失败、job delete 会 cascade decisions，但 snapshot 因 retention contract不会被 cascade 删除：
+`ContextStore` 是唯一 persistence owner。live repo 当前没有 migration registry，因此本 Goal 新建并唯一使用 `schema_migrations(name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`，本次固定 migration key=`20260712_backtest_contract_v1`；在一个 `BEGIN IMMEDIATE` transaction 内先创建 snapshot、再给 job 加 frozen references、再创建 decision FK/index，成功后插入 key，失败 rollback；marker 只控制主 migration transaction 是否重放，禁止再建 `PRAGMA user_version` 或第二套 registry。即使 marker 已存在，启动仍会幂等补齐后续加入的 `action/rationale` columns，再用 `PRAGMA table_info` 校验完整 schema。`ContextStore._get_conn()` 每个 connection 都执行 `PRAGMA foreign_keys=ON` 并断言返回 1；migration/restart tests 必须证明 invalid FK insert 失败、job delete 会 cascade decisions，但 snapshot 因 retention contract不会被 cascade 删除：
 
 ```sql
 CREATE TABLE backtest_input_snapshots (
@@ -200,6 +202,8 @@ CREATE TABLE backtest_decisions (
   attempts INTEGER NOT NULL,
   target_position_pct REAL,
   confidence REAL,
+  action TEXT,
+  rationale TEXT,
   feature_hash TEXT,
   policy_hash TEXT NOT NULL,
   error_code TEXT,
@@ -531,7 +535,7 @@ Phase 内仅并行互不写同一 owner 的 research/test lanes；`agent/backtes
   - `POST /api/agent/backtest` preflight mapping 固定：missing strategy=404；inactive/ineligible/ticker/config/request=422；experimental provider/key/capability unavailable=503；成功同步冻结 spec 后返回 202 `{id,status:"pending",contract_version:1}`。202 后 data/decision/execution/storage/interruption 不改 HTTP 状态，poll GET 返回 200 terminal job envelope。
   - `GET /api/agent/backtest/{job_id}` 固定 envelope：顶层 `id/status/request/config/progress/decisions/result/error/created_at/updated_at`；`progress={bars_total,bars_processed,decisions_total,decisions_eligible,decisions_not_ready,decisions_completed,current_decision_date}`；仅 failed 时 `error={code,stage,decision_date,attempt,message}`，仅 terminal success 时 `result={outcome,warnings,metrics,equity,orders,fills,closed_trades,end_position,provenance}`。不存在 job=404，非法 ID=422。
   - `POST /api/agent/backtest/{job_id}/replay` 只复用 frozen spec+input snapshot，成功 202 返回新 job identity；legacy/missing snapshot=409 `replay_unavailable`。普通 page Run 仍是重新 resolve/fetch 的 create，不得把两种语义都叫 Retry。
-  - 保留 `GET /api/agent/backtest/{job_id}/trades.csv` legacy fills columns `date,ticker,side,quantity,price,realized_pl,equity_after`，但 UI 标为 Executions；新增 `GET .../closed-trades.csv` columns `entry_date,exit_date,ticker,quantity,entry_vwap,exit_vwap,net_realized_pl,fees,slippage,holding_period_trading_days`，`GET .../decisions.csv` columns `sequence,signal_date,execution_date,status,target_position_pct,confidence,attempts,error_code`，`GET .../decisions.json` 返回同字段 JSON array。CSV=`text/csv; charset=utf-8`，JSON=`application/json`，下载均有 sanitized `Content-Disposition: attachment; filename="backtest-{id}-<kind>.<ext>"`；非 terminal/export unavailable=409。
+  - 保留 `GET /api/agent/backtest/{job_id}/trades.csv` legacy fills columns `date,ticker,side,quantity,price,realized_pl,equity_after`，但 UI 标为 Executions；新增 `GET .../closed-trades.csv` columns `entry_date,exit_date,ticker,quantity,entry_vwap,exit_vwap,net_realized_pl,fees,slippage,holding_period_trading_days`，`GET .../decisions.csv` columns `sequence,signal_date,execution_date,status,target_position_pct,confidence,action,rationale,attempts,error_code`，`GET .../decisions.json` 返回同字段 JSON array。CSV=`text/csv; charset=utf-8`，JSON=`application/json`，下载均有 sanitized `Content-Disposition: attachment; filename="backtest-{id}-<kind>.<ext>"`；非 terminal/export unavailable=409。
   - OpenAPI/docs 覆盖 error codes：`strategy_not_found`, `strategy_inactive`, `strategy_not_backtestable`, `strategy_type_unsupported`, `ticker_not_allowed`, `strategy_config_invalid`, `agent_model_missing`, `provider_capability_unsupported`, `insufficient_history`, `decision_transient_exhausted`, `decision_schema_invalid`, `execution_failed`, `storage_corrupt`, `interrupted`, `replay_unavailable`。
   - Strategy create/update boundary 同步用 discriminated typed quant policy models验证 rule/version/params；非法 payload 422，store 不再接受这些字段的 arbitrary dict。
   - API response/log secret sentinel tests。
@@ -572,7 +576,7 @@ Phase 内仅并行互不写同一 owner 的 research/test lanes；`agent/backtes
 
   **Commit：** Y；`feat: expose trustworthy backtest diagnostics and results`。
 
-- [ ] 11. 固化 deterministic replay、canonical result hash 与 sample-truthfulness
+- [x] 11. 固化 deterministic replay、canonical result hash 与 sample-truthfulness
 
   **问题分析：** 即使 simulation 正确，单窗口、单 ticker、少量 trades 仍不能证明策略有效。当前 Goal 能交付 engine fidelity 与 decision reproducibility；out-of-sample robustness 需要另一个明确选择 split/grid/objective/seed 的计划，不能在此保留研究提纲。
 
@@ -594,7 +598,7 @@ Phase 内仅并行互不写同一 owner 的 research/test lanes；`agent/backtes
 
   **Commit：** N；与 Todo 12 完成最终 closeout。
 
-- [ ] 12. 运行 frequency acceptance matrix、numerical oracle、真实 API/Browser 与 final reviews
+- [x] 12. 运行 frequency acceptance matrix、numerical oracle、真实 API/Browser 与 final reviews
 
   **问题分析：** 只有所有层同时通过，才能避免再次出现“测试绿、页面绿、经济语义错”。
 
@@ -616,15 +620,22 @@ Phase 内仅并行互不写同一 owner 的 research/test lanes；`agent/backtes
 
   **Evidence：** `.omo/evidence/backtest-reliability-and-fidelity/final/`。
 
+  **Closeout（2026-07-14）：** full backend suite `642 passed, 1 skipped, 1 warning`；
+  deterministic 2-year daily/weekly/monthly 各 10 次 matrix、original 2024
+  `60/12/2` cadence、literal numerical oracle、failure/persistence matrix、真实
+  Uvicorn/restart/export 与 production Chromium desktop/mobile 全部通过。五条
+  review-work lanes、两条 visual-qa lanes 与 F1-F5 均为 unconditional PASS。
+  synthetic fixture 不作为可信绩效；OOS robustness 仍明确为 `not evaluated`。
+
   **Commit：** Y；`fix: make backtests reliable reproducible and numerically sound`。本地 commit 后停止；不 push。
 
 ## 7. Final verification wave
 
-- [ ] F1 **Plan compliance audit**：逐条核对 12 todos、Must NOT、frequency/timing/eligibility/metrics contract；拒绝用 experimental success 代替 deterministic core。
-- [ ] F2 **Code quality + architecture**：检查 ACTIVE/SHARED boundaries、typed models、migration、concurrency、secret safety、无重复 owners/compat shims。
-- [ ] F3 **Hands-on QA**：真实 FastAPI + production Chromium；original reproduction + deterministic 2-year matrix；下载/重启/mobile/console。
-- [ ] F4 **Numerical and quant review**：独立手算 fill/cash/equity/P&L/benchmark/drawdown/Sharpe/sample warnings；检查 no-lookahead、warm-up、adjustment、OOS。
-- [ ] F5 **Scope fidelity/security**：确认 `quick_ask/`、`server/routes/analyze.py`、`properties.env` 未变；无 secrets、data DB、runtime artifacts、provider raw body；无 push。
+- [x] F1 **Plan compliance audit**：逐条核对 12 todos、Must NOT、frequency/timing/eligibility/metrics contract；拒绝用 experimental success 代替 deterministic core。
+- [x] F2 **Code quality + architecture**：检查 ACTIVE/SHARED boundaries、typed models、migration、concurrency、secret safety、无重复 owners/compat shims。
+- [x] F3 **Hands-on QA**：真实 FastAPI + production Chromium；original reproduction + deterministic 2-year matrix；下载/重启/mobile/console。
+- [x] F4 **Numerical and quant review**：独立手算 fill/cash/equity/P&L/benchmark/drawdown/Sharpe/sample warnings；检查 no-lookahead、warm-up、adjustment、OOS。
+- [x] F5 **Scope fidelity/security**：确认 `quick_ask/`、`server/routes/analyze.py`、`properties.env` 未变；无 secrets、data DB、runtime artifacts、provider raw body；无 push。
 
 F5 必须把 session 开始记录的 `BASELINE_HEAD` 到 `HEAD`、staged、unstaged、untracked 四类路径合并检查，不能用 phase commit 后为空的单次 `git diff` 代替。
 

@@ -1525,12 +1525,6 @@ def test_winning_closed_trade_has_json_safe_undefined_profit_ratios() -> None:
     [
         (
             pd.DataFrame(
-                columns=pd.Index(["Open", "High", "Low", "Close"]),
-            ),
-            "benchmark_start_unavailable",
-        ),
-        (
-            pd.DataFrame(
                 [{"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.0}],
                 index=pd.to_datetime(["2026-01-02"]),
             ),
@@ -1581,6 +1575,31 @@ def test_backtest_runner_marks_unavailable_benchmark_as_null_without_shortening_
         assert all(point.benchmark_equity is None for point in result.view.series)
     else:
         assert result.view.series[-1].benchmark_equity is None
+
+
+def test_backtest_runner_rejects_zero_overlap_benchmark_without_shrinking_target() -> (
+    None
+):
+    # Given: valid target and benchmark windows have no shared evaluation session.
+    target = pd.DataFrame(
+        {"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.0},
+        index=pd.to_datetime(["2026-01-02", "2026-01-05"]),
+    )
+    benchmark = pd.DataFrame(
+        {"Open": 400.0, "High": 401.0, "Low": 399.0, "Close": 400.0},
+        index=pd.to_datetime(["2026-01-03", "2026-01-04"]),
+    )
+    runner = BacktestRunner(BrokerConfig(), agent=RecordingBacktestAgent())
+
+    # When / Then: total non-overlap fails instead of yielding a nullable success.
+    with pytest.raises(BacktestRunError, match="overlapping evaluation session"):
+        runner.run(
+            ticker="AAPL",
+            price_df=target,
+            benchmark_df=benchmark,
+            start_date="2026-01-02",
+            end_date="2026-01-05",
+        )
 
 
 def test_backtest_runner_keeps_an_unaffordable_benchmark_entirely_in_cash() -> None:
@@ -1661,6 +1680,11 @@ def test_backtest_runner_forces_long_only_for_generic_agent_orders() -> None:
     assert result.view.executions == []
     assert result.view.orders[0].status == "rejected"
     assert result.view.orders[0].reason == "risk_check_failed"
+    assert result.view.orders[0].ticker == "AAPL"
+    assert result.view.orders[0].side == "SELL"
+    assert result.view.orders[0].quantity == 10
+    assert result.view.orders[0].order_type == "MARKET"
+    assert result.view.orders[0].limit_price is None
     assert broker.get_orders()[0].side is OrderSide.SELL
     assert result.view.end_position.shares == pytest.approx(0.0)
 

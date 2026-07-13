@@ -650,10 +650,29 @@ and only these top-level fields:
 
 `result` is non-null only for terminal success and contains exactly `outcome`,
 `warnings`, `no_trade_reasons`, `metrics`, `equity`, `orders`, `fills`, `closed_trades`,
-`end_position`, and `provenance`. `error` is non-null only for failed jobs and
+`end_position`, `snapshot`, and `provenance`. `error` is non-null only for failed jobs and
 has safe `code`, `stage`, `decision_date`, `attempt`, and `message` fields.
 Pending/running jobs and failed jobs have `result: null`; completed jobs have
 `error: null`.
+
+Each decision exposes exactly `sequence`, `signal_date`, `execution_date`,
+`status`, `attempts`, `target_position_pct`, `confidence`, `action`, `rationale`,
+`feature_hash`, `policy_hash`, `error_code`, and `error_stage`. `action` is the
+derived transition implied by the unique `target_position_pct` position truth.
+`rationale` is persisted audit evidence but is excluded from the economic hash.
+Each actual broker order exposes `order_id`, `status`, `signal_date`,
+`execution_date`, `reason`, `ticker`, `side`, `quantity`, `order_type`, and
+`limit_price`; operational `order_id` is excluded from the economic hash.
+
+For a v1 completed read, the server verifies the stored canonical result hash,
+the bound frozen input snapshot, and the separately persisted decision
+projection before it exposes any completed payload. Snapshot verification
+includes bounded decompression, byte/hash/row metadata, normalized provenance,
+and executable target/benchmark frame semantics. If any of those checks, the
+canonical configuration binding, or the decision projection comparison fails,
+the read is fail-closed: it projects `status: "failed"`,
+`error.code: "storage_corrupt"`, `result: null`, and `decisions: []` rather
+than serving partly trusted performance evidence.
 
 **Terminal-success response (exact JSON shape):**
 
@@ -725,7 +744,21 @@ Pending/running jobs and failed jobs have `result: null`; completed jobs have
     "decisions_completed": 1,
     "current_decision_date": "2024-01-02T00:00:00Z"
   },
-  "decisions": [],
+  "decisions": [{
+    "sequence": 1,
+    "signal_date": "2024-01-02T00:00:00Z",
+    "execution_date": "2024-01-03T00:00:00Z",
+    "status": "completed",
+    "attempts": 1,
+    "target_position_pct": 80.0,
+    "confidence": 0.9,
+    "action": "BUY",
+    "rationale": "Momentum threshold crossed",
+    "feature_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "policy_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "error_code": null,
+    "error_stage": null
+  }],
   "result": {
     "outcome": "completed_no_trades",
     "warnings": ["completed_with_no_trades_not_trusted_performance"],
@@ -760,7 +793,18 @@ Pending/running jobs and failed jobs have `result: null`; completed jobs have
       "average_daily_gross_exposure_pct": 0.0
     },
     "equity": [],
-    "orders": [],
+    "orders": [{
+      "order_id": "operational-order-id",
+      "status": "executed",
+      "signal_date": "2024-01-02T00:00:00Z",
+      "execution_date": "2024-01-03T00:00:00Z",
+      "reason": "",
+      "ticker": "AAPL",
+      "side": "BUY",
+      "quantity": 10.0,
+      "order_type": "MARKET",
+      "limit_price": null
+    }],
     "fills": [],
     "closed_trades": [],
     "end_position": {
@@ -770,6 +814,10 @@ Pending/running jobs and failed jobs have `result: null`; completed jobs have
       "average_cost_basis": 0.0,
       "unrealized_pnl": 0.0,
       "liquidated_at_end": false
+    },
+    "snapshot": {
+      "compressed_bytes": 512,
+      "uncompressed_bytes": 1024
     },
     "provenance": {
       "strategy_snapshot_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -793,12 +841,53 @@ legacy job, a missing snapshot, or corrupt frozen snapshot envelope returns
 `409 replay_unavailable`. A normal `POST /api/agent/backtest` is distinct: it
 always resolves the current Strategy and refetches data.
 
+Replay validates the complete frozen envelope before it allocates the new job.
+It checks the bounded payload, metadata, provenance, and executable frames;
+there is no accepted replay that later discovers its source snapshot was
+unusable.
+
+A verified v1 completed result exposes `result.snapshot.compressed_bytes` and
+`result.snapshot.uncompressed_bytes` from the persisted, verified input
+snapshot record. A legacy unverified completed result exposes `snapshot: null`.
+These byte counts are storage evidence only and are excluded from the canonical
+economic result hash.
+
+#### Deterministic replay integrity and sample truthfulness
+
+For a deterministic frozen replay, `result.provenance.canonical_result_hash`
+is the SHA-256 of a versioned canonical economic comparison payload. It binds
+the frozen run-contract and engine versions; policy, strategy-snapshot, and
+data-snapshot hashes; the final economic configuration; ordered decision,
+order, fill, and closed-trade economics; daily equity; metrics; outcome; and
+warnings. Historical signal, execution, fill, entry, and exit session dates
+remain in that comparison because they are economic evidence.
+
+The payload deliberately excludes job, account, session, order, fill, and
+decision identities; strategy names and identifiers; agent-model and
+strategy-execution-frequency metadata; the duplicate `frequency`,
+`commission_bps`, and `slippage_bps` display aliases;
+created/updated/provider-fetch/runtime timestamps; progress and retry metadata;
+derived display counts; and the internal legacy `trades` alias. The economic
+configuration allowlist contains the ticker and evaluation dates, run
+frequency and benchmark, mode and broker economics, provider/adjustment and
+corporate-action contract, risk constants, drawdown contract, and verified
+sample count and boundary dates. Those operational details are expected to
+differ between jobs and cannot be used to make a replay appear stable. Equal
+hashes demonstrate frozen-snapshot replay fidelity only. They do not establish
+prediction accuracy, out-of-sample robustness, or a trustworthy performance conclusion.
+The UI therefore always labels out-of-sample robustness as `not evaluated`,
+and `completed_no_trades` remains explicitly untrusted even when its replay
+hash is stable.
+
 ### Export endpoints
 
 Exports are available only for terminal completed jobs. Unknown IDs return
 `404`; pending, running, failed, and malformed/unavailable exports return
 `409 export_unavailable`. Every filename is derived from the validated ID and
 uses `Content-Disposition: attachment; filename="backtest-{id}-<kind>.<ext>"`.
+The same completed-read verification applies to every export: a stored result
+that fails integrity verification is projected as `storage_corrupt` and cannot
+be downloaded.
 
 - `GET /api/agent/backtest/{backtest_id}/trades.csv` uses
   `text/csv; charset=utf-8` with
@@ -809,7 +898,7 @@ uses `Content-Disposition: attachment; filename="backtest-{id}-<kind>.<ext>"`.
   `entry_date,exit_date,ticker,quantity,entry_vwap,exit_vwap,net_realized_pl,fees,slippage,holding_period_trading_days`.
 - `GET /api/agent/backtest/{backtest_id}/decisions.csv` uses
   `text/csv; charset=utf-8` with
-  `sequence,signal_date,execution_date,status,target_position_pct,confidence,attempts,error_code`.
+  `sequence,signal_date,execution_date,status,target_position_pct,confidence,action,rationale,attempts,error_code`.
 - `GET /api/agent/backtest/{backtest_id}/decisions.json` uses
   `application/json` and returns a JSON array with the same decision fields in
   sequence order.
@@ -870,7 +959,10 @@ sample warnings `insufficient_evaluation_bars_lt_63`,
 
 Benchmark comparison uses the target trading calendar without changing target
 decisions: benchmark close values are left-joined to target dates and only
-past values may forward-fill for at most five target sessions. If the first
+past values may forward-fill for at most five target sessions. If target and
+benchmark have zero overlapping evaluation sessions, preparation fails with
+typed `market_data_unavailable` at stage `data`. Partial overlap never shrinks
+the target schedule. If the first
 target date has no benchmark bar, `benchmark_return_pct` and
 `excess_return_pct` are `null` with `benchmark_start_unavailable`; a later
 stale gap produces `benchmark_stale_unavailable` and the same nullable summary

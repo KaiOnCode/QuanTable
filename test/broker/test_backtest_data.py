@@ -185,22 +185,20 @@ def test_dataset_preparer_returns_distinct_target_and_benchmark_windows(
     assert list(dataset.benchmark["Close"]) == [400.0, 404.0]
 
 
-def test_dataset_preparer_keeps_target_window_when_benchmark_is_unavailable(
+def test_dataset_preparer_fails_when_benchmark_has_no_overlapping_session(
     tmp_path,
 ) -> None:
     store = MarketDataStore(str(tmp_path / "market.db"))
     _seed_prices(store, "AAPL", [("2026-01-02", 100.0), ("2026-01-03", 110.0)])
 
-    dataset = BacktestDatasetPreparer(market_store=store).prepare(
-        ticker="AAPL",
-        benchmark_symbol="SPY",
-        date_from="2026-01-02",
-        date_to="2026-01-03",
-    )
-
-    assert list(dataset.target["Close"]) == [100.0, 110.0]
-    assert dataset.benchmark.empty
-    assert list(dataset.benchmark.columns) == ["Open", "High", "Low", "Close", "Volume"]
+    # When / Then: zero benchmark overlap is a typed data failure.
+    with pytest.raises(BacktestDataError, match="overlapping evaluation session"):
+        BacktestDatasetPreparer(market_store=store).prepare(
+            ticker="AAPL",
+            benchmark_symbol="SPY",
+            date_from="2026-01-02",
+            date_to="2026-01-03",
+        )
 
 
 def test_dataset_preparer_preloads_missing_target_and_benchmark_windows(

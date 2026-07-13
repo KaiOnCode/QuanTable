@@ -213,6 +213,10 @@ class BacktestDatasetPreparer:
         benchmark = self._window(benchmark_symbol, start, end)
         if target.empty:
             raise BacktestDataError("target requires historical OHLCV")
+        if target.index.intersection(benchmark.index).empty:
+            raise BacktestDataError(
+                "target and benchmark require an overlapping evaluation session"
+            )
         target_history = self._history_window(
             ticker,
             start,

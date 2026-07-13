@@ -225,6 +225,9 @@ class BacktestRunner:
         if observer is not None:
             observer.bind_input_snapshot(history, snapshot_benchmark)
         self.broker.reset_account(account_id)
+        reset_for_run = getattr(self._decision_executor, "reset_for_run", None)
+        if callable(reset_for_run):
+            reset_for_run()
         session_id = f"backtest-{ticker.lower()}-{uuid4().hex[:8]}"
         self.ledger.record_initial_capital(
             self._config.initial_cash,
@@ -340,7 +343,20 @@ class BacktestRunner:
                         closes=closes,
                         current_position_pct=current_position_pct,
                     )
-                    typed_actions.append(typed_decision.action)
+                    derived_action: Literal["BUY", "SELL", "HOLD"] = (
+                        "HOLD"
+                        if math.isclose(
+                            typed_decision.target_position_pct,
+                            current_position_pct,
+                            abs_tol=1e-9,
+                        )
+                        else (
+                            "BUY"
+                            if typed_decision.target_position_pct > current_position_pct
+                            else "SELL"
+                        )
+                    )
+                    typed_actions.append(derived_action)
                     pending_intent = self._target_intent(
                         sequence=decision_sequence,
                         signal_time=execution_time,
@@ -350,6 +366,8 @@ class BacktestRunner:
                         session_id=session_id,
                     )
                     decision: dict[str, object] = {
+                        "action": derived_action,
+                        "rationale": typed_decision.rationale,
                         "target_position_pct": typed_decision.target_position_pct,
                         "confidence": typed_decision.confidence,
                         "attempts": typed_decision.attempts,
@@ -417,6 +435,8 @@ class BacktestRunner:
                         decision, "target_position_pct"
                     ),
                     confidence=self._decision_float(decision, "confidence"),
+                    action=self._decision_action(decision),
+                    rationale=self._decision_str(decision, "rationale"),
                     attempts=self._decision_int(decision, "attempts") or 1,
                     feature_hash=self._decision_str(decision, "feature_hash"),
                     policy_hash=policy_hash,
@@ -570,6 +590,18 @@ class BacktestRunner:
     def _decision_str(decision: dict, key: str) -> str | None:
         value = decision.get(key)
         return value if isinstance(value, str) else None
+
+    @staticmethod
+    def _decision_action(
+        decision: dict,
+    ) -> Literal["BUY", "SELL", "HOLD"] | None:
+        actions: dict[str, Literal["BUY", "SELL", "HOLD"]] = {
+            "BUY": "BUY",
+            "SELL": "SELL",
+            "HOLD": "HOLD",
+        }
+        value = decision.get("action")
+        return actions.get(value) if isinstance(value, str) else None
 
     @staticmethod
     def _with_execution_dates(
@@ -768,6 +800,11 @@ class BacktestRunner:
                     signal_date=order.created_at.isoformat(),
                     execution_date=execution_date,
                     reason=("risk_check_failed" if status == "rejected" else ""),
+                    ticker=order.ticker,
+                    side=order.side.value,
+                    quantity=order.qty,
+                    order_type=order.type.value,
+                    limit_price=order.limit_price,
                 )
             )
         return evidence
@@ -829,6 +866,10 @@ class BacktestRunner:
         benchmark = benchmark_df.loc[start_date:end_date].copy()
         if target.empty:
             raise BacktestRunError("target requires non-empty price window")
+        if target.index.intersection(benchmark.index).empty:
+            raise BacktestRunError(
+                "target and benchmark require an overlapping evaluation session"
+            )
         return target, benchmark
 
     def _validate_price_frame(self, frame: pd.DataFrame, label: str) -> None:

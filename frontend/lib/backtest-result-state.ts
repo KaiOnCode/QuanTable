@@ -1,6 +1,14 @@
-import type { BacktestMode as BacktestModeContract } from "./types/models";
+import type {
+  BacktestFrequency,
+  BacktestMode as BacktestModeContract,
+} from "./types/models";
 
 export type BacktestMode = BacktestModeContract;
+
+export type BacktestFrequencySelection = {
+  readonly strategyId: string;
+  readonly frequency: BacktestFrequency;
+};
 
 export type BacktestEligibility =
   | {
@@ -108,11 +116,24 @@ export type BacktestJobDisplayState =
 
 const VALID_FREQUENCIES = ["daily", "weekly", "monthly"] as const;
 
+export function syncBacktestFrequencySelection(
+  current: BacktestFrequencySelection,
+  strategy: (BacktestStrategyInput & { readonly id: string }) | undefined,
+): BacktestFrequencySelection {
+  if (strategy === undefined || strategy.id === current.strategyId) {
+    return current;
+  }
+  const frequency = hasValidFrequency(strategy.execution_frequency)
+    ? strategy.execution_frequency
+    : "daily";
+  return { strategyId: strategy.id, frequency };
+}
+
 function isFiniteNumber(value: number): boolean {
   return Number.isFinite(value);
 }
 
-function hasValidFrequency(value: string): boolean {
+function hasValidFrequency(value: string): value is BacktestFrequency {
   return VALID_FREQUENCIES.some((frequency) => frequency === value);
 }
 
@@ -120,7 +141,6 @@ function hasValidSharedConfiguration(strategy: BacktestStrategyInput): boolean {
   return (
     strategy.tickers.length > 0 &&
     strategy.tickers.every((ticker) => /^[A-Z][A-Z0-9.-]{0,14}$/.test(ticker)) &&
-    strategy.beliefs.length > 0 &&
     hasValidFrequency(strategy.execution_frequency) &&
     isFiniteNumber(strategy.initial_capital) &&
     strategy.initial_capital > 0 &&
@@ -268,6 +288,16 @@ export function deriveBacktestEligibility(
     case "hitl":
       return { kind: "ineligible", code: "strategy_type_unsupported" };
   }
+}
+
+export function displayBacktestIdentifier(value: string): string {
+  return value || "unavailable";
+}
+
+export function backtestExecutionTimingLabel(value: string): string {
+  return value === "next_open"
+    ? "Signal at close, fill next open"
+    : "Unsupported legacy timing; canonical v1 uses next open";
 }
 
 function runningState(

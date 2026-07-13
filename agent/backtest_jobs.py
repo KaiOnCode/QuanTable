@@ -58,6 +58,10 @@ from broker.views import (
 )
 from dataflow.store import MarketDataStore
 from dataflow.history import DataServiceHistoryLoader
+from storage.backtest_snapshot import (
+    CanonicalSnapshotEnvelope,
+    decode_canonical_snapshot,
+)
 from storage.store import (
     BacktestDecisionEvidence,
     BacktestInputSnapshotContent,
@@ -83,7 +87,30 @@ type BacktestJobErrorCode = Literal[
 ]
 
 _SESSION_TIMESTAMP: Final = re.compile(r"^\d{4}-\d{2}-\d{2}T00:00:00Z$")
+_SESSION_DATE: Final = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _SHA256_HEX: Final = re.compile(r"^[0-9a-f]{64}$")
+_MAX_FROZEN_SNAPSHOT_BYTES: Final = 16 * 1024 * 1024
+_FROZEN_SNAPSHOT_PROVENANCE_KEYS: Final = frozenset(
+    {
+        "actions",
+        "auto_adjust",
+        "corporate_actions_mode",
+        "date_from",
+        "date_to",
+        "end_exclusive",
+        "interval",
+        "library_version",
+        "lookback_days",
+        "provider",
+        "provider_buffer_days",
+        "provider_end_semantics",
+        "provider_timezone",
+        "row_adjustment_modes",
+        "ticker",
+        "timezone_normalization",
+        "warmup_bars",
+    }
+)
 
 
 class BacktestRequest(BaseModel):
@@ -122,6 +149,13 @@ class BacktestJobAcceptedResponse(BaseModel):
     contract_version: Literal[1] = 1
 
 
+class BacktestSnapshotEvidenceView(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    compressed_bytes: int = Field(ge=0)
+    uncompressed_bytes: int = Field(ge=0)
+
+
 class BacktestJobResult(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -134,6 +168,7 @@ class BacktestJobResult(BaseModel):
     fills: list[TradeView] = Field(default_factory=list)
     closed_trades: list[ClosedTradeView] = Field(default_factory=list)
     end_position: BacktestEndPositionView
+    snapshot: BacktestSnapshotEvidenceView | None = None
     provenance: BacktestProvenanceView
 
 
@@ -256,7 +291,7 @@ class ActiveBacktestJobRunner:
         snapshot: BacktestInputSnapshotRecord,
         observer: BacktestRunObserver,
     ) -> BacktestResultView:
-        target_history, benchmark_history = _replay_snapshot_frames(snapshot)
+        target_history, benchmark_history = _replay_snapshot_frames(snapshot, spec)
         target = target_history.loc[
             spec.date_from.isoformat() : spec.date_to.isoformat()
         ].copy()
@@ -265,9 +300,18 @@ class ActiveBacktestJobRunner:
         ].copy()
         if target.empty:
             raise BacktestDataError("frozen backtest snapshot has no target window")
-        warmup_bar_count = int(
-            (target_history.index < pd.Timestamp(spec.date_from, tz="UTC")).sum()
-        )
+        data_provenance = target_history.attrs.get("backtest_data_provenance")
+        if not isinstance(data_provenance, dict):
+            raise BacktestDataError("frozen backtest snapshot has no data provenance")
+        warmup_bar_count = data_provenance.get("warmup_bars")
+        if (
+            not isinstance(warmup_bar_count, int)
+            or isinstance(warmup_bar_count, bool)
+            or warmup_bar_count < 0
+        ):
+            raise BacktestDataError(
+                "frozen backtest snapshot has invalid data provenance"
+            )
         return self._run_dataset(
             spec,
             observer,
@@ -332,9 +376,6 @@ class ActiveBacktestJobRunner:
             data_snapshot_hash
         ):
             raise BacktestObservabilityError()
-        canonical_result_hash = _canonical_economic_result_hash(
-            spec, result, data_snapshot_hash=data_snapshot_hash
-        )
         config = BacktestConfigView(
             ticker=spec.ticker,
             start_date=spec.date_from.isoformat(),
@@ -382,63 +423,168 @@ class ActiveBacktestJobRunner:
             sample_first_date=str(target.index[0])[:10],
             sample_last_date=str(target.index[-1])[:10],
         )
-        return result.model_copy(
+        finalized_result = result.model_copy(
             update={
                 "outcome": (
                     "completed" if result.closed_trades else "completed_no_trades"
                 ),
                 "config": config,
                 "warnings": warnings,
-                "provenance": BacktestProvenanceView(
-                    strategy_snapshot_hash=spec.strategy_snapshot_hash,
-                    policy_hash=spec.policy_hash,
-                    data_snapshot_hash=data_snapshot_hash,
-                    canonical_result_hash=canonical_result_hash,
-                ),
             }
+        )
+        return _with_bound_result_provenance(
+            spec,
+            finalized_result,
+            data_snapshot_hash=data_snapshot_hash,
         )
 
 
-def _validate_replay_snapshot_envelope(snapshot: BacktestInputSnapshotRecord) -> None:
+def _frozen_snapshot_payload(
+    snapshot: BacktestInputSnapshotRecord,
+) -> dict[str, object]:
+    if (
+        snapshot.schema_version != 1
+        or snapshot.codec != "gzip-json-v1"
+        or snapshot.compressed_bytes != len(snapshot.payload)
+        or snapshot.uncompressed_bytes < 0
+        or snapshot.uncompressed_bytes > _MAX_FROZEN_SNAPSHOT_BYTES
+        or _SHA256_HEX.fullmatch(snapshot.content_hash) is None
+    ):
+        raise BacktestDataError("frozen backtest snapshot is invalid")
     try:
-        canonical = gzip.decompress(snapshot.payload)
-        if hashlib.sha256(canonical).hexdigest() != snapshot.content_hash:
-            raise ValueError
+        canonical = decode_canonical_snapshot(
+            CanonicalSnapshotEnvelope(
+                payload=snapshot.payload,
+                compressed_bytes=snapshot.compressed_bytes,
+                uncompressed_bytes=snapshot.uncompressed_bytes,
+                content_hash=snapshot.content_hash,
+                maximum_uncompressed_bytes=_MAX_FROZEN_SNAPSHOT_BYTES,
+            )
+        )
         payload = json.loads(canonical)
-    except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError) as error:
+    except (
+        RuntimeError,
+        json.JSONDecodeError,
+    ) as error:
         raise BacktestDataError("frozen backtest snapshot is invalid") from error
     if not isinstance(payload, dict) or payload.get("schema_version") != 1:
         raise BacktestDataError("frozen backtest snapshot is invalid")
+    return payload
 
 
 def _replay_snapshot_frames(
     snapshot: BacktestInputSnapshotRecord,
+    spec: BacktestRunSpec,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    try:
-        canonical = gzip.decompress(snapshot.payload)
-        if hashlib.sha256(canonical).hexdigest() != snapshot.content_hash:
-            raise ValueError
-        payload = json.loads(canonical)
-    except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError) as error:
-        raise BacktestDataError("frozen backtest snapshot is invalid") from error
-    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
-        raise BacktestDataError("frozen backtest snapshot is invalid")
+    payload = _frozen_snapshot_payload(snapshot)
     target = _replay_snapshot_frame(payload.get("target"))
     benchmark = _replay_snapshot_frame(payload.get("benchmark"), allow_empty=True)
+    if (
+        len(target) != snapshot.row_count_target
+        or len(benchmark) != snapshot.row_count_benchmark
+    ):
+        raise BacktestDataError("frozen backtest snapshot is invalid")
     provenance = payload.get("data_provenance")
     if not isinstance(provenance, dict):
         raise BacktestDataError("frozen backtest snapshot has no data provenance")
     for name, frame in (("target", target), ("benchmark", benchmark)):
-        value = provenance.get(name)
-        if not isinstance(value, dict):
-            raise BacktestDataError("frozen backtest snapshot has no data provenance")
+        value = _validated_replay_snapshot_provenance(
+            provenance.get(name),
+            spec=spec,
+            ticker=spec.ticker if name == "target" else spec.benchmark,
+            allow_missing_adjustment_modes=frame.empty,
+        )
         frame.attrs["backtest_data_provenance"] = {
             key: item for key, item in value.items() if key != "row_adjustment_modes"
         }
         modes = value.get("row_adjustment_modes")
         if isinstance(modes, list) and all(isinstance(mode, str) for mode in modes):
             frame.attrs["adjustment_modes"] = tuple(modes)
+    evaluation_start = pd.Timestamp(spec.date_from, tz="UTC")
+    evaluation_end = pd.Timestamp(spec.date_to, tz="UTC")
+    requested_warmup = spec.policy.required_lookback_bars
+    for frame in (target, benchmark):
+        if (frame.index > evaluation_end).any() or int(
+            (frame.index < evaluation_start).sum()
+        ) > requested_warmup:
+            raise BacktestDataError("frozen backtest snapshot is invalid")
+    evaluation_target = target.loc[evaluation_start:evaluation_end]
+    evaluation_benchmark = benchmark.loc[evaluation_start:evaluation_end]
+    if evaluation_target.empty:
+        raise BacktestDataError("frozen backtest snapshot has no target window")
+    if evaluation_target.index.intersection(evaluation_benchmark.index).empty:
+        raise BacktestDataError(
+            "frozen backtest snapshot has no overlapping benchmark session"
+        )
     return target, benchmark
+
+
+def _validated_replay_snapshot_provenance(
+    value: object,
+    *,
+    spec: BacktestRunSpec,
+    ticker: str,
+    allow_missing_adjustment_modes: bool,
+) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise BacktestDataError("frozen backtest snapshot has invalid data provenance")
+    keys = set(value)
+    missing_adjustment_modes = _FROZEN_SNAPSHOT_PROVENANCE_KEYS - {
+        "row_adjustment_modes"
+    }
+    if keys != _FROZEN_SNAPSHOT_PROVENANCE_KEYS and not (
+        allow_missing_adjustment_modes and keys == missing_adjustment_modes
+    ):
+        raise BacktestDataError("frozen backtest snapshot has invalid data provenance")
+    string_keys = keys - {
+        "actions",
+        "auto_adjust",
+        "lookback_days",
+        "provider_buffer_days",
+        "row_adjustment_modes",
+        "warmup_bars",
+    }
+    if any(not isinstance(value[key], str) for key in string_keys):
+        raise BacktestDataError("frozen backtest snapshot has invalid data provenance")
+    integer_keys = {"lookback_days", "provider_buffer_days", "warmup_bars"}
+    if any(
+        not isinstance(value[key], int) or isinstance(value[key], bool)
+        for key in integer_keys
+    ):
+        raise BacktestDataError("frozen backtest snapshot has invalid data provenance")
+    if not isinstance(value["actions"], bool) or not isinstance(
+        value["auto_adjust"], bool
+    ):
+        raise BacktestDataError("frozen backtest snapshot has invalid data provenance")
+    expected_contract: dict[str, str | int | bool] = {
+        "provider": "yfinance",
+        "ticker": ticker,
+        "date_from": spec.date_from.isoformat(),
+        "date_to": spec.date_to.isoformat(),
+        "end_exclusive": (spec.date_to + timedelta(days=1)).isoformat(),
+        "provider_buffer_days": 100,
+        "interval": "1d",
+        "auto_adjust": True,
+        "actions": False,
+        "warmup_bars": spec.policy.required_lookback_bars,
+        "corporate_actions_mode": "provider_adjusted_prices",
+        "provider_end_semantics": "exclusive",
+        "timezone_normalization": "exchange_session_date_to_UTC_midnight",
+    }
+    if any(value[key] != expected for key, expected in expected_contract.items()):
+        raise BacktestDataError("frozen backtest snapshot has invalid data provenance")
+    if (
+        value["lookback_days"] < 0
+        or value["provider_buffer_days"] < 0
+        or value["warmup_bars"] < 0
+    ):
+        raise BacktestDataError("frozen backtest snapshot has invalid data provenance")
+    modes = value.get("row_adjustment_modes")
+    if modes is None and allow_missing_adjustment_modes:
+        return value
+    if not isinstance(modes, list) or any(not isinstance(mode, str) for mode in modes):
+        raise BacktestDataError("frozen backtest snapshot has invalid data provenance")
+    return value
 
 
 def _snapshot_content(
@@ -467,28 +613,38 @@ def _replay_snapshot_frame(value: object, *, allow_empty: bool = False) -> pd.Da
         if not isinstance(row, list) or len(row) != len(expected_columns) + 1:
             raise BacktestDataError("frozen backtest snapshot is invalid")
         session_date, *raw_values = row
-        if not isinstance(session_date, str) or not all(
-            isinstance(raw, str | int | float) for raw in raw_values
+        if (
+            not isinstance(session_date, str)
+            or _SESSION_DATE.fullmatch(session_date) is None
+            or not all(
+                isinstance(raw, str | int | float) and not isinstance(raw, bool)
+                for raw in raw_values
+            )
         ):
             raise BacktestDataError("frozen backtest snapshot is invalid")
         try:
             numeric_values = [float(raw) for raw in raw_values]
-            parsed_date = pd.Timestamp(session_date)
+            parsed_date = date.fromisoformat(session_date)
         except (TypeError, ValueError) as error:
             raise BacktestDataError("frozen backtest snapshot is invalid") from error
-        if not isinstance(parsed_date, pd.Timestamp) or not all(
+        if parsed_date.isoformat() != session_date or not all(
             math.isfinite(number) for number in numeric_values
         ):
             raise BacktestDataError("frozen backtest snapshot is invalid")
         open_price, high, low, close, volume = numeric_values
-        if volume < 0 or low > min(open_price, close) or max(open_price, close) > high:
+        if (
+            min(open_price, high, low, close) <= 0
+            or volume < 0
+            or low > min(open_price, close)
+            or max(open_price, close) > high
+        ):
             raise BacktestDataError("frozen backtest snapshot is invalid")
         dates.append(session_date)
         values.append(numeric_values)
     frame = pd.DataFrame(
         values,
         columns=pd.Index(expected_columns),
-        index=pd.DatetimeIndex(pd.to_datetime(dates, utc=True)),
+        index=pd.DatetimeIndex(pd.to_datetime(dates, format="%Y-%m-%d", utc=True)),
     )
     if (
         (frame.empty and not allow_empty)
@@ -516,31 +672,138 @@ def _canonical_economic_result_hash(
     spec: BacktestRunSpec,
     result: BacktestResultView,
     *,
-    data_snapshot_hash: str | None = None,
+    data_snapshot_hash: str,
 ) -> str:
-    payload = result.model_dump(mode="json", exclude={"provenance"})
-    for record_type in ("trades", "executions", "closed_trades"):
-        for record in payload.get(record_type, []):
-            if isinstance(record, dict):
-                for operational_field in (
-                    "order_id",
-                    "account_id",
-                    "session_id",
-                    "decision_id",
-                ):
-                    record.pop(operational_field, None)
-    config = payload.get("config")
-    if isinstance(config, dict):
-        config.pop("account_id", None)
-    for order in payload.get("orders", []):
-        if isinstance(order, dict):
-            order.pop("order_id", None)
+    config_fields = {
+        "ticker",
+        "start_date",
+        "end_date",
+        "run_frequency",
+        "benchmark_symbol",
+        "mode",
+        "initial_capital",
+        "commission_rate",
+        "slippage_rate",
+        "execution_timing",
+        "max_position_pct",
+        "allow_short",
+        "provider_adjustment_mode",
+        "corporate_actions_mode",
+        "data_provider",
+        "data_provider_version",
+        "data_interval",
+        "data_auto_adjust",
+        "data_actions",
+        "data_end_exclusive",
+        "data_lookback_days",
+        "data_provider_buffer_days",
+        "data_provider_end_semantics",
+        "data_provider_timezone",
+        "data_timezone_normalization",
+        "warmup_bars",
+        "risk_free_rate",
+        "periods_per_year",
+        "max_drawdown_limit_pct",
+        "max_drawdown_limit_enforced",
+        "evaluation_bar_count",
+        "sample_first_date",
+        "sample_last_date",
+    }
+    decision_fields = {
+        "sequence",
+        "signal_date",
+        "execution_date",
+        "status",
+        "target_position_pct",
+        "confidence",
+        "action",
+        "feature_hash",
+        "error_code",
+    }
+    order_fields = {
+        "status",
+        "signal_date",
+        "execution_date",
+        "reason",
+        "ticker",
+        "side",
+        "quantity",
+        "order_type",
+        "limit_price",
+    }
+    fill_fields = {
+        "timestamp",
+        "ticker",
+        "side",
+        "quantity",
+        "price",
+        "fee",
+        "slippage",
+        "trade_value",
+        "realized_pnl",
+        "cash_after",
+        "equity_after",
+        "shares_after",
+        "avg_cost_after",
+    }
+    closed_trade_fields = {
+        "entry_at",
+        "exit_at",
+        "ticker",
+        "quantity",
+        "entry_vwap",
+        "exit_vwap",
+        "average_cost_basis",
+        "net_realized_pnl",
+        "fees",
+        "slippage",
+        "holding_period_trading_days",
+    }
     canonical = {
+        "canonicalization_version": "backtest-economic-result/v1",
+        "run_contract_version": spec.contract_version,
         "engine_version": spec.engine_version,
         "policy_hash": spec.policy_hash,
         "strategy_snapshot_hash": spec.strategy_snapshot_hash,
-        "data_snapshot_hash": data_snapshot_hash or result.config.data_snapshot_hash,
-        "economic_result": payload,
+        "data_snapshot_hash": data_snapshot_hash,
+        "economic_result": {
+            "config": result.config.model_dump(mode="json", include=config_fields),
+            "outcome": result.outcome,
+            "warnings": result.warnings,
+            "no_trade_reasons": [
+                reason.model_dump(mode="json", include={"code", "count"})
+                for reason in result.no_trade_reasons
+            ],
+            "metrics": result.summary.model_dump(mode="json"),
+            "equity": [point.model_dump(mode="json") for point in result.series],
+            "decisions": [
+                decision.model_dump(mode="json", include=decision_fields)
+                for decision in result.decisions
+            ],
+            "orders": [
+                order.model_dump(mode="json", include=order_fields)
+                for order in result.orders
+            ],
+            "fills": [
+                execution.model_dump(mode="json", include=fill_fields)
+                for execution in result.executions
+            ],
+            "closed_trades": [
+                closed_trade.model_dump(mode="json", include=closed_trade_fields)
+                for closed_trade in result.closed_trades
+            ],
+            "end_position": result.end_position.model_dump(
+                mode="json",
+                include={
+                    "ticker",
+                    "shares",
+                    "market_value",
+                    "average_cost_basis",
+                    "unrealized_pnl",
+                    "liquidated_at_end",
+                },
+            ),
+        },
     }
     encoded = json.dumps(
         canonical,
@@ -548,8 +811,31 @@ def _canonical_economic_result_hash(
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
-    ).encode()
+    ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _with_bound_result_provenance(
+    spec: BacktestRunSpec,
+    result: BacktestResultView,
+    *,
+    data_snapshot_hash: str,
+) -> BacktestResultView:
+    canonical_result_hash = _canonical_economic_result_hash(
+        spec,
+        result,
+        data_snapshot_hash=data_snapshot_hash,
+    )
+    return result.model_copy(
+        update={
+            "provenance": BacktestProvenanceView(
+                strategy_snapshot_hash=spec.strategy_snapshot_hash,
+                policy_hash=spec.policy_hash,
+                data_snapshot_hash=data_snapshot_hash,
+                canonical_result_hash=canonical_result_hash,
+            )
+        }
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -626,6 +912,8 @@ class _JobObservabilitySink:
                 attempts=decision.attempts,
                 target_position_pct=decision.target_position_pct,
                 confidence=decision.confidence,
+                action=decision.action,
+                rationale=decision.rationale,
                 feature_hash=_safe_sha256(decision.feature_hash),
                 policy_hash=pending.policy_hash,
                 error_code=None,
@@ -659,6 +947,8 @@ class _JobObservabilitySink:
                 attempts=safe_failure.attempt,
                 target_position_pct=None,
                 confidence=None,
+                action=None,
+                rationale=None,
                 feature_hash=None,
                 policy_hash=pending.policy_hash,
                 error_code=safe_failure.code,
@@ -898,11 +1188,19 @@ class BacktestJobService:
         return capability(model if isinstance(model, str) else "")
 
     def get(self, job_id: str) -> BacktestJobResponse | None:
-        job = self._store.get_backtest_job(job_id)
+        try:
+            job = self._store.get_backtest_job(job_id)
+        except RuntimeError:
+            return _storage_corrupt_response(job_id)
         return _to_response(job, self._store) if job is not None else None
 
     def replay(self, job_id: str) -> BacktestReplayInput:
-        job = self._store.get_backtest_job(job_id)
+        try:
+            job = self._store.get_backtest_job(job_id)
+        except RuntimeError as error:
+            raise BacktestReplayUnavailableError(
+                "frozen backtest replay is unavailable"
+            ) from error
         if (
             job is None
             or job.contract_version != 1
@@ -918,7 +1216,16 @@ class BacktestJobService:
             raise BacktestReplayUnavailableError(
                 "frozen backtest replay is unavailable"
             ) from error
-        snapshot = self._store.get_backtest_input_snapshot(job.input_snapshot_hash)
+        if not _request_matches_spec(job.request_json, spec):
+            raise BacktestReplayUnavailableError(
+                "frozen backtest replay is unavailable"
+            )
+        try:
+            snapshot = self._store.get_backtest_input_snapshot(job.input_snapshot_hash)
+        except RuntimeError as error:
+            raise BacktestReplayUnavailableError(
+                "frozen backtest replay is unavailable"
+            ) from error
         if snapshot is None:
             raise BacktestReplayUnavailableError(
                 "frozen backtest replay is unavailable"
@@ -928,7 +1235,7 @@ class BacktestJobService:
                 "frozen backtest replay is unavailable"
             )
         try:
-            _validate_replay_snapshot_envelope(snapshot)
+            _replay_snapshot_frames(snapshot, spec)
         except BacktestDataError as error:
             raise BacktestReplayUnavailableError(
                 "frozen backtest replay is unavailable"
@@ -1033,6 +1340,8 @@ class BacktestJobService:
             "status",
             "target_position_pct",
             "confidence",
+            "action",
+            "rationale",
             "attempts",
             "error_code",
         )
@@ -1068,6 +1377,8 @@ class BacktestJobService:
                 "status": decision.status,
                 "target_position_pct": decision.target_position_pct,
                 "confidence": decision.confidence,
+                "action": decision.action,
+                "rationale": decision.rationale,
                 "attempts": decision.attempts,
                 "error_code": decision.error_code,
             }
@@ -1200,6 +1511,52 @@ class BacktestJobService:
                 ).model_dump_json(exclude_none=True),
             )
             return
+        try:
+            snapshot = self._store.get_backtest_input_snapshot(
+                completed_job.input_snapshot_hash
+            )
+            if snapshot is None:
+                raise BacktestDataError("frozen backtest snapshot is invalid")
+            target_history, _ = _replay_snapshot_frames(snapshot, spec)
+        except (BacktestDataError, RuntimeError):
+            self._store.fail_backtest_job(
+                job_id,
+                BacktestJobError(
+                    code="backtest_failed",
+                    stage="snapshot",
+                    message="Backtest input snapshot is unavailable",
+                ).model_dump_json(exclude_none=True),
+            )
+            return
+        stored_decisions = _stored_backtest_decisions(self._store, job_id)
+        if stored_decisions is None:
+            self._store.fail_backtest_job(
+                job_id,
+                BacktestJobError(
+                    code="backtest_failed",
+                    stage="persistence",
+                    message="Backtest evidence could not be persisted",
+                ).model_dump_json(exclude_none=True),
+            )
+            return
+        result = result.model_copy(
+            update={
+                "config": result.config.model_copy(
+                    update=_snapshot_bound_config(
+                        spec,
+                        target_history,
+                        data_snapshot_hash=completed_job.input_snapshot_hash,
+                        account_id=result.config.account_id,
+                    ).model_dump()
+                ),
+                "decisions": stored_decisions,
+            }
+        )
+        result = _with_bound_result_provenance(
+            spec,
+            result,
+            data_snapshot_hash=completed_job.input_snapshot_hash,
+        )
         self._store.complete_backtest_job(job_id, result.model_dump_json())
 
 
@@ -1219,6 +1576,88 @@ def _configured_structured_output_supported(model: str) -> bool:
     return model.lower().startswith(("gpt-4o", "gpt-4.1", "gpt-5", "o1", "o3", "o4"))
 
 
+def _verified_completed_result(
+    job: BacktestJobRecord,
+    store: ContextStore,
+    decisions: list[BacktestDecisionView],
+) -> tuple[BacktestResultView, BacktestInputSnapshotRecord | None] | None:
+    if job.result_json is None:
+        return None
+    try:
+        result = BacktestResultView.model_validate_json(job.result_json)
+    except ValidationError:
+        return None
+    if job.contract_version == 0:
+        return (
+            result.model_copy(
+                update={
+                    "warnings": [*result.warnings, "legacy_result_unverified"],
+                }
+            ),
+            None,
+        )
+    if (
+        job.contract_version != 1
+        or job.run_spec_json is None
+        or job.input_snapshot_hash is None
+    ):
+        return None
+    try:
+        snapshot = store.get_backtest_input_snapshot(job.input_snapshot_hash)
+    except RuntimeError:
+        return None
+    if snapshot is None:
+        return None
+    try:
+        spec = BacktestRunSpec.model_validate_json(job.run_spec_json)
+        target_history, _ = _replay_snapshot_frames(snapshot, spec)
+    except (BacktestDataError, ValidationError):
+        return None
+    if not _request_matches_spec(job.request_json, spec):
+        return None
+    expected_config = _snapshot_bound_config(
+        spec,
+        target_history,
+        data_snapshot_hash=snapshot.content_hash,
+        account_id=result.config.account_id,
+    )
+    if result.config != expected_config:
+        return None
+    if (
+        result.provenance.strategy_snapshot_hash != spec.strategy_snapshot_hash
+        or result.provenance.policy_hash != spec.policy_hash
+        or result.provenance.data_snapshot_hash != job.input_snapshot_hash
+    ):
+        return None
+    if result.decisions != decisions:
+        return None
+    try:
+        canonical_result_hash = _canonical_economic_result_hash(
+            spec,
+            result,
+            data_snapshot_hash=job.input_snapshot_hash,
+        )
+    except (TypeError, ValueError):
+        return None
+    if canonical_result_hash != result.provenance.canonical_result_hash:
+        return None
+    return result, snapshot
+
+
+def _storage_corrupt_response(job_id: str) -> BacktestJobResponse:
+    return BacktestJobResponse(
+        id=job_id,
+        status="failed",
+        progress=BacktestProgressView(),
+        decisions=[],
+        error=BacktestJobError(
+            code="storage_corrupt", message="Backtest result is unavailable"
+        ),
+        created_at="",
+        updated_at="",
+    )
+
+
 def _to_response(job: BacktestJobRecord, store: ContextStore) -> BacktestJobResponse:
     request = _backtest_request_from_json(job.request_json)
     config = _backtest_config_from_spec_json(job.run_spec_json)
@@ -1226,74 +1665,43 @@ def _to_response(job: BacktestJobRecord, store: ContextStore) -> BacktestJobResp
     error: BacktestJobError | None = None
     status: BacktestJobStatus = job.status
     progress = _backtest_progress_from_json(job.progress_json)
-    decisions = [
-        BacktestDecisionView(
-            sequence=decision.sequence,
-            signal_date=decision.signal_date,
-            execution_date=decision.execution_date,
-            status=decision.status,
-            attempts=decision.attempts,
-            target_position_pct=decision.target_position_pct,
-            confidence=decision.confidence,
-            feature_hash=decision.feature_hash,
-            policy_hash=decision.policy_hash,
-            error_code=(
-                _safe_decision_error_code(decision.error_code)
-                if decision.error_code is not None
-                else None
-            ),
-            error_stage=(
-                _safe_decision_error_stage(decision.error_stage)
-                if decision.error_stage is not None
-                else None
-            ),
+    stored_decisions = _stored_backtest_decisions(store, job.id)
+    decisions = stored_decisions or []
+    if stored_decisions is None:
+        status = "failed"
+        error = BacktestJobError(
+            code="storage_corrupt", message="Backtest result is unavailable"
         )
-        for decision in store.get_backtest_decisions(job.id)
-    ]
-    match job.status:
-        case "completed":
-            if job.result_json is None:
-                status = "failed"
-                error = BacktestJobError(
-                    code="storage_corrupt", message="Backtest result is unavailable"
-                )
-            else:
-                try:
-                    persisted_result = BacktestResultView.model_validate_json(
-                        job.result_json
-                    )
-                    if job.contract_version == 0:
-                        persisted_result = persisted_result.model_copy(
-                            update={
-                                "warnings": [
-                                    *persisted_result.warnings,
-                                    "legacy_result_unverified",
-                                ]
-                            }
-                        )
-                    config = persisted_result.config
-                    result = _public_backtest_result(persisted_result)
-                except ValidationError:
+    else:
+        match job.status:
+            case "completed":
+                verified = _verified_completed_result(job, store, stored_decisions)
+                if verified is None:
                     status = "failed"
+                    decisions = []
                     error = BacktestJobError(
                         code="storage_corrupt", message="Backtest result is unavailable"
                     )
-        case "failed":
-            if job.error_json is not None:
-                try:
-                    error = BacktestJobError.model_validate_json(job.error_json)
-                except ValidationError:
+                else:
+                    persisted_result, snapshot = verified
+                    config = persisted_result.config
+                    result = _public_backtest_result(persisted_result, snapshot)
+            case "failed":
+                if job.error_json is not None:
+                    try:
+                        error = BacktestJobError.model_validate_json(job.error_json)
+                    except ValidationError:
+                        error = BacktestJobError(
+                            code="storage_corrupt",
+                            message="Backtest failure is unavailable",
+                        )
+                else:
                     error = BacktestJobError(
                         code="storage_corrupt",
                         message="Backtest failure is unavailable",
                     )
-            else:
-                error = BacktestJobError(
-                    code="storage_corrupt",
-                    message="Backtest failure is unavailable",
-                )
-        case "pending" | "running":
-            pass
+            case "pending" | "running":
+                pass
     return BacktestJobResponse(
         id=job.id,
         status=status,
@@ -1308,11 +1716,126 @@ def _to_response(job: BacktestJobRecord, store: ContextStore) -> BacktestJobResp
     )
 
 
+def _stored_backtest_decisions(
+    store: ContextStore, job_id: str
+) -> list[BacktestDecisionView] | None:
+    try:
+        return [
+            BacktestDecisionView(
+                sequence=decision.sequence,
+                signal_date=decision.signal_date,
+                execution_date=decision.execution_date,
+                status=decision.status,
+                attempts=decision.attempts,
+                target_position_pct=decision.target_position_pct,
+                confidence=decision.confidence,
+                action=decision.action,
+                rationale=decision.rationale,
+                feature_hash=decision.feature_hash,
+                policy_hash=decision.policy_hash,
+                error_code=(
+                    _safe_decision_error_code(decision.error_code)
+                    if decision.error_code is not None
+                    else None
+                ),
+                error_stage=(
+                    _safe_decision_error_stage(decision.error_stage)
+                    if decision.error_stage is not None
+                    else None
+                ),
+            )
+            for decision in store.get_backtest_decisions(job_id)
+        ]
+    except (RuntimeError, ValueError, ValidationError):
+        return None
+
+
 def _backtest_request_from_json(request_json: str) -> BacktestRequest | None:
     try:
         return BacktestRequest.model_validate_json(request_json)
     except ValidationError:
         return None
+
+
+def _request_matches_spec(request_json: str, spec: BacktestRunSpec) -> bool:
+    try:
+        request = BacktestRequest.model_validate_json(request_json)
+    except ValidationError:
+        return False
+    return request == BacktestRequest(
+        strategy_id=spec.strategy_id,
+        ticker=spec.ticker,
+        date_from=spec.date_from,
+        date_to=spec.date_to,
+        frequency=spec.run_frequency,
+        benchmark=spec.benchmark,
+        mode=spec.mode,
+    )
+
+
+def _snapshot_bound_config(
+    spec: BacktestRunSpec,
+    target_history: pd.DataFrame,
+    *,
+    data_snapshot_hash: str,
+    account_id: str,
+) -> BacktestConfigView:
+    provenance = target_history.attrs.get("backtest_data_provenance")
+    if not isinstance(provenance, dict):
+        raise BacktestDataError("frozen backtest snapshot has no data provenance")
+    target = target_history.loc[spec.date_from.isoformat() : spec.date_to.isoformat()]
+    if target.empty:
+        raise BacktestDataError("frozen backtest snapshot has no target window")
+    return BacktestConfigView(
+        ticker=spec.ticker,
+        start_date=spec.date_from.isoformat(),
+        end_date=spec.date_to.isoformat(),
+        frequency=spec.run_frequency,
+        benchmark_symbol=spec.benchmark,
+        strategy_id=spec.strategy_id,
+        account_id=account_id,
+        mode=spec.mode.value,
+        agent_model=(
+            spec.policy.policy.model
+            if isinstance(spec.policy.policy, ExperimentalAgentPolicy)
+            else None
+        ),
+        strategy_snapshot_hash=spec.strategy_snapshot_hash,
+        policy_hash=spec.policy_hash,
+        data_snapshot_hash=data_snapshot_hash,
+        engine_version=spec.engine_version,
+        strategy_execution_frequency=spec.strategy_execution_frequency,
+        run_frequency=spec.run_frequency,
+        initial_capital=spec.broker_config.initial_cash,
+        commission_rate=spec.broker_config.commission_rate,
+        commission_bps=spec.broker_config.commission_rate * 10_000,
+        slippage_rate=spec.broker_config.slippage_rate,
+        slippage_bps=spec.broker_config.slippage_rate * 10_000,
+        execution_timing=spec.broker_config.execution_timing,
+        max_position_pct=spec.broker_config.max_position_pct,
+        allow_short=spec.broker_config.allow_short,
+        provider_adjustment_mode="auto_adjusted_prices_v1",
+        corporate_actions_mode=str(provenance["corporate_actions_mode"]),
+        data_provider=str(provenance["provider"]),
+        data_provider_version=str(provenance["library_version"]),
+        data_interval="1d",
+        data_auto_adjust=bool(provenance["auto_adjust"]),
+        data_actions=bool(provenance["actions"]),
+        data_end_exclusive=str(provenance["end_exclusive"]),
+        data_lookback_days=int(provenance["lookback_days"]),
+        data_provider_buffer_days=int(provenance["provider_buffer_days"]),
+        data_provider_end_semantics="exclusive",
+        data_provider_timezone=str(provenance["provider_timezone"]),
+        data_timezone_normalization="exchange_session_date_to_UTC_midnight",
+        warmup_bars=int(provenance["warmup_bars"]),
+        risk_free_rate=0.0,
+        periods_per_year=252,
+        max_drawdown_limit_pct=spec.max_drawdown_limit_pct,
+        max_drawdown_limit_enforced=spec.max_drawdown_limit_enforced,
+        evaluation_bar_count=len(target),
+        sample_first_date=str(target.index[0])[:10],
+        sample_last_date=str(target.index[-1])[:10],
+    )
 
 
 def _backtest_config_from_spec_json(
@@ -1355,7 +1878,10 @@ def _backtest_config_from_spec_json(
     )
 
 
-def _public_backtest_result(result: BacktestResultView) -> BacktestJobResult:
+def _public_backtest_result(
+    result: BacktestResultView,
+    snapshot: BacktestInputSnapshotRecord | None,
+) -> BacktestJobResult:
     return BacktestJobResult(
         outcome=result.outcome,
         warnings=result.warnings,
@@ -1366,6 +1892,14 @@ def _public_backtest_result(result: BacktestResultView) -> BacktestJobResult:
         fills=result.executions,
         closed_trades=result.closed_trades,
         end_position=result.end_position,
+        snapshot=(
+            BacktestSnapshotEvidenceView(
+                compressed_bytes=snapshot.compressed_bytes,
+                uncompressed_bytes=snapshot.uncompressed_bytes,
+            )
+            if snapshot is not None
+            else None
+        ),
         provenance=result.provenance,
     )
 

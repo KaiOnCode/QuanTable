@@ -310,11 +310,19 @@ class BrokerGateway:
 
 Order lifecycle: `PENDING → EXECUTED | PARTIALLY_FILLED | REJECTED | CANCELLED`
 
-Execution model:
-- Market orders: fill at close price + slippage (configurable, default 0.1%)
-- Limit orders: fill if price crosses limit during the period
-- Commission: configurable, default 0.03% per trade
-- Short selling: supported (negative position)
+The generic gateway is an exchange abstraction; its capabilities do not define
+the persisted backtest contract. Canonical persisted backtests use this
+gateway through a deliberately narrower, frozen execution policy:
+
+- Deterministic v1 accepts only typed quant policies and is long-only.
+- A signal may use the historical session close, but any resulting market
+  order executes at the next available historical session open; it never
+  fills on the signal bar.
+- Initial cash, commission, slippage, maximum position, timing, policy, and
+  data provenance are frozen with the run before it is queued.
+- Pending, rejected, cancelled, and end-of-window-unfilled orders remain
+  explicit evidence. A zero-trade or experimental result is not credible
+  performance merely because the job reached a terminal state.
 
 ### 9. HITL Manager (`hitl/`)
 
@@ -490,14 +498,24 @@ APScheduler triggers → For each ticker in strategy:
 
 ### Pattern C: Backtesting
 ```
-User selects strategy + date range + tickers
-  → For each (date, ticker) combination:
-    → DataService.get_*(end_date=date) — point-in-time, no look-ahead
-    → Orchestrator.run() with historical data
-    → Record decision + future outcome
-    → Compare vs benchmark (SPY/CSI300)
-  → Return accuracy report + benchmark comparison
+User selects one eligible Strategy + date range + ticker
+  → Freeze typed policy, broker config, Strategy snapshot, and request
+    as BacktestRunSpec
+  → Load and persist normalized target/benchmark OHLCV plus policy warm-up
+  → For each eligible historical signal session:
+    → Build point-in-time features from data at or before that session close
+    → Deterministic policy emits a declared target
+      (agent mode is explicitly experimental)
+    → Broker executes a resulting order only at the next historical open
+  → Persist decisions, orders, fills, closed trades, equity, metrics,
+    and provenance
+  → Verify/replay only the frozen snapshot; return fidelity and
+    sample-truthfulness evidence
 ```
+
+The canonical deterministic path does not invoke an LLM for each bar and does
+not claim prediction accuracy or out-of-sample robustness. Those questions
+require a separately specified research protocol.
 
 ### Pattern D: Daily Insights
 ```

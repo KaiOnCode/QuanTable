@@ -593,6 +593,8 @@ export type BacktestDecisionView = {
   readonly attempts: number;
   readonly target_position_pct: number | null;
   readonly confidence: number | null;
+  readonly action: "BUY" | "SELL" | "HOLD" | null;
+  readonly rationale: string | null;
   readonly feature_hash: string | null;
   readonly policy_hash: string;
   readonly error_code: string | null;
@@ -605,6 +607,11 @@ export type BacktestOrderEvidenceView = {
   readonly signal_date: string;
   readonly execution_date: string | null;
   readonly reason: string;
+  readonly ticker: string | null;
+  readonly side: "BUY" | "SELL" | null;
+  readonly quantity: number | null;
+  readonly order_type: "MARKET" | "LIMIT" | null;
+  readonly limit_price: number | null;
 };
 
 export type BacktestTradeView = {
@@ -675,6 +682,11 @@ export type BacktestProvenanceView = {
   readonly canonical_result_hash: string;
 };
 
+export type BacktestSnapshotEvidenceView = {
+  readonly compressed_bytes: number;
+  readonly uncompressed_bytes: number;
+};
+
 export type BacktestJobResult = {
   readonly outcome: "completed" | "completed_no_trades";
   readonly warnings: readonly string[];
@@ -685,6 +697,7 @@ export type BacktestJobResult = {
   readonly fills: readonly BacktestTradeView[];
   readonly closed_trades: readonly ClosedTradeView[];
   readonly end_position: BacktestEndPositionView;
+  readonly snapshot: BacktestSnapshotEvidenceView | null;
   readonly provenance: BacktestProvenanceView;
 };
 

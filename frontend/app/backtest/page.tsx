@@ -10,7 +10,7 @@ import { Shell } from "@/components/layout/shell";
 import { backtestApi } from "@/lib/api/backtest";
 import { strategiesApi } from "@/lib/api/strategies";
 import { displayBacktestError, isBacktestNotFoundError } from "@/lib/backtest-api-error";
-import { backtestModeForStrategy, deriveBacktestEligibility } from "@/lib/backtest-result-state";
+import { backtestModeForStrategy, deriveBacktestEligibility, syncBacktestFrequencySelection } from "@/lib/backtest-result-state";
 import type { BacktestRequest } from "@/lib/types/models";
 import { usePersistedBacktestId } from "@/lib/use-persisted-backtest-id";
 import { LineChart } from "lucide-react";
@@ -28,7 +28,10 @@ function BacktestContent() {
   const [ticker, setTicker] = useState("AAPL");
   const [dateFrom, setDateFrom] = useState(DEFAULT_DATE_FROM);
   const [dateTo, setDateTo] = useState(DEFAULT_DATE_TO);
-  const [frequency, setFrequency] = useState<BacktestRequest["frequency"]>("weekly");
+  const [frequencySelection, setFrequencySelection] = useState({
+    strategyId: "",
+    frequency: "daily" as BacktestRequest["frequency"],
+  });
   const [benchmark, setBenchmark] = useState("SPY");
   const [validationError, setValidationError] = useState<string | null>(null);
   const { backtestId, isRestored, persistBacktestId, syncBacktestStatus } = usePersistedBacktestId(searchParams.get("backtest_id"));
@@ -42,6 +45,13 @@ function BacktestContent() {
   const selectedStrategyId = selectedStrategy?.id ?? "";
   const mode = backtestModeForStrategy(selectedStrategy);
   const eligibility = deriveBacktestEligibility(selectedStrategy, ticker);
+  const frequency = frequencySelection.frequency;
+
+  useEffect(() => {
+    setFrequencySelection((current) =>
+      syncBacktestFrequencySelection(current, selectedStrategy),
+    );
+  }, [selectedStrategy]);
 
   const jobQuery = useQuery({
     queryKey: ["backtest", backtestId],
@@ -153,7 +163,12 @@ function BacktestContent() {
           onTickerChange={setTicker}
           onDateFromChange={setDateFrom}
           onDateToChange={setDateTo}
-          onFrequencyChange={setFrequency}
+          onFrequencyChange={(nextFrequency) =>
+            setFrequencySelection((current) => ({
+              ...current,
+              frequency: nextFrequency,
+            }))
+          }
           onBenchmarkChange={setBenchmark}
           onSubmit={submit}
         />

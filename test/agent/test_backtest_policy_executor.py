@@ -139,7 +139,7 @@ def test_sample_size_warnings_use_strict_declared_thresholds(
     )
 
 
-def test_momentum_hold_band_rebalances_an_overweight_position_to_policy_cap() -> None:
+def test_momentum_hold_band_keeps_the_declared_target() -> None:
     policy = BacktestPolicySnapshot(
         mode=BacktestMode.DETERMINISTIC,
         strategy_type="quant",
@@ -157,11 +157,73 @@ def test_momentum_hold_band_rebalances_an_overweight_position_to_policy_cap() ->
     )
 
     decision = BacktestPolicyExecutor(policy).decide(
-        features, current_position_pct=80.2
+        features, current_position_pct=80.0
     )
 
     assert decision.target_position_pct == 80.0
-    assert decision.action == "SELL"
+    assert decision.action == "HOLD"
+
+
+@pytest.mark.parametrize(
+    ("actual_position_pct", "expected_action"),
+    [
+        (69.9, "BUY"),
+        (80.0, "HOLD"),
+        (80.2, "SELL"),
+    ],
+)
+def test_deterministic_executor_derives_hold_band_action_from_actual_position(
+    actual_position_pct: float,
+    expected_action: Literal["BUY", "SELL", "HOLD"],
+) -> None:
+    policy = BacktestPolicySnapshot(
+        mode=BacktestMode.DETERMINISTIC,
+        strategy_type="quant",
+        policy=MomentumPolicy(
+            lookback_bars=2,
+            entry_threshold=0.10,
+            exit_threshold=-0.10,
+            target_position_pct=0.8,
+        ),
+    )
+    spec = BacktestRunSpec(
+        strategy_id="momentum-drift",
+        strategy_name="Momentum",
+        ticker="AAPL",
+        date_from=date(2026, 1, 2),
+        date_to=date(2026, 1, 9),
+        benchmark="SPY",
+        mode=BacktestMode.DETERMINISTIC,
+        strategy_execution_frequency="daily",
+        run_frequency="daily",
+        policy=policy,
+        strategy_snapshot_hash="a" * 64,
+        policy_hash="b" * 64,
+        broker_config=FrozenBrokerConfig(
+            initial_cash=100_000,
+            max_position_pct=0.8,
+        ),
+        max_drawdown_limit_pct=0.2,
+    )
+    executor = BacktestRunDecisionExecutor(spec)
+
+    entry = executor.decide(
+        "AAPL",
+        as_of="2026-01-05T00:00:00Z",
+        closes=(100.0, 100.0, 120.0),
+        current_position_pct=0.0,
+    )
+    hold = executor.decide(
+        "AAPL",
+        as_of="2026-01-06T00:00:00Z",
+        closes=(100.0, 120.0, 105.0),
+        current_position_pct=actual_position_pct,
+    )
+
+    assert entry.action == "BUY"
+    assert entry.target_position_pct == 80.0
+    assert hold.action == expected_action
+    assert hold.target_position_pct == 80.0
 
 
 class _ScriptedProvider:
@@ -474,8 +536,12 @@ def test_deterministic_61_bar_run_completes_without_agent_loop(
         strategy_id=spec.strategy_id,
         policy_hash=spec.policy_hash,
     )
-    first_hash = _canonical_economic_result_hash(spec, result.view)
-    assert first_hash == _canonical_economic_result_hash(spec, replay.view)
+    first_hash = _canonical_economic_result_hash(
+        spec, result.view, data_snapshot_hash="a" * 64
+    )
+    assert first_hash == _canonical_economic_result_hash(
+        spec, replay.view, data_snapshot_hash="a" * 64
+    )
     assert len(first_hash) == 64
     first_trade = TradeView(
         order_id="operation-a",
@@ -504,18 +570,24 @@ def test_deterministic_61_bar_run_completes_without_agent_loop(
         }
     )
     assert first_trade.order_id != second_trade.order_id
-    first_with_trade = result.view.model_copy(update={"trades": [first_trade]})
-    second_with_trade = result.view.model_copy(update={"trades": [second_trade]})
+    first_with_execution = result.view.model_copy(update={"executions": [first_trade]})
+    second_with_execution = result.view.model_copy(
+        update={"executions": [second_trade]}
+    )
     assert _canonical_economic_result_hash(
-        spec, first_with_trade
-    ) == _canonical_economic_result_hash(spec, second_with_trade)
+        spec, first_with_execution, data_snapshot_hash="a" * 64
+    ) == _canonical_economic_result_hash(
+        spec, second_with_execution, data_snapshot_hash="a" * 64
+    )
     later_fill = second_trade.model_copy(
         update={"timestamp": datetime(2026, 1, 6, tzinfo=UTC)}
     )
     assert _canonical_economic_result_hash(
-        spec, first_with_trade
+        spec, first_with_execution, data_snapshot_hash="a" * 64
     ) != _canonical_economic_result_hash(
-        spec, result.view.model_copy(update={"trades": [later_fill]})
+        spec,
+        result.view.model_copy(update={"executions": [later_fill]}),
+        data_snapshot_hash="a" * 64,
     )
     assert _canonical_economic_result_hash(
         spec, result.view, data_snapshot_hash="a" * 64
@@ -633,8 +705,10 @@ def test_canonical_hash_ignores_execution_closed_trade_and_account_operational_i
     )
 
     assert _canonical_economic_result_hash(
-        spec, first
-    ) == _canonical_economic_result_hash(spec, same_economics)
+        spec, first, data_snapshot_hash="a" * 64
+    ) == _canonical_economic_result_hash(
+        spec, same_economics, data_snapshot_hash="a" * 64
+    )
 
     changed_economics = same_economics.model_copy(
         update={
@@ -644,8 +718,10 @@ def test_canonical_hash_ignores_execution_closed_trade_and_account_operational_i
         }
     )
     assert _canonical_economic_result_hash(
-        spec, first
-    ) != _canonical_economic_result_hash(spec, changed_economics)
+        spec, first, data_snapshot_hash="a" * 64
+    ) != _canonical_economic_result_hash(
+        spec, changed_economics, data_snapshot_hash="a" * 64
+    )
 
     changed_historical_timestamp = same_economics.model_copy(
         update={
@@ -657,5 +733,7 @@ def test_canonical_hash_ignores_execution_closed_trade_and_account_operational_i
         }
     )
     assert _canonical_economic_result_hash(
-        spec, first
-    ) != _canonical_economic_result_hash(spec, changed_historical_timestamp)
+        spec, first, data_snapshot_hash="a" * 64
+    ) != _canonical_economic_result_hash(
+        spec, changed_historical_timestamp, data_snapshot_hash="a" * 64
+    )

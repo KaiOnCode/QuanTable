@@ -11,8 +11,6 @@ Database layout (from docs/architecture.md §12):
 
 from __future__ import annotations
 
-import gzip
-import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass
@@ -21,8 +19,14 @@ import math
 from pathlib import Path
 from typing import Final, Literal, Mapping
 
+from storage.backtest_snapshot import (
+    CanonicalSnapshotEnvelope,
+    decode_canonical_snapshot,
+)
+
 DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 BACKTEST_CONTRACT_MIGRATION: Final = "20260712_backtest_contract_v1"
+_MAX_BACKTEST_INPUT_SNAPSHOT_BYTES: Final = 16 * 1024 * 1024
 _BACKTEST_DECISION_ERROR_CODES: Final = frozenset(
     {
         "agent_failed",
@@ -83,6 +87,8 @@ _BACKTEST_DECISION_COLUMN_CONTRACT: Final = {
     "attempts": ("INTEGER", True, None, 0),
     "target_position_pct": ("REAL", False, None, 0),
     "confidence": ("REAL", False, None, 0),
+    "action": ("TEXT", False, None, 0),
+    "rationale": ("TEXT", False, None, 0),
     "feature_hash": ("TEXT", False, None, 0),
     "policy_hash": ("TEXT", True, None, 0),
     "error_code": ("TEXT", False, None, 0),
@@ -99,6 +105,7 @@ type BacktestJobStatus = Literal["pending", "running", "completed", "failed"]
 type BacktestDecisionStatus = Literal[
     "not_ready", "completed", "failed", "unfilled_end_of_window"
 ]
+type BacktestDecisionAction = Literal["BUY", "SELL", "HOLD"]
 type ScanRunStatus = Literal["running", "completed", "failed"]
 type ReportJobStatus = Literal["pending", "running", "completed", "failed"]
 
@@ -161,6 +168,8 @@ class BacktestDecisionEvidence:
     policy_hash: str
     error_code: str | None
     error_stage: str | None
+    action: BacktestDecisionAction | None = None
+    rationale: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,6 +182,8 @@ class BacktestDecisionRecord:
     attempts: int
     target_position_pct: float | None
     confidence: float | None
+    action: BacktestDecisionAction | None
+    rationale: str | None
     feature_hash: str | None
     policy_hash: str
     error_code: str | None
@@ -1185,11 +1196,12 @@ class ContextStore:
         self, job_id: str, snapshot: BacktestInputSnapshotContent
     ) -> BacktestInputSnapshotRecord:
         self._init_backtest_jobs_db()
-        canonical_payload = gzip.decompress(snapshot.payload)
-        if len(canonical_payload) != snapshot.uncompressed_bytes:
-            raise RuntimeError("backtest input snapshot byte count is invalid")
-        if hashlib.sha256(canonical_payload).hexdigest() != snapshot.content_hash:
-            raise RuntimeError("backtest input snapshot content hash is invalid")
+        canonical_payload = _decode_backtest_input_snapshot_payload(
+            snapshot.payload,
+            compressed_bytes=len(snapshot.payload),
+            uncompressed_bytes=snapshot.uncompressed_bytes,
+            content_hash=snapshot.content_hash,
+        )
         _validate_backtest_snapshot_payload(
             canonical_payload,
             row_count_target=snapshot.row_count_target,
@@ -1202,12 +1214,21 @@ class ContextStore:
                 "SELECT contract_version, input_snapshot_hash FROM backtest_jobs WHERE id = ?",
                 (job_id,),
             ).fetchone()
-            if job is None or int(job["contract_version"]) != 1:
+            if job is None:
                 raise RuntimeError(
                     "v1 backtest job is unavailable for snapshot binding"
                 )
-            current_hash = job["input_snapshot_hash"]
-            if current_hash is not None and str(current_hash) != snapshot.content_hash:
+            contract_version = _strict_persisted_int(
+                job["contract_version"], message="backtest job metadata is invalid"
+            )
+            if contract_version != 1:
+                raise RuntimeError(
+                    "v1 backtest job is unavailable for snapshot binding"
+                )
+            current_hash = _strict_persisted_nullable_text(
+                job["input_snapshot_hash"], message="backtest job metadata is invalid"
+            )
+            if current_hash is not None and current_hash != snapshot.content_hash:
                 raise RuntimeError(
                     "backtest job already has a different frozen snapshot"
                 )
@@ -1227,6 +1248,15 @@ class ContextStore:
                     now,
                 ),
             )
+            persisted_snapshot = db.execute(
+                "SELECT content_hash, schema_version, codec, payload, compressed_bytes, "
+                "uncompressed_bytes, row_count_target, row_count_benchmark, created_at "
+                "FROM backtest_input_snapshots WHERE content_hash = ?",
+                (snapshot.content_hash,),
+            ).fetchone()
+            if persisted_snapshot is None:
+                raise RuntimeError("bound backtest input snapshot is unavailable")
+            _backtest_input_snapshot_from_row(persisted_snapshot)
             db.execute(
                 """UPDATE backtest_jobs
                    SET input_snapshot_hash = ?, updated_at = ?
@@ -1284,15 +1314,21 @@ class ContextStore:
             "SELECT input_snapshot_hash FROM backtest_jobs WHERE id = ? AND contract_version = 1",
             (evidence.job_id,),
         ).fetchone()
-        if bound_job is None or bound_job["input_snapshot_hash"] is None:
+        if bound_job is None:
+            raise RuntimeError("backtest decisions require a bound input snapshot")
+        bound_snapshot_hash = _strict_persisted_nullable_text(
+            bound_job["input_snapshot_hash"],
+            message="backtest job metadata is invalid",
+        )
+        if bound_snapshot_hash is None:
             raise RuntimeError("backtest decisions require a bound input snapshot")
         now = _now()
         cursor = db.execute(
             """INSERT INTO backtest_decisions
                (job_id, sequence, signal_date, execution_date, status, attempts,
-                target_position_pct, confidence, feature_hash, policy_hash, error_code,
-                error_stage, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                target_position_pct, confidence, action, rationale, feature_hash,
+                policy_hash, error_code, error_stage, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(job_id, sequence) DO UPDATE SET
                  signal_date = excluded.signal_date,
                  execution_date = excluded.execution_date,
@@ -1300,6 +1336,8 @@ class ContextStore:
                  attempts = excluded.attempts,
                  target_position_pct = excluded.target_position_pct,
                  confidence = excluded.confidence,
+                 action = excluded.action,
+                 rationale = excluded.rationale,
                  feature_hash = excluded.feature_hash,
                  policy_hash = excluded.policy_hash,
                  error_code = excluded.error_code,
@@ -1314,6 +1352,8 @@ class ContextStore:
                 evidence.attempts,
                 evidence.target_position_pct,
                 evidence.confidence,
+                evidence.action,
+                evidence.rationale,
                 evidence.feature_hash,
                 evidence.policy_hash,
                 evidence.error_code,
@@ -1331,7 +1371,7 @@ class ContextStore:
             self._system_db()
             .execute(
                 """SELECT job_id, sequence, signal_date, execution_date, status, attempts,
-                      target_position_pct, confidence, feature_hash, policy_hash,
+                      target_position_pct, confidence, action, rationale, feature_hash, policy_hash,
                       error_code, error_stage, created_at, updated_at
                FROM backtest_decisions WHERE job_id = ? ORDER BY sequence""",
                 (job_id,),
@@ -1509,6 +1549,8 @@ class ContextStore:
                         attempts INTEGER NOT NULL,
                         target_position_pct REAL,
                         confidence REAL,
+                        action TEXT,
+                        rationale TEXT,
                         feature_hash TEXT,
                         policy_hash TEXT NOT NULL,
                         error_code TEXT,
@@ -1521,12 +1563,22 @@ class ContextStore:
                 db.execute(
                     "CREATE INDEX IF NOT EXISTS idx_backtest_decisions_job ON backtest_decisions(job_id)"
                 )
-                if not _backtest_v1_schema_is_consistent(db):
-                    raise BacktestMigrationContractError()
                 db.execute(
                     "INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)",
                     (BACKTEST_CONTRACT_MIGRATION, _now()),
                 )
+            decision_columns = {
+                str(row["name"])
+                for row in db.execute(
+                    "PRAGMA table_info(backtest_decisions)"
+                ).fetchall()
+            }
+            if "action" not in decision_columns:
+                db.execute("ALTER TABLE backtest_decisions ADD COLUMN action TEXT")
+            if "rationale" not in decision_columns:
+                db.execute("ALTER TABLE backtest_decisions ADD COLUMN rationale TEXT")
+            if not _backtest_v1_schema_is_consistent(db):
+                raise BacktestMigrationContractError()
             db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_backtest_jobs_status ON backtest_jobs(status)"
             )
@@ -1845,8 +1897,38 @@ def _monitor_row_to_dict(row) -> dict:
     return d
 
 
+def _strict_persisted_int(value: object, *, message: str) -> int:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    raise RuntimeError(message)
+
+
+def _strict_persisted_text(value: object, *, message: str) -> str:
+    if isinstance(value, str):
+        return value
+    raise RuntimeError(message)
+
+
+def _strict_persisted_nullable_text(value: object, *, message: str) -> str | None:
+    if value is None:
+        return None
+    return _strict_persisted_text(value, message=message)
+
+
+def _strict_persisted_nullable_real(value: object, *, message: str) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise RuntimeError(message)
+    normalized = float(value)
+    if not math.isfinite(normalized):
+        raise RuntimeError(message)
+    return normalized
+
+
 def _backtest_job_from_row(row: sqlite3.Row) -> BacktestJobRecord:
-    status = str(row["status"])
+    metadata_error = "backtest job metadata is invalid"
+    status = _strict_persisted_text(row["status"], message=metadata_error)
     match status:
         case "pending":
             normalized_status: BacktestJobStatus = "pending"
@@ -1858,22 +1940,41 @@ def _backtest_job_from_row(row: sqlite3.Row) -> BacktestJobRecord:
             normalized_status = "failed"
         case _:
             raise RuntimeError("invalid persisted backtest job status")
+    contract_version = _strict_persisted_int(
+        row["contract_version"], message=metadata_error
+    )
+    if contract_version not in {0, 1}:
+        raise RuntimeError(metadata_error)
     return BacktestJobRecord(
-        id=str(row["id"]),
-        request_json=str(row["request_json"]),
-        contract_version=int(row["contract_version"]),
-        run_spec_json=(str(row["run_spec_json"]) if row["run_spec_json"] else None),
-        input_snapshot_hash=(
-            str(row["input_snapshot_hash"]) if row["input_snapshot_hash"] else None
+        id=_strict_persisted_text(row["id"], message=metadata_error),
+        request_json=_strict_persisted_text(
+            row["request_json"], message=metadata_error
         ),
-        progress_json=(str(row["progress_json"]) if row["progress_json"] else None),
+        contract_version=contract_version,
+        run_spec_json=_strict_persisted_nullable_text(
+            row["run_spec_json"], message=metadata_error
+        ),
+        input_snapshot_hash=_strict_persisted_nullable_text(
+            row["input_snapshot_hash"], message=metadata_error
+        ),
+        progress_json=_strict_persisted_nullable_text(
+            row["progress_json"], message=metadata_error
+        ),
         status=normalized_status,
-        result_json=(str(row["result_json"]) if row["result_json"] else None),
-        error_json=(str(row["error_json"]) if row["error_json"] else None),
-        created_at=str(row["created_at"]),
-        started_at=(str(row["started_at"]) if row["started_at"] else None),
-        completed_at=(str(row["completed_at"]) if row["completed_at"] else None),
-        updated_at=str(row["updated_at"]),
+        result_json=_strict_persisted_nullable_text(
+            row["result_json"], message=metadata_error
+        ),
+        error_json=_strict_persisted_nullable_text(
+            row["error_json"], message=metadata_error
+        ),
+        created_at=_strict_persisted_text(row["created_at"], message=metadata_error),
+        started_at=_strict_persisted_nullable_text(
+            row["started_at"], message=metadata_error
+        ),
+        completed_at=_strict_persisted_nullable_text(
+            row["completed_at"], message=metadata_error
+        ),
+        updated_at=_strict_persisted_text(row["updated_at"], message=metadata_error),
     )
 
 
@@ -1982,49 +2083,141 @@ def _validate_backtest_snapshot_payload(
                 raise RuntimeError("backtest input snapshot provenance is invalid")
 
 
+def _decode_backtest_input_snapshot_payload(
+    payload: bytes,
+    *,
+    compressed_bytes: int,
+    uncompressed_bytes: int,
+    content_hash: str,
+) -> bytes:
+    return decode_canonical_snapshot(
+        CanonicalSnapshotEnvelope(
+            payload=payload,
+            compressed_bytes=compressed_bytes,
+            uncompressed_bytes=uncompressed_bytes,
+            content_hash=content_hash,
+            maximum_uncompressed_bytes=_MAX_BACKTEST_INPUT_SNAPSHOT_BYTES,
+        )
+    )
+
+
 def _backtest_input_snapshot_from_row(
     row: sqlite3.Row,
 ) -> BacktestInputSnapshotRecord:
+    metadata_error = "backtest input snapshot metadata is invalid"
+    payload = row["payload"]
+    if not isinstance(payload, bytes):
+        raise RuntimeError(metadata_error)
+    compressed_bytes = _strict_persisted_int(
+        row["compressed_bytes"], message=metadata_error
+    )
+    uncompressed_bytes = _strict_persisted_int(
+        row["uncompressed_bytes"], message=metadata_error
+    )
+    schema_version = _strict_persisted_int(
+        row["schema_version"], message=metadata_error
+    )
+    row_count_target = _strict_persisted_int(
+        row["row_count_target"], message=metadata_error
+    )
+    row_count_benchmark = _strict_persisted_int(
+        row["row_count_benchmark"], message=metadata_error
+    )
+    content_hash = _strict_persisted_text(row["content_hash"], message=metadata_error)
+    codec = _strict_persisted_text(row["codec"], message=metadata_error)
+    created_at = _strict_persisted_text(row["created_at"], message=metadata_error)
+    if (
+        schema_version != 1
+        or codec != "gzip-json-v1"
+        or compressed_bytes < 0
+        or uncompressed_bytes < 0
+        or row_count_target < 0
+        or row_count_benchmark < 0
+    ):
+        raise RuntimeError(metadata_error)
+    _decode_backtest_input_snapshot_payload(
+        payload,
+        compressed_bytes=compressed_bytes,
+        uncompressed_bytes=uncompressed_bytes,
+        content_hash=content_hash,
+    )
     return BacktestInputSnapshotRecord(
-        content_hash=str(row["content_hash"]),
-        schema_version=int(row["schema_version"]),
-        codec=str(row["codec"]),
-        payload=bytes(row["payload"]),
-        compressed_bytes=int(row["compressed_bytes"]),
-        uncompressed_bytes=int(row["uncompressed_bytes"]),
-        row_count_target=int(row["row_count_target"]),
-        row_count_benchmark=int(row["row_count_benchmark"]),
-        created_at=str(row["created_at"]),
+        content_hash=content_hash,
+        schema_version=schema_version,
+        codec=codec,
+        payload=payload,
+        compressed_bytes=compressed_bytes,
+        uncompressed_bytes=uncompressed_bytes,
+        row_count_target=row_count_target,
+        row_count_benchmark=row_count_benchmark,
+        created_at=created_at,
     )
 
 
 def _backtest_decision_from_row(row: sqlite3.Row) -> BacktestDecisionRecord:
+    metadata_error = "backtest decision metadata is invalid"
+    sequence = _strict_persisted_int(row["sequence"], message=metadata_error)
+    attempts = _strict_persisted_int(row["attempts"], message=metadata_error)
+    if sequence <= 0 or attempts <= 0:
+        raise RuntimeError(metadata_error)
+    target_position_pct = _strict_persisted_nullable_real(
+        row["target_position_pct"], message=metadata_error
+    )
+    confidence = _strict_persisted_nullable_real(
+        row["confidence"], message=metadata_error
+    )
+    if target_position_pct is not None and not 0 <= target_position_pct <= 100:
+        raise RuntimeError(metadata_error)
+    if confidence is not None and not 0 <= confidence <= 1:
+        raise RuntimeError(metadata_error)
+    job_id = _strict_persisted_text(row["job_id"], message=metadata_error)
+    signal_date = _strict_persisted_text(row["signal_date"], message=metadata_error)
+    execution_date = _strict_persisted_nullable_text(
+        row["execution_date"], message=metadata_error
+    )
+    rationale = _strict_persisted_nullable_text(
+        row["rationale"], message=metadata_error
+    )
+    feature_hash = _strict_persisted_nullable_text(
+        row["feature_hash"], message=metadata_error
+    )
+    policy_hash = _strict_persisted_text(row["policy_hash"], message=metadata_error)
+    error_code = _strict_persisted_nullable_text(
+        row["error_code"], message=metadata_error
+    )
+    error_stage = _strict_persisted_nullable_text(
+        row["error_stage"], message=metadata_error
+    )
+    if (
+        error_code is not None and error_code not in _BACKTEST_DECISION_ERROR_CODES
+    ) or (
+        error_stage is not None and error_stage not in _BACKTEST_DECISION_ERROR_STAGES
+    ):
+        raise RuntimeError(metadata_error)
     return BacktestDecisionRecord(
-        job_id=str(row["job_id"]),
-        sequence=int(row["sequence"]),
-        signal_date=str(row["signal_date"]),
-        execution_date=(str(row["execution_date"]) if row["execution_date"] else None),
+        job_id=job_id,
+        sequence=sequence,
+        signal_date=signal_date,
+        execution_date=execution_date,
         status=_backtest_decision_status_from_row(row),
-        attempts=int(row["attempts"]),
-        target_position_pct=(
-            float(row["target_position_pct"])
-            if row["target_position_pct"] is not None
-            else None
-        ),
-        confidence=(
-            float(row["confidence"]) if row["confidence"] is not None else None
-        ),
-        feature_hash=(str(row["feature_hash"]) if row["feature_hash"] else None),
-        policy_hash=str(row["policy_hash"]),
-        error_code=(str(row["error_code"]) if row["error_code"] else None),
-        error_stage=(str(row["error_stage"]) if row["error_stage"] else None),
-        created_at=str(row["created_at"]),
-        updated_at=str(row["updated_at"]),
+        attempts=attempts,
+        target_position_pct=target_position_pct,
+        confidence=confidence,
+        action=_backtest_decision_action_from_row(row, message=metadata_error),
+        rationale=rationale,
+        feature_hash=feature_hash,
+        policy_hash=policy_hash,
+        error_code=error_code,
+        error_stage=error_stage,
+        created_at=_strict_persisted_text(row["created_at"], message=metadata_error),
+        updated_at=_strict_persisted_text(row["updated_at"], message=metadata_error),
     )
 
 
 def _backtest_decision_status_from_row(row: sqlite3.Row) -> BacktestDecisionStatus:
-    status = str(row["status"])
+    status = _strict_persisted_text(
+        row["status"], message="backtest decision metadata is invalid"
+    )
     match status:
         case "not_ready":
             return "not_ready"
@@ -2036,6 +2229,25 @@ def _backtest_decision_status_from_row(row: sqlite3.Row) -> BacktestDecisionStat
             return "unfilled_end_of_window"
         case _:
             raise RuntimeError("invalid persisted backtest decision status")
+
+
+def _backtest_decision_action_from_row(
+    row: sqlite3.Row,
+    *,
+    message: str,
+) -> BacktestDecisionAction | None:
+    action = _strict_persisted_nullable_text(row["action"], message=message)
+    match action:
+        case None:
+            return None
+        case "BUY":
+            return "BUY"
+        case "SELL":
+            return "SELL"
+        case "HOLD":
+            return "HOLD"
+        case _:
+            raise RuntimeError("invalid persisted backtest decision action")
 
 
 def _backtest_v1_schema_is_consistent(db: sqlite3.Connection) -> bool:

@@ -1,6 +1,6 @@
 # Progress & Roadmap
 
-Last updated: 2026-07-13 | Branch: `dev`
+Last updated: 2026-07-14 | Branch: `dev`
 
 ## Backtest Reliability and Fidelity Goal
 
@@ -280,6 +280,70 @@ Evidence:
 - `.omo/evidence/backtest-reliability-and-fidelity/phase-5/task-9-api/real-fastapi-curl.md`
 - `.omo/evidence/backtest-reliability-and-fidelity/phase-5/task-10-browser/phase-gate.md`
 - `.omo/evidence/backtest-reliability-and-fidelity/phase-5/task-10-browser/debugging-audit.md`
+
+### Phase 6: Deterministic Replay and Final Acceptance ✅
+
+Completed on 2026-07-14: Todo 11 and Todo 12 are closed. The immutable
+`BASELINE_HEAD=9292987bc35f8223609e98e655fabba3cdf65242` recorded above was read,
+not recomputed or overwritten.
+
+Delivered:
+
+- Frozen-snapshot replay now has a canonical economic result hash which binds
+  versioned policy/config/data, decision and order economics, historical fills,
+  closed trades, equity, metrics, and warnings while excluding operational
+  identities and runtime metadata. Economic mutations change the hash;
+  operational IDs and non-economic rationale do not.
+- Persisted snapshot/job/decision/result corruption fails closed through typed
+  `storage_corrupt` projections. Snapshot decoding is bounded, canonical, and
+  rejects malformed metadata, trailing/concatenated gzip data, hash mismatch,
+  noncanonical rows, and invalid persisted scalar/text types.
+- A benchmark with zero evaluation-session overlap is a typed data failure;
+  partial past-only overlap preserves the target calendar. Decision evidence
+  retains derived action/rationale and order evidence retains available ticker,
+  side, quantity, type, and price economics.
+- Strategy selection now defaults the run cadence from the selected strategy's
+  `execution_frequency`; a user's same-strategy override is preserved until a
+  different strategy is selected.
+- The explicit follow-up at
+  `plans/future-works/backtest-oos-robustness-follow-up.md` keeps walk-forward,
+  sensitivity, bootstrap/Monte Carlo, DSR, and PBO outside this fidelity Goal.
+
+Final acceptance evidence:
+
+- Deterministic AAPL/SPY two-year matrix ran daily/weekly/monthly ten times per
+  cadence with stable canonical economics, distinct operational IDs, terminal
+  completion, and closed trades. The original 61-session 2024 reproduction
+  produced exact executable decision counts `60/12/2`.
+- Full backend pytest passed `642 passed, 1 skipped, 1 warning`; focused
+  numerical/persistence/docs tests passed `56 passed, 1 warning`. Ruff,
+  formatting, scoped BasedPyright, and `git diff --check` passed.
+- Frontend Node tests passed `23/23`; TypeScript, zero-error ESLint, and the
+  production Next build with all 20 routes passed.
+- Real Uvicorn/FastAPI create, terminal poll, replay, four exports, backend
+  restart, invalid dates, and persisted-corruption fail-close checks passed.
+  Real production Chromium clicked Run, observed semantic progress and terminal
+  diagnostics, downloaded CSV, reloaded the persisted job, and passed desktop
+  plus 390px mobile checks with zero console/page/unexpected network errors.
+- Independent numerical oracle and runtime hypotheses passed for next-open/no-
+  lookahead timing, frozen Strategy/snapshot replay, initial-capital accounting,
+  fees/slippage/closed-trade economics, benchmark/risk metrics, and storage
+  corruption. The synthetic four-trade fixture is functional evidence only;
+  zero-trade or Agent-experiment output was not treated as trusted performance,
+  and OOS robustness remains `not evaluated`.
+- Final `review-work` goal, quality, QA, security, and context lanes, both fresh
+  visual QA lanes, and F1-F5 returned unconditional PASS. Scope union from the
+  immutable baseline plus staged/unstaged/untracked paths found no protected
+  path, secret, runtime database, or unrelated artifact; no push/PR occurred.
+
+Evidence:
+
+- `.omo/evidence/backtest-reliability-and-fidelity/final/final-acceptance.md`
+- `.omo/evidence/backtest-reliability-and-fidelity/final/final-qa-receipt.md`
+- `.omo/evidence/backtest-reliability-and-fidelity/final/numerical-debug-audit.md`
+- `.omo/evidence/backtest-reliability-and-fidelity/final/consolidated-review-work.md`
+- `.omo/evidence/backtest-reliability-and-fidelity/final/visual-qa-verdict.md`
+- `.omo/evidence/backtest-reliability-and-fidelity/final/current-visual/manifest.json`
 
 ## Frontend Demo Integration: Backtest Running Persistence ✅
 

@@ -290,6 +290,8 @@ class BacktestDecisionView(BaseModel):
     attempts: int = 1
     target_position_pct: float | None = None
     confidence: float | None = None
+    action: Literal["BUY", "SELL", "HOLD"] | None = None
+    rationale: str | None = None
     feature_hash: str | None = None
     policy_hash: str = ""
     error_code: str | None = None
@@ -302,6 +304,11 @@ class BacktestOrderEvidenceView(BaseModel):
     signal_date: str
     execution_date: str | None = None
     reason: str = ""
+    ticker: str | None = None
+    side: Literal["BUY", "SELL"] | None = None
+    quantity: float | None = None
+    order_type: Literal["MARKET", "LIMIT"] | None = None
+    limit_price: float | None = None
 
 
 class BacktestEndPositionView(BaseModel):

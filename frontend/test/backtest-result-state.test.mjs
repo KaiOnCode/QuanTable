@@ -3,8 +3,11 @@ import test from "node:test";
 
 import {
   backtestModeForStrategy,
+  backtestExecutionTimingLabel,
+  displayBacktestIdentifier,
   deriveBacktestEligibility,
   deriveBacktestJobState,
+  syncBacktestFrequencySelection,
 } from "../lib/backtest-result-state.ts";
 
 const VALID_QUANT_STRATEGY = {
@@ -26,6 +29,23 @@ const VALID_QUANT_STRATEGY = {
   max_position_pct: 100,
   max_drawdown_pct: 20,
 };
+
+test("resets frequency from a newly selected strategy and preserves same-strategy override", () => {
+  // Given: the user overrode a daily strategy to monthly.
+  const overridden = { strategyId: "quant-a", frequency: "monthly" };
+
+  // When: data refreshes for the same strategy, then selection changes to weekly.
+  const preserved = syncBacktestFrequencySelection(overridden, VALID_QUANT_STRATEGY);
+  const reset = syncBacktestFrequencySelection(preserved, {
+    ...VALID_QUANT_STRATEGY,
+    id: "quant-b",
+    execution_frequency: "weekly",
+  });
+
+  // Then: refresh preserves the override, while selection change resets to its default.
+  assert.deepEqual(preserved, overridden);
+  assert.deepEqual(reset, { strategyId: "quant-b", frequency: "weekly" });
+});
 
 function jobWith(overrides) {
   return {
@@ -68,6 +88,39 @@ test("selects deterministic mode for an eligible quant strategy", () => {
     mode: "deterministic",
     providerCheck: "not_required",
   });
+});
+
+test("allows an otherwise valid deterministic quant strategy with empty beliefs", () => {
+  // Given: the backend-supported default strategy shape with no discretionary beliefs.
+  const strategy = { ...VALID_QUANT_STRATEGY, beliefs: [] };
+
+  // When: the frontend derives whether the frozen deterministic policy can run.
+  const eligibility = deriveBacktestEligibility(strategy, "AAPL");
+
+  // Then: it matches the backend contract and remains runnable without an LLM.
+  assert.deepEqual(eligibility, {
+    kind: "eligible",
+    mode: "deterministic",
+    providerCheck: "not_required",
+  });
+});
+
+test("keeps complete reproducibility identifiers available for rendering", () => {
+  const identifier = "a".repeat(64);
+
+  assert.equal(displayBacktestIdentifier(identifier), identifier);
+  assert.equal(displayBacktestIdentifier(""), "unavailable");
+});
+
+test("never labels a non-v1 timing value as a same-bar fill", () => {
+  assert.equal(
+    backtestExecutionTimingLabel("next_open"),
+    "Signal at close, fill next open",
+  );
+  assert.equal(
+    backtestExecutionTimingLabel("close_bar"),
+    "Unsupported legacy timing; canonical v1 uses next open",
+  );
 });
 
 test("selects the experimental mode only for an eligible agent strategy", () => {

@@ -152,9 +152,10 @@ class StrategyConfig(BaseModel):
     enable_debate_mode: bool = True
     enable_cross_review: bool = False       # Dual-LLM cross-review for HITL
 
-    # Quant config (for QUANT type)
-    quant_strategy_name: str | None
-    quant_params: dict = {}
+    # Serialized quant configuration. Backtest eligibility parses this into a
+    # typed, versioned immutable policy before a run is accepted.
+    quant_strategy_name: Literal["momentum", "sma_crossover"] | None
+    quant_params: dict[str, JsonValue] = Field(default_factory=dict)
     alpha_zoo_factors: list[str] = []       # Selected factors from Alpha Zoo
 
     # Execution config
@@ -186,6 +187,41 @@ class StrategyConfig(BaseModel):
     creator: str
     parent_strategy_id: str | None
 ```
+
+`StrategyConfig` is mutable user configuration, not an executable backtest
+definition. A canonical backtest first resolves it into the following frozen
+models; the persisted API payload keeps the JSON `quant_params` boundary so a
+Strategy can be edited, while execution receives only the typed snapshot.
+
+```python
+class MomentumPolicy(BaseModel):
+    kind: Literal["momentum"] = "momentum"
+    version: Literal["v1"] = "v1"
+    lookback_bars: int                 # 2..252
+    entry_threshold: float             # finite
+    exit_threshold: float              # finite and <= entry_threshold
+    target_position_pct: float         # normalized 0..1
+
+class SmaCrossoverPolicy(BaseModel):
+    kind: Literal["sma_crossover"] = "sma_crossover"
+    version: Literal["v1"] = "v1"
+    fast_window: int                   # 2..100
+    slow_window: int                   # > fast_window, <=252
+    target_position_pct: float         # normalized 0..1
+
+class BacktestPolicySnapshot(BaseModel):
+    mode: Literal["deterministic", "agent_experiment"]
+    strategy_type: Literal["quant", "agent"]
+    policy: MomentumPolicy | SmaCrossoverPolicy | ExperimentalAgentPolicy
+```
+
+`deterministic` requires an active `quant` Strategy, a supported typed policy,
+an uppercase non-empty ticker universe, and a policy target no larger than the
+Strategy maximum position. `agent_experiment` is explicitly provider-dependent
+and cannot be treated as canonical performance; HITL historical backtests are
+rejected. The accepted `BacktestRunSpec` freezes the policy, Strategy snapshot,
+broker configuration, run cadence, and stable policy/strategy hashes before a
+worker runs.
 
 ## 4. Trading Belief
 
@@ -463,6 +499,33 @@ class PerformanceMetrics(BaseModel):
     benchmark_return_pct: float
     excess_return_pct: float
     equity_curve: list[dict]                # [{date, equity, daily_return, benchmark_equity}, ...]
+
+class BacktestDecisionEvidence(BaseModel):
+    sequence: int
+    signal_date: str
+    execution_date: str | None
+    status: str
+    attempts: int
+    target_position_pct: float | None
+    confidence: float | None
+    action: Literal["BUY", "SELL", "HOLD"] | None
+    rationale: str | None
+    feature_hash: str | None
+    policy_hash: str
+    error_code: str | None
+    error_stage: str | None
+
+class BacktestOrderEvidence(BaseModel):
+    order_id: str
+    status: Literal["pending", "executed", "cancelled", "rejected", "unfilled"]
+    signal_date: str
+    execution_date: str | None
+    reason: str
+    ticker: str | None
+    side: Literal["BUY", "SELL"] | None
+    quantity: float | None
+    order_type: Literal["MARKET", "LIMIT"] | None
+    limit_price: float | None
 ```
 
 ## 10. Debate Record
