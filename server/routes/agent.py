@@ -19,7 +19,7 @@ from threading import Lock, Thread
 from typing import Annotated, Literal
 from uuid import uuid4
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Path as FastAPIPath, Query
 from fastapi.responses import Response, StreamingResponse
 from pydantic import (
     BaseModel,
@@ -30,7 +30,9 @@ from pydantic import (
 )
 
 from agent.backtest_jobs import (
+    BacktestJobAcceptedResponse,
     BacktestJobResponse,
+    BacktestReplayUnavailableError,
     BacktestJobService,
     BacktestRequest,
     default_backtest_job_service,
@@ -47,6 +49,7 @@ RUNS_DIR.mkdir(parents=True, exist_ok=True)
 _backtest_job_service: BacktestJobService | None = None
 _backtest_job_service_lock = Lock()
 _scanner_compilation_service: ScannerCompilationService | None = None
+BacktestJobId = Annotated[str, FastAPIPath(pattern=r"^[0-9a-f]{32}$")]
 
 
 @asynccontextmanager
@@ -325,11 +328,11 @@ async def _parse_backtest_request(
 @router.post(
     "/agent/backtest",
     status_code=202,
-    response_model=BacktestJobResponse,
+    response_model=BacktestJobAcceptedResponse,
 )
 async def create_backtest(
     request: Annotated[BacktestRequest, Depends(_parse_backtest_request)],
-) -> BacktestJobResponse:
+) -> BacktestJobAcceptedResponse:
     service = get_backtest_job_service()
     try:
         return service.create(request)
@@ -340,29 +343,178 @@ async def create_backtest(
 
 
 @router.get("/agent/backtest/{backtest_id}", response_model=BacktestJobResponse)
-async def get_backtest(backtest_id: str) -> BacktestJobResponse:
+async def get_backtest(backtest_id: BacktestJobId) -> BacktestJobResponse:
     job = get_backtest_job_service().get(backtest_id)
     if job is None:
-        raise HTTPException(404, f"Backtest {backtest_id} not found")
+        raise HTTPException(
+            404,
+            detail={"code": "backtest_not_found", "message": "Backtest not found"},
+        )
     return job
 
 
+@router.post(
+    "/agent/backtest/{backtest_id}/replay",
+    status_code=202,
+    response_model=BacktestJobAcceptedResponse,
+)
+async def replay_backtest(backtest_id: BacktestJobId) -> BacktestJobAcceptedResponse:
+    service = get_backtest_job_service()
+    if service.get(backtest_id) is None:
+        raise HTTPException(
+            404,
+            detail={"code": "backtest_not_found", "message": "Backtest not found"},
+        )
+    try:
+        return service.create_replay(backtest_id)
+    except BacktestReplayUnavailableError as exc:
+        raise HTTPException(
+            409,
+            detail={
+                "code": "replay_unavailable",
+                "message": "Frozen backtest replay is unavailable",
+            },
+        ) from exc
+
+
 @router.get("/agent/backtest/{backtest_id}/trades.csv")
-async def download_backtest_trades(backtest_id: str) -> Response:
+async def download_backtest_trades(backtest_id: BacktestJobId) -> Response:
     service = get_backtest_job_service()
     job = service.get(backtest_id)
     if job is None:
-        raise HTTPException(404, f"Backtest {backtest_id} not found")
+        raise HTTPException(
+            404,
+            detail={"code": "backtest_not_found", "message": "Backtest not found"},
+        )
     if job.status != "completed":
-        raise HTTPException(409, "Backtest is not completed")
+        raise HTTPException(
+            409,
+            detail={
+                "code": "export_unavailable",
+                "message": "Backtest export is unavailable",
+            },
+        )
     csv_content = service.trades_csv(backtest_id)
     if csv_content is None:
-        raise HTTPException(409, "Backtest trades are not available")
+        raise HTTPException(
+            409,
+            detail={
+                "code": "export_unavailable",
+                "message": "Backtest export is unavailable",
+            },
+        )
     return Response(
         content=csv_content,
-        media_type="text/csv",
+        media_type="text/csv; charset=utf-8",
         headers={
             "Content-Disposition": f'attachment; filename="backtest-{backtest_id}-trades.csv"'
+        },
+    )
+
+
+@router.get("/agent/backtest/{backtest_id}/closed-trades.csv")
+async def download_backtest_closed_trades(backtest_id: BacktestJobId) -> Response:
+    service = get_backtest_job_service()
+    job = service.get(backtest_id)
+    if job is None:
+        raise HTTPException(
+            404,
+            detail={"code": "backtest_not_found", "message": "Backtest not found"},
+        )
+    if job.status != "completed":
+        raise HTTPException(
+            409,
+            detail={
+                "code": "export_unavailable",
+                "message": "Backtest export is unavailable",
+            },
+        )
+    csv_content = service.closed_trades_csv(backtest_id)
+    if csv_content is None:
+        raise HTTPException(
+            409,
+            detail={
+                "code": "export_unavailable",
+                "message": "Backtest export is unavailable",
+            },
+        )
+    return Response(
+        content=csv_content,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="backtest-{backtest_id}-closed-trades.csv"'
+            )
+        },
+    )
+
+
+@router.get("/agent/backtest/{backtest_id}/decisions.csv")
+async def download_backtest_decisions_csv(backtest_id: BacktestJobId) -> Response:
+    service = get_backtest_job_service()
+    job = service.get(backtest_id)
+    if job is None:
+        raise HTTPException(
+            404,
+            detail={"code": "backtest_not_found", "message": "Backtest not found"},
+        )
+    if job.status != "completed":
+        raise HTTPException(
+            409,
+            detail={
+                "code": "export_unavailable",
+                "message": "Backtest export is unavailable",
+            },
+        )
+    csv_content = service.decisions_csv(backtest_id)
+    if csv_content is None:
+        raise HTTPException(
+            409,
+            detail={
+                "code": "export_unavailable",
+                "message": "Backtest export is unavailable",
+            },
+        )
+    return Response(
+        content=csv_content,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="backtest-{backtest_id}-decisions.csv"'
+        },
+    )
+
+
+@router.get("/agent/backtest/{backtest_id}/decisions.json")
+async def download_backtest_decisions_json(backtest_id: BacktestJobId) -> Response:
+    service = get_backtest_job_service()
+    job = service.get(backtest_id)
+    if job is None:
+        raise HTTPException(
+            404,
+            detail={"code": "backtest_not_found", "message": "Backtest not found"},
+        )
+    if job.status != "completed":
+        raise HTTPException(
+            409,
+            detail={
+                "code": "export_unavailable",
+                "message": "Backtest export is unavailable",
+            },
+        )
+    json_content = service.decisions_json(backtest_id)
+    if json_content is None:
+        raise HTTPException(
+            409,
+            detail={
+                "code": "export_unavailable",
+                "message": "Backtest export is unavailable",
+            },
+        )
+    return Response(
+        content=json_content,
+        media_type="application/json",
+        headers={
+            "Content-Disposition": f'attachment; filename="backtest-{backtest_id}-decisions.json"'
         },
     )
 

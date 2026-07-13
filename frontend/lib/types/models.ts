@@ -478,100 +478,248 @@ export interface SystemConfig {
   notification_status: Record<NotificationChannelName, NotificationChannelStatus>;
 }
 
-export interface BacktestRequest {
-  strategy_id: string;
-  ticker: string;
-  date_from: string;
-  date_to: string;
-  frequency: "daily" | "weekly" | "monthly";
-  benchmark: string;
-}
+export type BacktestFrequency = "daily" | "weekly" | "monthly";
+export type BacktestMode = "deterministic" | "agent_experiment";
+export type BacktestJobStatus = "pending" | "running" | "completed" | "failed";
 
-export interface PerformanceMetricsView {
-  cumulative_return_pct: number;
-  total_return_pct: number;
-  annualized_return_pct: number;
-  benchmark_return_pct: number;
-  excess_return_pct: number;
-  max_drawdown_pct: number;
-  max_drawdown_duration: number;
-  sharpe_ratio: number;
-  win_rate_pct: number;
-  profit_factor: number;
-  avg_win: number;
-  avg_loss: number;
-  payoff_ratio: number;
-  number_of_trades: number;
-  avg_holding_period_days: number;
-}
+export type BacktestRequest = {
+  readonly strategy_id: string;
+  readonly ticker: string;
+  readonly date_from: string;
+  readonly date_to: string;
+  readonly frequency: BacktestFrequency;
+  readonly benchmark: string;
+  readonly mode: BacktestMode;
+};
 
-export interface BacktestConfigView {
-  ticker: string;
-  start_date: string;
-  end_date: string;
-  frequency: "daily" | "weekly" | "monthly";
-  benchmark_symbol: string;
-  strategy_id: string;
-  account_id: string;
-}
+export type BacktestJobAcceptedResponse = {
+  readonly id: string;
+  readonly status: "pending";
+  readonly contract_version: 1;
+};
 
-export interface BacktestSeriesPointView {
-  date: string;
-  strategy_equity: number;
-  benchmark_equity: number;
-  strategy_drawdown_pct: number;
-  benchmark_drawdown_pct: number;
-}
+export type PerformanceMetricsView = {
+  readonly cumulative_return_pct: number | null;
+  readonly total_return_pct: number | null;
+  readonly annualized_return_pct: number | null;
+  readonly annualized_volatility_pct: number | null;
+  readonly benchmark_return_pct: number | null;
+  readonly excess_return_pct: number | null;
+  readonly max_drawdown_pct: number | null;
+  readonly max_drawdown_duration: number;
+  readonly sharpe_ratio: number | null;
+  readonly win_rate_pct: number | null;
+  readonly profit_factor: number | null;
+  readonly avg_win: number | null;
+  readonly avg_loss: number | null;
+  readonly payoff_ratio: number | null;
+  readonly number_of_trades: number;
+  readonly number_of_fills: number;
+  readonly number_of_orders: number;
+  readonly number_of_rejections: number;
+  readonly number_of_closed_trades: number;
+  readonly avg_holding_period_days: number;
+  readonly realized_pnl_usd: number;
+  readonly unrealized_pnl_usd: number;
+  readonly net_pnl_usd: number;
+  readonly total_fees_usd: number;
+  readonly total_slippage_usd: number;
+  readonly turnover_pct: number;
+  readonly average_daily_gross_exposure_pct: number;
+};
 
-export interface BacktestTradeView {
-  order_id: string;
-  timestamp: string;
-  ticker: string;
-  side: "buy" | "sell";
-  quantity: number;
-  price: number;
-  fee: number;
-  slippage: number;
-  trade_value: number;
-  realized_pnl: number;
-  cash_after: number;
-  equity_after: number;
-  shares_after: number;
-  avg_cost_after: number;
-  strategy_id: string;
-  account_id: string;
-  session_id: string;
-  decision_id: string;
-}
+export type BacktestConfigView = {
+  readonly ticker: string;
+  readonly start_date: string;
+  readonly end_date: string;
+  readonly frequency: BacktestFrequency;
+  readonly benchmark_symbol: string;
+  readonly strategy_id: string;
+  readonly account_id: string;
+  readonly mode: BacktestMode;
+  readonly agent_model: string | null;
+  readonly strategy_snapshot_hash: string;
+  readonly policy_hash: string;
+  readonly data_snapshot_hash: string;
+  readonly engine_version: string;
+  readonly strategy_execution_frequency: BacktestFrequency;
+  readonly run_frequency: BacktestFrequency;
+  readonly initial_capital: number;
+  readonly commission_rate: number;
+  readonly commission_bps: number;
+  readonly slippage_rate: number;
+  readonly slippage_bps: number;
+  readonly execution_timing: "next_open" | "close_bar";
+  readonly max_position_pct: number;
+  readonly allow_short: boolean;
+  readonly provider_adjustment_mode: string;
+  readonly corporate_actions_mode: string;
+  readonly data_provider: string;
+  readonly data_provider_version: string;
+  readonly data_interval: "1d";
+  readonly data_auto_adjust: boolean;
+  readonly data_actions: boolean;
+  readonly data_end_exclusive: string;
+  readonly data_lookback_days: number;
+  readonly data_provider_buffer_days: number;
+  readonly data_provider_end_semantics: "exclusive";
+  readonly data_provider_timezone: string;
+  readonly data_timezone_normalization: "exchange_session_date_to_UTC_midnight";
+  readonly warmup_bars: number;
+  readonly risk_free_rate: number;
+  readonly periods_per_year: number;
+  readonly max_drawdown_limit_pct: number;
+  readonly max_drawdown_limit_enforced: boolean;
+  readonly evaluation_bar_count: number;
+  readonly sample_first_date: string;
+  readonly sample_last_date: string;
+};
 
-export interface BacktestResultView {
-  status: "completed";
-  config: BacktestConfigView;
-  summary: PerformanceMetricsView;
-  series: BacktestSeriesPointView[];
-  trades: BacktestTradeView[];
-}
+export type BacktestProgressView = {
+  readonly bars_total: number;
+  readonly bars_processed: number;
+  readonly decisions_total: number;
+  readonly decisions_eligible: number;
+  readonly decisions_not_ready: number;
+  readonly decisions_completed: number;
+  readonly current_decision_date: string | null;
+};
 
-export interface BacktestJobError {
-  code:
+export type BacktestDecisionView = {
+  readonly sequence: number;
+  readonly signal_date: string;
+  readonly execution_date: string | null;
+  readonly status: "not_ready" | "completed" | "failed" | "unfilled_end_of_window";
+  readonly attempts: number;
+  readonly target_position_pct: number | null;
+  readonly confidence: number | null;
+  readonly feature_hash: string | null;
+  readonly policy_hash: string;
+  readonly error_code: string | null;
+  readonly error_stage: string | null;
+};
+
+export type BacktestOrderEvidenceView = {
+  readonly order_id: string;
+  readonly status: "pending" | "executed" | "cancelled" | "rejected" | "unfilled";
+  readonly signal_date: string;
+  readonly execution_date: string | null;
+  readonly reason: string;
+};
+
+export type BacktestTradeView = {
+  readonly order_id: string;
+  readonly timestamp: string;
+  readonly ticker: string;
+  readonly side: "buy" | "sell";
+  readonly quantity: number;
+  readonly price: number;
+  readonly fee: number;
+  readonly slippage: number;
+  readonly trade_value: number;
+  readonly realized_pnl: number;
+  readonly cash_after: number;
+  readonly equity_after: number;
+  readonly shares_after: number;
+  readonly avg_cost_after: number;
+  readonly strategy_id: string;
+  readonly account_id: string;
+  readonly session_id: string;
+  readonly decision_id: string;
+};
+
+export type ClosedTradeView = {
+  readonly entry_at: string;
+  readonly exit_at: string;
+  readonly ticker: string;
+  readonly quantity: number;
+  readonly entry_vwap: number;
+  readonly exit_vwap: number;
+  readonly average_cost_basis: number;
+  readonly net_realized_pnl: number;
+  readonly fees: number;
+  readonly slippage: number;
+  readonly holding_period_trading_days: number;
+  readonly strategy_id: string;
+  readonly account_id: string;
+  readonly session_id: string;
+  readonly decision_id: string;
+};
+
+export type BacktestSeriesPointView = {
+  readonly date: string;
+  readonly strategy_equity: number;
+  readonly benchmark_equity: number | null;
+  readonly strategy_drawdown_pct: number;
+  readonly benchmark_drawdown_pct: number | null;
+};
+
+export type BacktestNoTradeReasonView = {
+  readonly code: "no_signals" | "not_ready" | "all_hold" | "all_rejected";
+  readonly count: number;
+};
+
+export type BacktestEndPositionView = {
+  readonly ticker: string;
+  readonly shares: number;
+  readonly market_value: number;
+  readonly average_cost_basis: number;
+  readonly unrealized_pnl: number;
+  readonly liquidated_at_end: boolean;
+};
+
+export type BacktestProvenanceView = {
+  readonly strategy_snapshot_hash: string;
+  readonly policy_hash: string;
+  readonly data_snapshot_hash: string;
+  readonly canonical_result_hash: string;
+};
+
+export type BacktestJobResult = {
+  readonly outcome: "completed" | "completed_no_trades";
+  readonly warnings: readonly string[];
+  readonly no_trade_reasons: readonly BacktestNoTradeReasonView[];
+  readonly metrics: PerformanceMetricsView;
+  readonly equity: readonly BacktestSeriesPointView[];
+  readonly orders: readonly BacktestOrderEvidenceView[];
+  readonly fills: readonly BacktestTradeView[];
+  readonly closed_trades: readonly ClosedTradeView[];
+  readonly end_position: BacktestEndPositionView;
+  readonly provenance: BacktestProvenanceView;
+};
+
+export type BacktestJobError = {
+  readonly code:
     | "agent_failed"
     | "backtest_failed"
+    | "execution_failed"
     | "interrupted"
     | "market_data_unavailable"
-    | "storage_corrupt";
-  message: string;
-}
+    | "storage_corrupt"
+    | "decision_context_invalid"
+    | "decision_policy_invalid"
+    | "decision_transient_exhausted"
+    | "provider_failed"
+    | "decision_schema_invalid"
+    | "insufficient_history";
+  readonly stage: string | null;
+  readonly decision_date: string | null;
+  readonly attempt: number | null;
+  readonly message: string;
+};
 
-export interface BacktestJobResponse {
-  backtest_id: string;
-  status: "pending" | "running" | "completed" | "failed";
-  result: BacktestResultView | null;
-  error: BacktestJobError | null;
-  created_at: string;
-  started_at: string | null;
-  completed_at: string | null;
-  updated_at: string;
-}
+export type BacktestJobResponse = {
+  readonly id: string;
+  readonly status: BacktestJobStatus;
+  readonly request: BacktestRequest | null;
+  readonly config: BacktestConfigView | null;
+  readonly progress: BacktestProgressView;
+  readonly decisions: readonly BacktestDecisionView[];
+  readonly result: BacktestJobResult | null;
+  readonly error: BacktestJobError | null;
+  readonly created_at: string;
+  readonly updated_at: string;
+};
 
 export type RiskStatus = "unavailable" | "invalid" | "partial" | "complete";
 

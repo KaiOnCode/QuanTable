@@ -521,7 +521,7 @@ Phase 内仅并行互不写同一 owner 的 research/test lanes；`agent/backtes
 
   **Commit：** Y；`fix: correct backtest accounting and performance metrics`。
 
-- [ ] 9. 完成 persisted API migration、typed errors、progress 与 exports
+- [x] 9. 完成 persisted API migration、typed errors、progress 与 exports
 
   **问题分析：** 前面新增的 policy/provenance/decisions/metrics 必须稳定跨重启；旧 result rows 可能缺字段；CSV 当前只有 fills 且没有 decision/order export。
 
@@ -546,7 +546,7 @@ Phase 内仅并行互不写同一 owner 的 research/test lanes；`agent/backtes
 
   **Commit：** N；与 Todo 10 一起完成 Phase 5。
 
-- [ ] 10. 把 Backtest UI 改成 strategy-aware、truthful、可诊断的结果面
+- [x] 10. 把 Backtest UI 改成 strategy-aware、truthful、可诊断的结果面
 
   **问题分析：** 当前 UI 只显示通用 failed 或普通 completed；用户看不到 strategy 是否可执行、mode、progress、decision/rejection、costs、warnings、open position 与 reproducibility。
 

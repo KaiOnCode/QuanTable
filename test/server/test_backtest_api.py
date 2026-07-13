@@ -18,11 +18,13 @@ from pydantic import ValidationError
 
 from agent.backtest_adapter import BacktestDecisionError
 from agent.backtest_jobs import (
+    BacktestJobAcceptedResponse,
     BacktestJobResponse,
     BacktestJobService,
     BacktestReplayUnavailableError,
     BacktestRequest,
     _canonical_input_snapshot,
+    _replay_snapshot_frames,
     default_backtest_job_service,
 )
 from agent.backtest_policy import (
@@ -35,6 +37,7 @@ from broker.backtest_runner import BacktestRunObserver
 from broker.views import (
     BacktestConfigView,
     BacktestDecisionView,
+    BacktestNoTradeReasonView,
     BacktestProgressView,
     BacktestResultView,
     PerformanceMetricsView,
@@ -43,6 +46,7 @@ from server.routes import agent as agent_routes
 from storage.store import (
     BacktestDecisionEvidence,
     BacktestInputSnapshotContent,
+    BacktestInputSnapshotRecord,
     ContextStore,
 )
 from agent.backtest_jobs import ActiveBacktestJobRunner
@@ -117,6 +121,35 @@ class _FeatureHashRunner(_CompletedRunner):
             )
         )
         return self.run(spec)
+
+
+class _NoTradeReasonRunner(_CompletedRunner):
+    def run(self, spec: BacktestRunSpec) -> BacktestResultView:
+        return (
+            super()
+            .run(spec)
+            .model_copy(
+                update={
+                    "no_trade_reasons": [
+                        BacktestNoTradeReasonView(code="all_hold", count=1)
+                    ]
+                }
+            )
+        )
+
+
+class _ReplayableFeatureHashRunner(_FeatureHashRunner):
+    def __init__(self) -> None:
+        self.replayed_snapshot_hashes: list[str] = []
+
+    def run_replay_with_observability(
+        self,
+        spec: BacktestRunSpec,
+        snapshot: BacktestInputSnapshotRecord,
+        observer: BacktestRunObserver,
+    ) -> BacktestResultView:
+        self.replayed_snapshot_hashes.append(snapshot.content_hash)
+        return self.run_with_observability(spec, observer)
 
 
 class _ExecutionEvidenceRunner(_CompletedRunner):
@@ -304,6 +337,18 @@ class _NoOpHistoryLoader:
         del ticker, date_from, date_to, warmup_bars
 
 
+class _ReplayHistoryMustNotRun:
+    def preload(
+        self,
+        ticker: str,
+        date_from: str,
+        date_to: str,
+        warmup_bars: int = 0,
+    ) -> None:
+        del ticker, date_from, date_to, warmup_bars
+        raise AssertionError("replay must not fetch historical data")
+
+
 @pytest.fixture
 def backtest_api(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -345,17 +390,367 @@ def test_create_poll_and_export_completed_backtest(
 
     # Then: the API returns a durable accepted job whose canonical result can export CSV.
     assert created.status_code == 202
-    body = BacktestJobResponse.model_validate(created.json())
-    assert body.status in {"pending", "running", "completed"}
-    backtest_id = body.backtest_id
+    body = BacktestJobAcceptedResponse.model_validate(created.json())
+    assert body.status == "pending"
+    backtest_id = body.id
     completed = _poll_until_terminal(client, backtest_id)
     assert completed.status == "completed"
     assert completed.result is not None
-    assert completed.result.config.ticker == "AAPL"
+    assert completed.config is not None
+    assert completed.config.ticker == "AAPL"
     csv_response = client.get(f"/api/agent/backtest/{backtest_id}/trades.csv")
     assert csv_response.status_code == 200
     assert csv_response.headers["content-disposition"].startswith("attachment;")
     assert "ticker" in csv_response.text
+
+
+def test_backtest_acceptance_and_get_use_the_v1_public_contract(
+    backtest_api: tuple[TestClient, ContextStore, FastAPI],
+) -> None:
+    # Given: a valid deterministic request accepted by the ACTIVE route.
+    client, _, _ = backtest_api
+
+    # When: the caller creates a job, then polls its durable identity.
+    created = client.post("/api/agent/backtest", json=_request_payload())
+
+    # Then: acceptance is deliberately not a racing worker snapshot.
+    assert created.status_code == 202
+    assert set(created.json()) == {"id", "status", "contract_version"}
+    accepted = BacktestJobAcceptedResponse.model_validate(created.json())
+    assert accepted.status == "pending"
+    assert accepted.contract_version == 1
+
+    terminal = _poll_until_terminal(client, accepted.id)
+    assert set(terminal.model_dump(mode="json")) == {
+        "id",
+        "status",
+        "request",
+        "config",
+        "progress",
+        "decisions",
+        "result",
+        "error",
+        "created_at",
+        "updated_at",
+    }
+    assert terminal.status == "completed"
+    assert terminal.request is not None
+    assert terminal.request.model_dump(mode="json") == {
+        **_request_payload(),
+        "mode": "deterministic",
+    }
+    assert terminal.config is not None
+    assert terminal.config.ticker == "AAPL"
+    assert terminal.error is None
+    assert terminal.result is not None
+    assert set(terminal.result.model_dump(mode="json")) == {
+        "outcome",
+        "warnings",
+        "no_trade_reasons",
+        "metrics",
+        "equity",
+        "orders",
+        "fills",
+        "closed_trades",
+        "end_position",
+        "provenance",
+    }
+
+
+def test_backtest_public_result_preserves_observed_no_trade_reasons(
+    backtest_api: tuple[TestClient, ContextStore, FastAPI],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: a completed runner records an observed all-hold no-trade cause.
+    client, store, _ = backtest_api
+    service = BacktestJobService(store=store, runner=_NoTradeReasonRunner())
+    monkeypatch.setattr(agent_routes, "get_backtest_job_service", lambda: service)
+
+    # When: the client creates and polls the durable public job resource.
+    created = client.post("/api/agent/backtest", json=_request_payload())
+    terminal = _poll_until_terminal(client, created.json()["id"])
+
+    # Then: the v1 result preserves the runner's observed reason without browser inference.
+    assert terminal.status == "completed"
+    assert terminal.result is not None
+    assert terminal.result.model_dump(mode="json")["no_trade_reasons"] == [
+        {"code": "all_hold", "count": 1}
+    ]
+    service.shutdown()
+
+
+def test_backtest_api_contract_documentation_round_trips_the_v1_terminal_example() -> (
+    None
+):
+    document = Path("docs/api-contracts.md").read_text()
+    heading = "**Terminal-success response (exact JSON shape):**"
+    block_start = document.index("```json", document.index(heading)) + len("```json")
+    block_end = document.index("```", block_start)
+    payload = json.loads(document[block_start:block_end])
+
+    assert (
+        BacktestJobResponse.model_validate(payload).model_dump(mode="json") == payload
+    )
+
+
+def test_backtest_exports_use_fixed_public_columns_and_safe_downloads(
+    backtest_api: tuple[TestClient, ContextStore, FastAPI],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: a completed job with persisted safe decision evidence.
+    client, store, _ = backtest_api
+    service = BacktestJobService(store=store, runner=_FeatureHashRunner())
+    monkeypatch.setattr(agent_routes, "get_backtest_job_service", lambda: service)
+
+    # When: the caller requests every completed-job export representation.
+    created = client.post("/api/agent/backtest", json=_request_payload())
+    assert created.status_code == 202
+    backtest_id = created.json()["id"]
+    assert _poll_until_terminal(client, backtest_id).status == "completed"
+    exports = {
+        "trades": client.get(f"/api/agent/backtest/{backtest_id}/trades.csv"),
+        "closed-trades": client.get(
+            f"/api/agent/backtest/{backtest_id}/closed-trades.csv"
+        ),
+        "decisions": client.get(f"/api/agent/backtest/{backtest_id}/decisions.csv"),
+        "decisions-json": client.get(
+            f"/api/agent/backtest/{backtest_id}/decisions.json"
+        ),
+    }
+
+    # Then: each representation is narrow, typed, and safe to download.
+    assert exports["trades"].status_code == 200
+    assert exports["trades"].text.splitlines()[0] == (
+        "date,ticker,side,quantity,price,realized_pl,equity_after"
+    )
+    assert exports["closed-trades"].text.splitlines()[0] == (
+        "entry_date,exit_date,ticker,quantity,entry_vwap,exit_vwap,"
+        "net_realized_pl,fees,slippage,holding_period_trading_days"
+    )
+    assert exports["decisions"].text.splitlines()[0] == (
+        "sequence,signal_date,execution_date,status,target_position_pct,"
+        "confidence,attempts,error_code"
+    )
+    assert exports["decisions-json"].json() == [
+        {
+            "sequence": 1,
+            "signal_date": "2025-01-02T00:00:00Z",
+            "execution_date": None,
+            "status": "completed",
+            "target_position_pct": 40.0,
+            "confidence": 0.8,
+            "attempts": 2,
+            "error_code": None,
+        }
+    ]
+    for kind, response in exports.items():
+        extension = "json" if kind == "decisions-json" else "csv"
+        filename_kind = "decisions" if kind == "decisions-json" else kind
+        assert response.headers["content-disposition"] == (
+            f'attachment; filename="backtest-{backtest_id}-{filename_kind}.{extension}"'
+        )
+    assert exports["trades"].headers["content-type"] == "text/csv; charset=utf-8"
+    assert exports["decisions-json"].headers["content-type"] == "application/json"
+    service.shutdown()
+
+
+def test_backtest_replay_reuses_only_the_frozen_snapshot_and_new_identity(
+    backtest_api: tuple[TestClient, ContextStore, FastAPI],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, store, _ = backtest_api
+    runner = _ReplayableFeatureHashRunner()
+    strategy_reads: list[str] = []
+
+    def resolve_strategy(strategy_id: str) -> dict[str, object] | None:
+        strategy_reads.append(strategy_id)
+        return store.get_strategy(strategy_id)
+
+    service = BacktestJobService(
+        store=store,
+        runner=runner,
+        strategy_resolver=resolve_strategy,
+    )
+    monkeypatch.setattr(agent_routes, "get_backtest_job_service", lambda: service)
+
+    source = client.post("/api/agent/backtest", json=_request_payload())
+    assert source.status_code == 202
+    source_id = source.json()["id"]
+    assert _poll_until_terminal(client, source_id).status == "completed"
+    source_row = store.get_backtest_job(source_id)
+    assert source_row is not None
+    assert source_row.input_snapshot_hash is not None
+    strategy_reads.clear()
+
+    replayed = client.post(f"/api/agent/backtest/{source_id}/replay")
+
+    assert replayed.status_code == 202
+    replay_acceptance = BacktestJobAcceptedResponse.model_validate(replayed.json())
+    assert replay_acceptance.id != source_id
+    assert strategy_reads == []
+    assert _poll_until_terminal(client, replay_acceptance.id).status == "completed"
+    replay_row = store.get_backtest_job(replay_acceptance.id)
+    assert replay_row is not None
+    assert replay_row.input_snapshot_hash == source_row.input_snapshot_hash
+    assert runner.replayed_snapshot_hashes == [source_row.input_snapshot_hash]
+
+    unavailable_id = "a" * 32
+    request = BacktestRequest.model_validate(_request_payload())
+    spec = freeze_backtest_run_spec(request, _eligible_strategy())
+    store.create_backtest_job(
+        unavailable_id,
+        request.model_dump_json(),
+        spec.model_dump_json(),
+    )
+    unavailable = client.post(f"/api/agent/backtest/{unavailable_id}/replay")
+    assert unavailable.status_code == 409
+    assert unavailable.json()["detail"]["code"] == "replay_unavailable"
+    service.shutdown()
+
+
+def test_backtest_replay_rejects_corrupt_snapshot_before_acceptance(
+    backtest_api: tuple[TestClient, ContextStore, FastAPI],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    client, store, _ = backtest_api
+    service = BacktestJobService(store=store, runner=_ReplayableFeatureHashRunner())
+    monkeypatch.setattr(agent_routes, "get_backtest_job_service", lambda: service)
+
+    source = client.post("/api/agent/backtest", json=_request_payload())
+    assert source.status_code == 202
+    source_id = source.json()["id"]
+    assert _poll_until_terminal(client, source_id).status == "completed"
+    source_row = store.get_backtest_job(source_id)
+    assert source_row is not None
+    assert source_row.input_snapshot_hash is not None
+    with sqlite3.connect(tmp_path / "system.db") as database:
+        database.execute(
+            "UPDATE backtest_input_snapshots SET payload = ? WHERE content_hash = ?",
+            (b"corrupt", source_row.input_snapshot_hash),
+        )
+
+    replayed = client.post(f"/api/agent/backtest/{source_id}/replay")
+
+    assert replayed.status_code == 409
+    assert replayed.json()["detail"]["code"] == "replay_unavailable"
+    service.shutdown()
+
+
+@pytest.mark.parametrize(
+    "include_benchmark",
+    [True, False],
+    ids=["benchmark-available", "benchmark-unavailable"],
+)
+def test_active_replay_survives_storage_restart_without_data_or_strategy_reads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    include_benchmark: bool,
+) -> None:
+    data_dir = tmp_path / "context"
+    source_store = ContextStore(data_dir)
+    source_store.register_strategy(_eligible_strategy())
+    market_store = MarketDataStore(tmp_path / "source-market.db")
+    dates = pd.bdate_range("2024-12-02", periods=24)
+    for ticker, offset in (("AAPL", 100.0), ("SPY", 400.0)):
+        if ticker == "SPY" and not include_benchmark:
+            continue
+        market_store.upsert_ohlcv(
+            ticker,
+            [
+                {
+                    "date": trading_date.strftime("%Y-%m-%d"),
+                    "open": offset + index,
+                    "high": offset + index + 1,
+                    "low": offset + index - 1,
+                    "close": offset + index + 0.5,
+                    "volume": 1000,
+                }
+                for index, trading_date in enumerate(dates)
+            ],
+        )
+    source_service = BacktestJobService(
+        store=source_store,
+        runner=ActiveBacktestJobRunner(
+            market_store,
+            history_loader=_NoOpHistoryLoader(),
+        ),
+    )
+    monkeypatch.setattr(
+        agent_routes, "get_backtest_job_service", lambda: source_service
+    )
+    source_app = FastAPI()
+    source_app.include_router(agent_routes.router, prefix="/api")
+    request = {
+        **_request_payload(),
+        "date_from": dates[20].strftime("%Y-%m-%d"),
+        "date_to": dates[23].strftime("%Y-%m-%d"),
+        "frequency": "daily",
+    }
+    with TestClient(source_app, raise_server_exceptions=False) as source_client:
+        source = source_client.post("/api/agent/backtest", json=request)
+        assert source.status_code == 202
+        source_terminal = _poll_until_terminal(source_client, source.json()["id"])
+    assert source_terminal.status == "completed"
+    assert source_terminal.result is not None
+    source_service.shutdown()
+    source_store.close()
+
+    rebuilt_store = ContextStore(data_dir)
+    strategy_reads: list[str] = []
+
+    def reject_strategy_read(strategy_id: str) -> dict[str, object] | None:
+        strategy_reads.append(strategy_id)
+        raise AssertionError("replay must not resolve Strategy")
+
+    replay_service = BacktestJobService(
+        store=rebuilt_store,
+        runner=ActiveBacktestJobRunner(
+            MarketDataStore(tmp_path / "replay-market.db"),
+            history_loader=_ReplayHistoryMustNotRun(),
+        ),
+        strategy_resolver=reject_strategy_read,
+    )
+    monkeypatch.setattr(
+        agent_routes, "get_backtest_job_service", lambda: replay_service
+    )
+    replay_app = FastAPI()
+    replay_app.include_router(agent_routes.router, prefix="/api")
+    with TestClient(replay_app, raise_server_exceptions=False) as replay_client:
+        replay = replay_client.post(f"/api/agent/backtest/{source_terminal.id}/replay")
+        assert replay.status_code == 202
+        replay_terminal = _poll_until_terminal(replay_client, replay.json()["id"])
+    assert replay_terminal.status == "completed"
+    assert replay_terminal.result is not None
+    source_result = source_terminal.result
+    replay_result = replay_terminal.result
+    if not include_benchmark:
+        assert "benchmark_start_unavailable" in source_result.warnings
+    assert (
+        replay_result.provenance.canonical_result_hash
+        == source_result.provenance.canonical_result_hash
+    )
+    assert replay_result.outcome == source_result.outcome
+    assert replay_result.warnings == source_result.warnings
+    assert replay_result.metrics == source_result.metrics
+    assert replay_result.equity == source_result.equity
+    assert replay_result.end_position == source_result.end_position
+    assert [
+        fill.model_dump(exclude={"order_id", "session_id"})
+        for fill in replay_result.fills
+    ] == [
+        fill.model_dump(exclude={"order_id", "session_id"})
+        for fill in source_result.fills
+    ]
+    assert [
+        order.model_dump(exclude={"order_id"}) for order in replay_result.orders
+    ] == [order.model_dump(exclude={"order_id"}) for order in source_result.orders]
+    assert replay_result.closed_trades == source_result.closed_trades
+    assert replay_terminal.decisions == source_terminal.decisions
+    assert replay_terminal.config == source_terminal.config
+    assert strategy_reads == []
+    replay_service.shutdown()
+    rebuilt_store.close()
 
 
 def test_backtest_public_models_reject_unknown_fields() -> None:
@@ -381,7 +776,7 @@ def test_backtest_persists_running_then_failed_job_with_safe_error(
     # When: a job begins work before its runner is released.
     accepted = client.post("/api/agent/backtest", json=request)
     assert accepted.status_code == 202
-    backtest_id = accepted.json()["backtest_id"]
+    backtest_id = accepted.json()["id"]
     assert blocking_runner.started.wait(timeout=1)
 
     # Then: polling observes running, CSV rejects it, and a failed runner stores only safe error data.
@@ -399,10 +794,11 @@ def test_backtest_persists_running_then_failed_job_with_safe_error(
         agent_routes, "get_backtest_job_service", lambda: failing_service
     )
     failed = client.post("/api/agent/backtest", json=request)
-    failed_job = _poll_until_terminal(client, failed.json()["backtest_id"])
+    failed_job = _poll_until_terminal(client, failed.json()["id"])
     assert failed_job.status == "failed"
     assert failed_job.error is not None
-    assert failed_job.error.code == "backtest_failed"
+    assert failed_job.error.code == "execution_failed"
+    assert failed_job.error.stage == "execution"
     assert "/private" not in failed.text
     blocking_service.shutdown()
     failing_service.shutdown()
@@ -423,16 +819,17 @@ def test_backtest_marks_unexpected_runner_key_error_as_safe_terminal_failure(
         created = client.post("/api/agent/backtest", json=_request_payload())
         assert created.status_code == 202
         assert runner.finished.wait(timeout=1)
-        terminal = _poll_until_terminal(client, created.json()["backtest_id"])
+        terminal = _poll_until_terminal(client, created.json()["id"])
 
         # Then: every normal runner exception has a safe, persisted failed terminal envelope.
         assert terminal.status == "failed"
         assert terminal.error is not None
         assert terminal.error.model_dump(exclude_none=True) == {
-            "code": "backtest_failed",
-            "stage": "runner",
-            "message": "Backtest failed",
+            "code": "execution_failed",
+            "stage": "execution",
+            "message": "Backtest execution failed",
         }
+        assert terminal.result is None
         terminal_json = terminal.model_dump_json()
         assert "/private" not in terminal_json
         assert "prompt" not in terminal_json
@@ -479,10 +876,16 @@ def test_backtest_validates_identity_request_and_openapi_surface(
     assert {path for path in paths if path.startswith("/api/agent/backtest")} == {
         "/api/agent/backtest",
         "/api/agent/backtest/{backtest_id}",
+        "/api/agent/backtest/{backtest_id}/replay",
         "/api/agent/backtest/{backtest_id}/trades.csv",
+        "/api/agent/backtest/{backtest_id}/closed-trades.csv",
+        "/api/agent/backtest/{backtest_id}/decisions.csv",
+        "/api/agent/backtest/{backtest_id}/decisions.json",
     }
     assert "/api/backtest" not in paths
-    assert client.get("/api/agent/backtest/missing").status_code == 404
+    assert client.get("/api/agent/backtest/missing").status_code == 422
+    assert client.get(f"/api/agent/backtest/{'g' * 32}").status_code == 422
+    assert client.get(f"/api/agent/backtest/{'a' * 31}%2F").status_code in {404, 422}
     unconfigured_service.shutdown()
 
 
@@ -517,7 +920,7 @@ def test_backtest_freezes_and_persists_strategy_before_enqueue(
     assert runner.spec.broker_config.initial_cash == 100_000
     assert runner.spec.policy.required_lookback_bars == 20
     assert store.get_strategy("strategy-a") is None
-    persisted = store.get_backtest_job(created.backtest_id)
+    persisted = store.get_backtest_job(created.id)
     assert persisted is not None
     assert persisted.run_spec_json == runner.spec.model_dump_json()
     service.shutdown()
@@ -536,6 +939,7 @@ def test_backtest_freezes_and_persists_strategy_before_enqueue(
             "strategy_not_backtestable",
         ),
         ({"type": "hitl"}, {}, 422, "strategy_type_unsupported"),
+        ({"type": "agent"}, {}, 422, "strategy_type_unsupported"),
     ],
 )
 def test_backtest_route_maps_eligibility_errors(
@@ -581,7 +985,7 @@ def test_agent_experiment_has_actionable_unavailable_provider_response(
     )
 
     assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "llm_unavailable"
+    assert response.json()["detail"]["code"] == "provider_capability_unsupported"
     service.shutdown()
 
 
@@ -633,7 +1037,7 @@ def test_default_service_preflights_actual_provider_model_capability(
     )
     assert deterministic.status in {"pending", "running", "completed"}
     service.shutdown()
-    completed = service.get(deterministic.backtest_id)
+    completed = service.get(deterministic.id)
     assert completed is not None
     assert completed.status == "completed"
 
@@ -658,7 +1062,7 @@ def test_backtest_converts_empty_price_window_to_safe_failed_job(
     created = client.post("/api/agent/backtest", json=_request_payload())
 
     # Then: the persisted terminal state is a safe failure rather than a response-thread error.
-    failed = _poll_until_terminal(client, created.json()["backtest_id"])
+    failed = _poll_until_terminal(client, created.json()["id"])
     assert failed.status == "failed"
     assert failed.error is not None
     assert failed.error.code == "market_data_unavailable"
@@ -707,40 +1111,41 @@ def test_active_backtest_fingerprint_is_stable_across_cache_hits_and_restart(
     }
 
     first = _poll_until_terminal(
-        client, client.post("/api/agent/backtest", json=payload).json()["backtest_id"]
+        client, client.post("/api/agent/backtest", json=payload).json()["id"]
     )
     second = _poll_until_terminal(
-        client, client.post("/api/agent/backtest", json=payload).json()["backtest_id"]
+        client, client.post("/api/agent/backtest", json=payload).json()["id"]
     )
 
     assert first.status == second.status == "completed"
     assert first.result is not None and second.result is not None
+    assert first.config is not None
     assert (
         first.result.provenance.data_snapshot_hash
         == second.result.provenance.data_snapshot_hash
     )
-    assert first.result.config.warmup_bars == 20
-    assert first.result.config.data_auto_adjust is True
-    assert first.result.config.data_actions is False
-    assert first.result.config.data_end_exclusive == (
+    assert first.config.warmup_bars == 20
+    assert first.config.data_auto_adjust is True
+    assert first.config.data_actions is False
+    assert first.config.data_end_exclusive == (
         dates[23] + pd.Timedelta(days=1)
     ).strftime("%Y-%m-%d")
-    assert first.result.config.data_lookback_days == 39
-    assert first.result.config.data_provider_buffer_days == 100
-    assert first.result.config.data_provider_end_semantics == "exclusive"
+    assert first.config.data_lookback_days == 39
+    assert first.config.data_provider_buffer_days == 100
+    assert first.config.data_provider_end_semantics == "exclusive"
     assert (
-        first.result.config.data_timezone_normalization
+        first.config.data_timezone_normalization
         == "exchange_session_date_to_UTC_midnight"
     )
-    assert first.result.config.evaluation_bar_count == 4
-    assert first.result.config.sample_first_date == dates[20].strftime("%Y-%m-%d")
-    assert first.result.config.sample_last_date == dates[23].strftime("%Y-%m-%d")
+    assert first.config.evaluation_bar_count == 4
+    assert first.config.sample_first_date == dates[20].strftime("%Y-%m-%d")
+    assert first.config.sample_last_date == dates[23].strftime("%Y-%m-%d")
     assert first.progress.decisions_not_ready == 0
     assert first.decisions[0].status == "completed"
-    assert len(first.result.series) == 4
-    persisted = store.get_backtest_job(first.backtest_id)
+    assert len(first.result.equity) == 4
+    persisted = store.get_backtest_job(first.id)
     assert persisted is not None
-    assert persisted.input_snapshot_hash == first.result.config.data_snapshot_hash
+    assert persisted.input_snapshot_hash == first.config.data_snapshot_hash
     snapshot = store.get_backtest_input_snapshot(persisted.input_snapshot_hash or "")
     assert snapshot is not None
     canonical = json.loads(gzip.decompress(snapshot.payload))
@@ -752,7 +1157,7 @@ def test_active_backtest_fingerprint_is_stable_across_cache_hits_and_restart(
         "date_to": dates[23].strftime("%Y-%m-%d"),
         "end_exclusive": (dates[23] + pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
         "interval": "1d",
-        "library_version": first.result.config.data_provider_version,
+        "library_version": first.config.data_provider_version,
         "lookback_days": 39,
         "provider": "yfinance",
         "provider_buffer_days": 100,
@@ -765,7 +1170,7 @@ def test_active_backtest_fingerprint_is_stable_across_cache_hits_and_restart(
     }
     service.shutdown()
     reopened = BacktestJobService(store=store, runner=_CompletedRunner())
-    restored = reopened.get(first.backtest_id)
+    restored = reopened.get(first.id)
     assert restored is not None and restored.result is not None
     assert (
         restored.result.provenance.data_snapshot_hash
@@ -814,7 +1219,7 @@ def test_active_61_bar_hold_run_persists_sample_and_no_trade_warnings(
             "date_to": dates[-1].strftime("%Y-%m-%d"),
             "frequency": "daily",
         },
-    ).json()["backtest_id"]
+    ).json()["id"]
     for _ in range(200):
         completed = BacktestJobResponse.model_validate(
             client.get(f"/api/agent/backtest/{backtest_id}").json()
@@ -827,8 +1232,9 @@ def test_active_61_bar_hold_run_persists_sample_and_no_trade_warnings(
 
     assert completed.status == "completed"
     assert completed.result is not None
+    assert completed.config is not None
     assert completed.result.outcome == "completed_no_trades"
-    assert completed.result.config.evaluation_bar_count == 61
+    assert completed.config.evaluation_bar_count == 61
     assert {
         "completed_with_no_trades_not_trusted_performance",
         "insufficient_evaluation_bars_lt_63",
@@ -838,6 +1244,8 @@ def test_active_61_bar_hold_run_persists_sample_and_no_trade_warnings(
     assert [reason.model_dump() for reason in completed.result.no_trade_reasons] == [
         {"code": "all_hold", "count": 60}
     ]
+    assert completed.result.metrics.number_of_fills == 0
+    assert all(decision.target_position_pct == 0.0 for decision in completed.decisions)
     service.shutdown()
 
 
@@ -871,6 +1279,73 @@ def test_input_snapshot_redacts_unknown_provenance_and_hashes_adjustment_mode() 
     ]
     with pytest.raises(BacktestDataError, match="canonical OHLCV"):
         _canonical_input_snapshot(frame.assign(secret_numeric=123456), frame)
+
+
+def test_replay_snapshot_rehydrates_utc_frames_and_empty_benchmark_fidelity() -> None:
+    # Given: a canonical source snapshot uses UTC session dates and an unavailable benchmark.
+    columns = pd.Index(["Open", "High", "Low", "Close", "Volume"])
+    target = pd.DataFrame(
+        [[100.0, 101.0, 99.0, 100.5, 1000.0]],
+        columns=columns,
+        index=pd.to_datetime(["2025-01-02"], utc=True),
+    )
+    benchmark = pd.DataFrame(
+        columns=columns,
+        index=pd.DatetimeIndex([], tz="UTC"),
+    )
+    provenance = {
+        "provider": "fixture",
+        "library_version": "1",
+        "ticker": "AAPL",
+        "date_from": "2025-01-02",
+        "date_to": "2025-01-02",
+        "end_exclusive": "2025-01-03",
+        "lookback_days": 1,
+        "provider_buffer_days": 100,
+        "interval": "1d",
+        "auto_adjust": True,
+        "actions": False,
+        "warmup_bars": 0,
+        "corporate_actions_mode": "provider_adjusted_prices",
+        "provider_end_semantics": "exclusive",
+        "provider_timezone": "UTC",
+        "timezone_normalization": "exchange_session_date_to_UTC_midnight",
+    }
+    target.attrs["backtest_data_provenance"] = provenance
+    target.attrs["adjustment_modes"] = ("provider_adjusted_prices",)
+    benchmark.attrs["backtest_data_provenance"] = {
+        **provenance,
+        "ticker": "SPY",
+    }
+    benchmark.attrs["adjustment_modes"] = ()
+    content = _canonical_input_snapshot(target, benchmark)
+    snapshot = BacktestInputSnapshotRecord(
+        content_hash=content.content_hash,
+        schema_version=1,
+        codec="gzip-json-v1",
+        payload=content.payload,
+        compressed_bytes=len(content.payload),
+        uncompressed_bytes=content.uncompressed_bytes,
+        row_count_target=content.row_count_target,
+        row_count_benchmark=content.row_count_benchmark,
+        created_at="2025-01-02T00:00:00Z",
+    )
+
+    # When: replay rebuilds the frozen normalized rows without a data provider.
+    rebuilt_target, rebuilt_benchmark = _replay_snapshot_frames(snapshot)
+
+    # Then: replay preserves UTC dates, empty benchmark availability, and safe metadata shape.
+    pd.testing.assert_frame_equal(rebuilt_target, target)
+    assert rebuilt_benchmark.empty
+    assert isinstance(rebuilt_benchmark.index, pd.DatetimeIndex)
+    assert rebuilt_benchmark.index.tz is not None
+    assert rebuilt_target.attrs["backtest_data_provenance"] == provenance
+    assert rebuilt_target.attrs["adjustment_modes"] == ("provider_adjusted_prices",)
+    assert rebuilt_benchmark.attrs["backtest_data_provenance"] == {
+        **provenance,
+        "ticker": "SPY",
+    }
+    assert rebuilt_benchmark.attrs["adjustment_modes"] == ()
 
 
 def test_active_backtest_fails_typed_when_all_decisions_are_not_ready(
@@ -914,7 +1389,7 @@ def test_active_backtest_fails_typed_when_all_decisions_are_not_ready(
                 "date_to": dates[-1].strftime("%Y-%m-%d"),
                 "frequency": "daily",
             },
-        ).json()["backtest_id"],
+        ).json()["id"],
     )
 
     assert failed.status == "failed"
@@ -937,12 +1412,12 @@ def test_backtest_persists_feature_hash_and_attempt_evidence(
     monkeypatch.setattr(agent_routes, "get_backtest_job_service", lambda: service)
 
     created = client.post("/api/agent/backtest", json=_request_payload())
-    completed = _poll_until_terminal(client, created.json()["backtest_id"])
+    completed = _poll_until_terminal(client, created.json()["id"])
 
     assert completed.status == "completed"
     assert completed.decisions[0].feature_hash == "f" * 64
     assert completed.decisions[0].attempts == 2
-    persisted = store.get_backtest_decisions(completed.backtest_id)
+    persisted = store.get_backtest_decisions(completed.id)
     assert persisted[0].feature_hash == "f" * 64
     assert persisted[0].attempts == 2
     service.shutdown()
@@ -962,7 +1437,7 @@ def test_backtest_fails_when_execution_evidence_update_is_not_persisted(
     monkeypatch.setattr(agent_routes, "get_backtest_job_service", lambda: service)
 
     created = client.post("/api/agent/backtest", json=_request_payload())
-    failed = _poll_until_terminal(client, created.json()["backtest_id"])
+    failed = _poll_until_terminal(client, created.json()["id"])
 
     assert failed.status == "failed"
     assert failed.error is not None
@@ -982,7 +1457,7 @@ def test_backtest_converts_agent_decision_failure_to_safe_typed_error(
 
     # When: the persisted worker reaches the decision boundary.
     created = client.post("/api/agent/backtest", json=_request_payload())
-    failed = _poll_until_terminal(client, created.json()["backtest_id"])
+    failed = _poll_until_terminal(client, created.json()["id"])
 
     # Then: callers receive a stable actionable category without provider details.
     assert failed.error is not None
@@ -1015,7 +1490,7 @@ def test_backtest_decision_evidence_write_failure_still_terminates_job(
     monkeypatch.setattr(agent_routes, "get_backtest_job_service", lambda: service)
 
     created = client.post("/api/agent/backtest", json=_request_payload())
-    failed = _poll_until_terminal(client, created.json()["backtest_id"])
+    failed = _poll_until_terminal(client, created.json()["id"])
 
     assert failed.status == "failed"
     assert failed.error is not None
@@ -1061,7 +1536,7 @@ def test_backtest_persists_safe_provider_failure_category(
     monkeypatch.setattr(agent_routes, "get_backtest_job_service", lambda: service)
 
     created = client.post("/api/agent/backtest", json=_request_payload())
-    failed = _poll_until_terminal(client, created.json()["backtest_id"])
+    failed = _poll_until_terminal(client, created.json()["id"])
 
     assert failed.status == "failed"
     assert failed.error is not None
@@ -1085,7 +1560,7 @@ def test_backtest_nth_decision_failure_keeps_prior_safe_evidence_and_secret_out(
 
     # When: the real ACTIVE route creates and polls the durable job.
     created = client.post("/api/agent/backtest", json=_request_payload())
-    failed = _poll_until_terminal(client, created.json()["backtest_id"])
+    failed = _poll_until_terminal(client, created.json()["id"])
 
     # Then: callers receive exact safe location metadata and retained prior evidence, never the provider cause.
     assert failed.status == "failed"
@@ -1142,7 +1617,7 @@ def test_backtest_nth_decision_failure_keeps_prior_safe_evidence_and_secret_out(
         if row[0] is not None
     )
     assert "provider-secret" not in db_dump
-    persisted = store.get_backtest_job(created.json()["backtest_id"])
+    persisted = store.get_backtest_job(created.json()["id"])
     assert persisted is not None
     assert persisted.input_snapshot_hash is not None
     snapshot = store.get_backtest_input_snapshot(persisted.input_snapshot_hash)
@@ -1167,7 +1642,7 @@ def test_backtest_rejects_v1_success_without_bound_snapshot(
 
     # When: the ACTIVE route creates a v1 job through that runner.
     created = client.post("/api/agent/backtest", json=_request_payload())
-    terminal = _poll_until_terminal(client, created.json()["backtest_id"])
+    terminal = _poll_until_terminal(client, created.json()["id"])
 
     # Then: a missing frozen input snapshot prevents a trusted completed result.
     assert terminal.status == "failed"
@@ -1190,7 +1665,7 @@ def test_backtest_redacts_runtime_invalid_typed_error_metadata(
 
     # When: the real route persists the failed v1 job and returns its terminal summary.
     created = client.post("/api/agent/backtest", json=_request_payload())
-    failed = _poll_until_terminal(client, created.json()["backtest_id"])
+    failed = _poll_until_terminal(client, created.json()["id"])
 
     # Then: invalid runtime metadata is replaced with safe fallbacks in DB and API evidence.
     assert failed.error is not None

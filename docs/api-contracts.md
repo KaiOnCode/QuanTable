@@ -578,6 +578,7 @@ Test connection to external MCP server.
 ### `POST /api/agent/backtest`
 
 **Request:**
+
 ```json
 {
   "strategy_id": "strategy-uuid",
@@ -590,7 +591,16 @@ Test connection to external MCP server.
 }
 ```
 
-**Response (202):** `{ "backtest_id": "uuid", "status": "pending" }`.
+**Response (202):**
+
+```json
+{
+  "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "status": "pending",
+  "contract_version": 1
+}
+```
+
 `mode` defaults to `deterministic`. Each request synchronously resolves the
 mutable Strategy into an immutable `BacktestRunSpec`, persists the request and
 spec atomically, and only then enqueues the job. The worker receives that spec
@@ -612,76 +622,118 @@ and forced structured-output capability. Missing provider capability returns
 `503`; deterministic creation is independent of LLM credentials. HITL and
 hollow quant Strategies are rejected.
 
-Unknown Strategies return `404` with `strategy_not_found`. Other eligibility
-errors return `422`, including `strategy_inactive`, `ticker_not_allowed`,
-`strategy_config_invalid`, `strategy_not_backtestable`,
-`strategy_type_unsupported`, `strategy_mode_unsupported`, and
-`agent_model_missing`. Provider preflight returns `503` with `llm_unavailable`
-or `provider_capability_unsupported`. Invalid dates/ticker/frequency remain
-Pydantic `422` responses. Before the point-in-time loop begins, the job preloads the exact
-target and benchmark OHLCV request window through `DataService`; every decision
-tool then reads only the persisted slice at or before its `as_of` boundary. The
-ACTIVE route never invokes a legacy analysis pipeline.
+Preflight errors are synchronous: an unknown Strategy is `404`
+`strategy_not_found`; inactive/ineligible/type/ticker/config/request errors are
+`422` (`strategy_inactive`, `strategy_not_backtestable`,
+`strategy_type_unsupported`, `ticker_not_allowed`,
+`strategy_config_invalid`, or `agent_model_missing`); unavailable experimental
+provider credentials or forced-structured-output capability are `503`
+`provider_capability_unsupported`. Invalid dates, ticker, frequency, or unknown
+request fields are Pydantic `422` responses. After this `202`, data, decision,
+execution, storage, and interruption failures are observed only by polling the
+job; they never rewrite the accepted HTTP response.
+
+Before the point-in-time loop begins, the worker preloads the exact target and
+benchmark OHLCV request window through `DataService`; every decision tool then
+reads only the persisted slice at or before its `as_of` boundary. The ACTIVE
+route never invokes a legacy analysis pipeline.
 
 ### `GET /api/agent/backtest/{backtest_id}`
 
-**Response (illustrative two-session all-HOLD result):**
+The ID is exactly 32 lowercase hexadecimal characters. An invalid ID is `422`;
+an absent valid ID is `404 backtest_not_found`. Every successful poll has these
+and only these top-level fields:
+`id`, `status`, `request`, `config`, `progress`, `decisions`, `result`,
+`error`, `created_at`, and `updated_at`. `progress` always has
+`bars_total`, `bars_processed`, `decisions_total`, `decisions_eligible`,
+`decisions_not_ready`, `decisions_completed`, and `current_decision_date`.
+
+`result` is non-null only for terminal success and contains exactly `outcome`,
+`warnings`, `no_trade_reasons`, `metrics`, `equity`, `orders`, `fills`, `closed_trades`,
+`end_position`, and `provenance`. `error` is non-null only for failed jobs and
+has safe `code`, `stage`, `decision_date`, `attempt`, and `message` fields.
+Pending/running jobs and failed jobs have `result: null`; completed jobs have
+`error: null`.
+
+**Terminal-success response (exact JSON shape):**
+
 ```json
 {
+  "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "status": "completed",
-  "backtest_id": "uuid",
+  "request": {
+    "strategy_id": "strategy-uuid",
+    "ticker": "AAPL",
+    "date_from": "2024-01-02",
+    "date_to": "2024-01-03",
+    "frequency": "daily",
+    "benchmark": "SPY",
+    "mode": "deterministic"
+  },
+  "config": {
+    "ticker": "AAPL",
+    "start_date": "2024-01-02",
+    "end_date": "2024-01-03",
+    "frequency": "daily",
+    "benchmark_symbol": "SPY",
+    "strategy_id": "strategy-uuid",
+    "account_id": "default",
+    "mode": "deterministic",
+    "agent_model": null,
+    "strategy_snapshot_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "policy_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "data_snapshot_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "engine_version": "backtest-engine/v1",
+    "strategy_execution_frequency": "daily",
+    "run_frequency": "daily",
+    "initial_capital": 100000.0,
+    "commission_rate": 0.001,
+    "commission_bps": 10.0,
+    "slippage_rate": 0.0005,
+    "slippage_bps": 5.0,
+    "execution_timing": "next_open",
+    "max_position_pct": 1.0,
+    "allow_short": false,
+    "provider_adjustment_mode": "auto_adjusted_prices_v1",
+    "corporate_actions_mode": "provider_adjusted_prices",
+    "data_provider": "yfinance",
+    "data_provider_version": "",
+    "data_interval": "1d",
+    "data_auto_adjust": true,
+    "data_actions": false,
+    "data_end_exclusive": "",
+    "data_lookback_days": 0,
+    "data_provider_buffer_days": 100,
+    "data_provider_end_semantics": "exclusive",
+    "data_provider_timezone": "unknown",
+    "data_timezone_normalization": "exchange_session_date_to_UTC_midnight",
+    "warmup_bars": 0,
+    "risk_free_rate": 0.0,
+    "periods_per_year": 252,
+    "max_drawdown_limit_pct": 0.0,
+    "max_drawdown_limit_enforced": false,
+    "evaluation_bar_count": 0,
+    "sample_first_date": "",
+    "sample_last_date": ""
+  },
+  "progress": {
+    "bars_total": 2,
+    "bars_processed": 2,
+    "decisions_total": 1,
+    "decisions_eligible": 1,
+    "decisions_not_ready": 0,
+    "decisions_completed": 1,
+    "current_decision_date": "2024-01-02T00:00:00Z"
+  },
+  "decisions": [],
   "result": {
-    "status": "completed",
-    "config": {
-      "ticker": "AAPL",
-      "start_date": "2024-01-02",
-      "end_date": "2024-01-03",
-      "frequency": "daily",
-      "benchmark_symbol": "SPY",
-      "strategy_id": "strategy-uuid",
-      "account_id": "default",
-      "mode": "deterministic",
-      "agent_model": null,
-      "strategy_snapshot_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "policy_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "data_snapshot_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "engine_version": "backtest-engine/v1",
-      "strategy_execution_frequency": "daily",
-      "run_frequency": "daily",
-      "initial_capital": 100000,
-      "commission_rate": 0.001,
-      "commission_bps": 10,
-      "slippage_rate": 0.0005,
-      "slippage_bps": 5,
-      "execution_timing": "next_open",
-      "max_position_pct": 0.5,
-      "allow_short": false,
-      "provider_adjustment_mode": "auto_adjusted_prices_v1",
-      "data_provider": "yfinance",
-      "data_provider_version": "1.2.0",
-      "data_interval": "1d",
-      "data_auto_adjust": true,
-      "data_actions": false,
-      "data_end_exclusive": "2024-01-04",
-      "data_lookback_days": 2,
-      "data_provider_buffer_days": 100,
-      "data_provider_end_semantics": "exclusive",
-      "data_provider_timezone": "America/New_York",
-      "data_timezone_normalization": "exchange_session_date_to_UTC_midnight",
-      "corporate_actions_mode": "provider_adjusted_prices",
-      "warmup_bars": 2,
-      "risk_free_rate": 0.0,
-      "periods_per_year": 252,
-      "max_drawdown_limit_pct": 0.2,
-      "evaluation_bar_count": 2,
-      "sample_first_date": "2024-01-02",
-      "sample_last_date": "2024-01-03",
-      "max_drawdown_limit_enforced": false
-    },
-    "summary": {
+    "outcome": "completed_no_trades",
+    "warnings": ["completed_with_no_trades_not_trusted_performance"],
+    "no_trade_reasons": [{"code": "all_hold", "count": 1}],
+    "metrics": {
       "cumulative_return_pct": 0.0,
       "total_return_pct": 0.0,
-      "annualized_return_pct": 0.0,
+      "annualized_return_pct": null,
       "annualized_volatility_pct": null,
       "benchmark_return_pct": null,
       "excess_return_pct": null,
@@ -707,70 +759,16 @@ ACTIVE route never invokes a legacy analysis pipeline.
       "turnover_pct": 0.0,
       "average_daily_gross_exposure_pct": 0.0
     },
-    "outcome": "completed_no_trades",
-    "series": [
-      {
-        "date": "2024-01-02",
-        "strategy_equity": 100000.0,
-        "benchmark_equity": null,
-        "strategy_drawdown_pct": 0.0,
-        "benchmark_drawdown_pct": null
-      },
-      {
-        "date": "2024-01-03",
-        "strategy_equity": 100000.0,
-        "benchmark_equity": null,
-        "strategy_drawdown_pct": 0.0,
-        "benchmark_drawdown_pct": null
-      }
-    ],
-    "trades": [],
-    "executions": [],
-    "closed_trades": [],
-    "no_trade_reasons": [{"code": "all_hold", "count": 1}],
-    "warnings": [
-      "benchmark_start_unavailable",
-      "max_drawdown_limit_not_enforced",
-      "capacity_model_not_modeled",
-      "provider_adjusted_prices_are_synthetic",
-      "insufficient_evaluation_bars_lt_63",
-      "insufficient_evaluation_bars_lt_252",
-      "insufficient_closed_trades_lt_30",
-      "completed_with_no_trades_not_trusted_performance"
-    ],
-    "progress": {
-      "bars_total": 2,
-      "bars_processed": 2,
-      "decisions_total": 1,
-      "decisions_eligible": 1,
-      "decisions_not_ready": 0,
-      "decisions_completed": 1,
-      "current_decision_date": "2024-01-02T00:00:00Z"
-    },
-    "decisions": [
-      {
-        "sequence": 1,
-        "signal_date": "2024-01-02T00:00:00Z",
-        "execution_date": null,
-        "status": "completed",
-        "attempts": 1,
-        "target_position_pct": 0.0,
-        "confidence": 1.0,
-        "feature_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        "policy_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        "error_code": null,
-        "error_stage": null
-      }
-    ],
-    "decision_count": 1,
+    "equity": [],
     "orders": [],
-    "order_count": 0,
+    "fills": [],
+    "closed_trades": [],
     "end_position": {
       "ticker": "AAPL",
-      "shares": 0,
-      "market_value": 0,
-      "average_cost_basis": 0,
-      "unrealized_pnl": 0,
+      "shares": 0.0,
+      "market_value": 0.0,
+      "average_cost_basis": 0.0,
+      "unrealized_pnl": 0.0,
       "liquidated_at_end": false
     },
     "provenance": {
@@ -781,44 +779,48 @@ ACTIVE route never invokes a legacy analysis pipeline.
     }
   },
   "error": null,
-  "progress": {
-    "bars_total": 2,
-    "bars_processed": 2,
-    "decisions_total": 1,
-    "decisions_eligible": 1,
-    "decisions_not_ready": 0,
-    "decisions_completed": 1,
-    "current_decision_date": "2024-01-02T00:00:00Z"
-  },
-  "decisions": [
-    {
-      "sequence": 1,
-      "signal_date": "2024-01-02T00:00:00Z",
-      "execution_date": null,
-      "status": "completed",
-      "attempts": 1,
-      "target_position_pct": 0.0,
-      "confidence": 1.0,
-      "feature_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "policy_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "error_code": null,
-      "error_stage": null
-    }
-  ],
-  "created_at": "2024-01-02T00:00:00+00:00",
-  "started_at": "2024-01-02T00:00:01+00:00",
-  "completed_at": "2024-01-03T00:00:10+00:00",
-  "updated_at": "2024-01-03T00:00:10+00:00"
+  "created_at": "2024-01-02T00:00:00Z",
+  "updated_at": "2024-01-03T00:00:00Z"
 }
 ```
+
+### `POST /api/agent/backtest/{backtest_id}/replay`
+
+Replay reads only the source job's frozen `run_spec_json` and bound normalized
+input snapshot, then returns a new `202` acceptance object with a new `id`.
+It does not resolve the current Strategy or fetch current provider data. A
+legacy job, a missing snapshot, or corrupt frozen snapshot envelope returns
+`409 replay_unavailable`. A normal `POST /api/agent/backtest` is distinct: it
+always resolves the current Strategy and refetches data.
+
+### Export endpoints
+
+Exports are available only for terminal completed jobs. Unknown IDs return
+`404`; pending, running, failed, and malformed/unavailable exports return
+`409 export_unavailable`. Every filename is derived from the validated ID and
+uses `Content-Disposition: attachment; filename="backtest-{id}-<kind>.<ext>"`.
+
+- `GET /api/agent/backtest/{backtest_id}/trades.csv` uses
+  `text/csv; charset=utf-8` with
+  `date,ticker,side,quantity,price,realized_pl,equity_after`; these are
+  fill-level executions.
+- `GET /api/agent/backtest/{backtest_id}/closed-trades.csv` uses
+  `text/csv; charset=utf-8` with
+  `entry_date,exit_date,ticker,quantity,entry_vwap,exit_vwap,net_realized_pl,fees,slippage,holding_period_trading_days`.
+- `GET /api/agent/backtest/{backtest_id}/decisions.csv` uses
+  `text/csv; charset=utf-8` with
+  `sequence,signal_date,execution_date,status,target_position_pct,confidence,attempts,error_code`.
+- `GET /api/agent/backtest/{backtest_id}/decisions.json` uses
+  `application/json` and returns a JSON array with the same decision fields in
+  sequence order.
 
 #### Backtest accounting payload contract
 
 `executions` is the fill-level ledger: one row for every completed fill. Its
 `price` is the actual execution price, `fee` and `slippage` are USD, and
 `avg_cost_after` is the remaining long position's all-in average cost basis in
-USD per share. `trades` remains a legacy compatibility alias for the same
-execution rows; it does not mean closed round trips.
+USD per share. The public job envelope names this array `fills`; `trades` is an
+internal legacy compatibility alias and does not mean closed round trips.
 
 `closed_trades` contains only complete long-only average-cost episodes. A
 scale-in remains part of the open episode, a partial reduction records realized
@@ -853,8 +855,9 @@ and `end_position.unrealized_pnl` is USD; an open ending position is marked to
 market and is not implicitly liquidated.
 
 Pending/running jobs have `result: null`. Failed jobs have `result: null` and
-a safe `{ "code", "message" }` error. Results live in `system.db`; startup
-marks abandoned pending/running jobs as failed with `code: "interrupted"`.
+a safe `{ "code", "stage", "decision_date", "attempt", "message" }` error.
+Results live in `system.db`; startup marks abandoned pending/running jobs as
+failed with `code: "interrupted"`.
 `completed_no_trades` is a terminal outcome with an explicit warning, not a
 trusted performance result. `no_trade_reasons` records only observed causes:
 `no_signals`, `not_ready`, `all_hold`, and `all_rejected`; an entry-only open
@@ -878,24 +881,25 @@ payloads use JSON `null` for unavailable or mathematically undefined values
 (including undefined Sharpe, profit factor, and payoff ratio); they never emit
 `Infinity` or `NaN`.
 
-Closed-trade statistics exclude open positions;
-gross and net metrics remain distinct as later numerical-contract fields land.
-Stable failure codes are `market_data_unavailable`, `agent_failed`,
-`insufficient_history`, `backtest_failed`, `interrupted`, and `storage_corrupt`;
-messages never expose provider responses, prompts, credentials, paths, or
-stacks. The frozen input snapshot includes exactly the policy-required trading
-bar warm-up plus the evaluation window for target and benchmark. Warm-up bars
-can make a feature ready but never enter performance series or metrics.
+Closed-trade statistics exclude open positions; gross and net metrics remain
+distinct. The documented contract codes are `strategy_not_found`,
+`strategy_inactive`, `strategy_not_backtestable`, `strategy_type_unsupported`,
+`ticker_not_allowed`, `strategy_config_invalid`, `agent_model_missing`,
+`provider_capability_unsupported`, `insufficient_history`,
+`decision_transient_exhausted`, `decision_schema_invalid`, `execution_failed`,
+`storage_corrupt`, `interrupted`, and `replay_unavailable`. Existing safe
+worker subcategories such as `market_data_unavailable`, `agent_failed`,
+`decision_context_invalid`, `decision_policy_invalid`, `provider_failed`, and
+`backtest_failed` remain terminal categories where their narrower cause is
+known. Messages never expose provider responses, prompts, credentials, paths,
+or stacks. The frozen input snapshot includes exactly the policy-required
+trading-bar warm-up plus the evaluation window for target and benchmark.
+Warm-up bars can make a feature ready but never enter performance series or
+metrics.
 YFinance requests are fixed to `interval=1d`, `auto_adjust=true`, and
 `actions=false`; adjusted prices therefore do not dispatch separate dividend or
 split cash/quantity events. A missing interior benchmark session is aligned
 past-only and cannot remove a target decision date.
-
-### `GET /api/agent/backtest/{backtest_id}/trades.csv`
-
-Returns a generated `text/csv` attachment only when the persisted job is
-completed. Unknown jobs return `404`; pending, running, failed, or malformed
-results return `409` and never expose prompts, credentials, paths, or stacks.
 
 ---
 

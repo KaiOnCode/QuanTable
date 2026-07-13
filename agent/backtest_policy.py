@@ -220,7 +220,7 @@ def _freeze_policy(
     if request.mode is BacktestMode.DETERMINISTIC:
         if strategy_type != "quant":
             raise StrategyEligibilityError(
-                "strategy_mode_unsupported",
+                "strategy_type_unsupported",
                 "Deterministic mode requires a quant Strategy",
             )
         policy = _freeze_deterministic_policy(strategy)
@@ -229,7 +229,7 @@ def _freeze_policy(
         )
     if strategy_type != "agent":
         raise StrategyEligibilityError(
-            "strategy_mode_unsupported",
+            "strategy_type_unsupported",
             "Agent experiment mode requires an agent Strategy",
         )
     model = strategy.get("agent_model")
@@ -239,7 +239,7 @@ def _freeze_policy(
         )
     if not llm_available:
         raise StrategyEligibilityError(
-            "llm_unavailable",
+            "provider_capability_unsupported",
             "LLM provider credentials are not configured",
             http_status=503,
         )

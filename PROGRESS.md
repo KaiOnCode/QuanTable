@@ -219,6 +219,68 @@ Evidence:
 - `.omo/evidence/backtest-reliability-and-fidelity/phase-4/task-8-metrics.txt`
 - `.omo/evidence/backtest-reliability-and-fidelity/phase-4/phase4-final.md`
 
+### Phase 5: Durable API and Truthful Result Surface ✅
+
+Completed on 2026-07-13: Todo 9 and Todo 10 are closed. The immutable Goal
+baseline recorded above remains unchanged.
+
+- The public v1 Backtest API now separates accepted create/replay responses
+  from the persisted GET envelope, projects only allowlisted terminal/error
+  fields, carries observed no-trade reasons, and exposes fixed safe exports.
+  Replay validates the frozen snapshot before it allocates a job and does not
+  reread Strategy or provider history.
+- The Backtest page now consumes that persisted contract through typed API
+  models and pure result-state logic. It distinguishes deterministic quant,
+  provider-dependent agent experiment, HITL unsupported, and inactive
+  strategies; the client never treats a provider capability as locally proven.
+- Progress, safe failure metadata, replay-vs-current-run actions, frozen job
+  identity, diagnostics, daily equity/benchmark/drawdown, and separate
+  decision/order/fill/closed-trade evidence are visible without re-computing
+  metrics in the frontend.
+- `completed_no_trades` is explicitly non-credible performance and renders
+  only backend-observed causes. Agent-experiment results remain non-canonical.
+  A strategy switch clears prior validation/create/replay errors so an Agent
+  failure cannot be shown under HITL or a paused strategy.
+
+Fresh verification:
+
+- Isolated real FastAPI/curl QA covered create, terminal poll, all exports,
+  backend restart, guarded same-snapshot replay, and malformed/traversal ID
+  rejection. Its deterministic replay preserved economics without a Strategy
+  or provider read.
+- The sequential focused backend suite passed `127 passed, 1 warning`; changed
+  Python paths passed BasedPyright with `0 errors, 0 warnings, 0 notes`, Ruff
+  check, and Ruff format. The warning is the existing Starlette/httpx
+  TestClient deprecation.
+- Frontend Node tests passed `19/19`; TypeScript and default production build
+  passed; full ESLint had `0` errors and the same 66 pre-existing warnings.
+- Owned real FastAPI plus production Chromium QA at 1536x960 and 390x844
+  clicked deterministic submit, agent typed `503`, HITL/paused ineligibility,
+  running restoration, replay/current actions, all no-trade reasons, results,
+  exports, and reload/navigation. It recorded no unexpected console, page, or
+  network errors and no mobile horizontal overflow.
+- The stale-error browser RED reproduced first; the minimal mutation-reset
+  repair then passed the same production Chromium regression. Runtime
+  debugging audit recorded three hypotheses and sequentially refuted a
+  transient polling concern. Both independent desktop and mobile visual QA
+  lanes returned unconditional PASS.
+
+Boundaries retained:
+
+- The page does not create trusted performance from a zero-trade outcome or an
+  experimental provider result; it does not infer a no-trade cause absent from
+  the persisted API. Previous next-open, long-only, and point-in-time
+  execution/accounting contracts remain backend-owned.
+- Todo 11 replay hash/mutation matrix and Todo 12 final acceptance remain
+  unclaimed.
+
+Evidence:
+
+- `.omo/evidence/backtest-reliability-and-fidelity/phase-5/task-9-api/gate.md`
+- `.omo/evidence/backtest-reliability-and-fidelity/phase-5/task-9-api/real-fastapi-curl.md`
+- `.omo/evidence/backtest-reliability-and-fidelity/phase-5/task-10-browser/phase-gate.md`
+- `.omo/evidence/backtest-reliability-and-fidelity/phase-5/task-10-browser/debugging-audit.md`
+
 ## Frontend Demo Integration: Backtest Running Persistence ✅
 
 Completed on 2026-07-12 after product-owner reproduction of the Backtest

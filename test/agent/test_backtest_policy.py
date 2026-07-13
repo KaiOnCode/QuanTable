@@ -192,7 +192,7 @@ def test_huge_numeric_strategy_values_return_typed_config_error(
             "strategy_not_backtestable",
         ),
         ({"type": "hitl"}, {}, "strategy_type_unsupported"),
-        ({"type": "agent"}, {}, "strategy_mode_unsupported"),
+        ({"type": "agent"}, {}, "strategy_type_unsupported"),
     ],
 )
 def test_deterministic_eligibility_matrix(
@@ -219,7 +219,7 @@ def test_agent_experiment_requires_model_and_provider_capability() -> None:
     agent["agent_model"] = "deepseek-chat"
     with pytest.raises(StrategyEligibilityError) as unavailable:
         freeze_backtest_run_spec(request, agent, llm_available=False)
-    assert unavailable.value.code == "llm_unavailable"
+    assert unavailable.value.code == "provider_capability_unsupported"
     assert unavailable.value.http_status == 503
 
     with pytest.raises(StrategyEligibilityError) as unsupported:

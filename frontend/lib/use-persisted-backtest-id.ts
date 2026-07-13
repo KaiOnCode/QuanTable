@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
-import { useRouter } from "next/navigation";
 import {
   nextStoredBacktestId,
   parseBacktestId,
@@ -45,7 +44,6 @@ function getServerReady(): false {
 }
 
 export function usePersistedBacktestId(queryBacktestId: string | null) {
-  const router = useRouter();
   const storedBacktestId = useSyncExternalStore(
     subscribeToSessionStorage,
     getStoredBacktestId,
@@ -85,11 +83,13 @@ export function usePersistedBacktestId(queryBacktestId: string | null) {
       );
       setStoredBacktestId(nextBacktestId);
       setCreatedBacktestId(parsedBacktestId);
-      router.replace(`/backtest?backtest_id=${encodeURIComponent(parsedBacktestId)}`, {
-        scroll: false,
-      });
+      window.history.replaceState(
+        null,
+        "",
+        `/backtest?backtest_id=${encodeURIComponent(parsedBacktestId)}`,
+      );
     },
-    [router],
+    [],
   );
 
   const syncBacktestStatus = useCallback((
