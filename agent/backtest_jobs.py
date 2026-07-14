@@ -1490,13 +1490,16 @@ class BacktestJobService:
                 ).model_dump_json(exclude_none=True),
             )
             return
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            import logging
+            _logger = logging.getLogger(__name__)
+            _logger.error("Backtest execution failed for %s: %s", job_id, exc)
             self._store.fail_backtest_job(
                 job_id,
                 BacktestJobError(
                     code="execution_failed",
                     stage="execution",
-                    message="Backtest execution failed",
+                    message=f"Backtest execution failed: {exc}",
                 ).model_dump_json(exclude_none=True),
             )
             return
@@ -1570,10 +1573,15 @@ def default_backtest_job_service(store: ContextStore) -> BacktestJobService:
 
 
 def _configured_structured_output_supported(model: str) -> bool:
-    base_url = (getenv("OPENAI_API_BASE") or "https://api.openai.com/v1").lower()
-    if not base_url.startswith("https://api.openai.com/"):
+    base_url = (getenv("OPENAI_API_BASE") or "").lower()
+    # OpenAI-compatible providers (DeepSeek, etc.) support response_format
+    if not base_url:
         return False
-    return model.lower().startswith(("gpt-4o", "gpt-4.1", "gpt-5", "o1", "o3", "o4"))
+    model_lower = model.lower()
+    return model_lower.startswith((
+        "gpt-4o", "gpt-4.1", "gpt-5", "o1", "o3", "o4",
+        "deepseek",  # DeepSeek models support json_schema response_format
+    ))
 
 
 def _verified_completed_result(
