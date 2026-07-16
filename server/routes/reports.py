@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from reporting.models import ReportJob, ReportStatus, ReportType
+from reporting.pdf_renderer import ReportPdfRenderer
 from reporting.repository import (
     ArtifactUnavailableError,
     ReportRepository,
@@ -21,7 +22,6 @@ from reporting.service import ReportGenerationError, ReportService
 from reporting.source import ReportSourceError, ReportSourceResolver
 from server.analysis_runs import HISTORY_DIR
 from storage import get_store
-from utils.pdf_generator import ReportPdfRenderer
 
 _report_service: ReportService | None = None
 _report_service_lock = Lock()

@@ -6,9 +6,6 @@ from pathlib import Path
 from typing import Any, Dict, Iterator
 
 from fpdf import FPDF
-from fpdf.fonts import TTFFont
-
-from reporting.models import ReportPayload
 
 
 def _normalize_text(value: Any, fallback: str = "暂无数据") -> str:
@@ -266,60 +263,3 @@ def generate_pdf_report(
 
     pdf.output(output_path)
     return output_path
-
-
-class ReportPdfRenderer:
-    def __init__(self, font_path: str | Path | None = None) -> None:
-        self._configured_font = Path(font_path).resolve() if font_path else None
-        self._font_path: Path | None = None
-
-    def preflight(self) -> None:
-        candidates = (
-            (self._configured_font,)
-            if self._configured_font is not None
-            else tuple(_iter_font_candidates())
-        )
-        for candidate in candidates:
-            if candidate is None or not candidate.is_file():
-                continue
-            try:
-                pdf = FPDF()
-                pdf.add_font("preflight", fname=str(candidate))
-                font = pdf.fonts["preflight"]
-                if not isinstance(font, TTFFont) or not all(
-                    codepoint in font.cmap for codepoint in (0x4E2D, 0x6587)
-                ):
-                    continue
-                self._font_path = candidate
-                return
-            except Exception:
-                continue
-        raise RuntimeError(
-            "Unicode/CJK PDF font unavailable; install Noto Sans CJK or WenQuanYi"
-        )
-
-    def render(self, payload: ReportPayload, output_path: Path) -> None:
-        if self._font_path is None:
-            raise RuntimeError("PDF renderer preflight has not completed")
-        pdf = FPDF()
-        pdf.set_auto_page_break(auto=True, margin=15)
-        pdf.set_margins(15, 15, 15)
-        pdf.add_font("report", fname=str(self._font_path))
-        pdf.add_page()
-        pdf.set_title(payload.title)
-        pdf.set_author("IntelliFin Assistant")
-        pdf.set_font("report", size=18)
-        pdf.multi_cell(0, 10, payload.title, new_x="LMARGIN", new_y="NEXT")
-        pdf.set_font("report", size=10)
-        pdf.multi_cell(
-            0,
-            7,
-            f"Type: {payload.report_type.value}\nTickers: {', '.join(payload.tickers)}\n"
-            f"Generated: {payload.generated_at.isoformat()}",
-            new_x="LMARGIN",
-            new_y="NEXT",
-        )
-        for section in payload.sections:
-            _add_section(pdf, "report", section.title, section.content)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        pdf.output(str(output_path))

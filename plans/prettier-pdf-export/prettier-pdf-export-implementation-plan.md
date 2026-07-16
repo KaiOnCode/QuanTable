@@ -2,7 +2,7 @@
 
 ## 文档状态
 
-- 状态：已批准，等待下一会话实施
+- 状态：已实施并于 2026-07-17 完成恢复验收
 - 规划日期：2026-07-16
 - 规划基线：`dev`，`5d6dd06`
 - 已选方案 A：`markdown-it-py` + WeasyPrint
@@ -659,23 +659,23 @@ review。
 
 全部勾选后才能宣布完成：
 
-- [ ] 方案 A 的生产依赖和 lockfile 已更新。
-- [ ] 固定 CJK 字体、许可证、来源和 checksum 已记录。
-- [ ] raw HTML、图片、URL 和 file access 安全边界已有测试。
-- [ ] Markdown 标题、列表、表格、引用、代码和分隔线正确渲染。
-- [ ] stock 和 sector 共用新 `ReportPdfRenderer`。
-- [ ] 现有 API、job、history 和 download 合同未变化。
-- [ ] 旧 `generate_pdf_report()` 与 `fpdf2` 未被误删。
-- [ ] focused pytest 全绿。
-- [ ] 完整后端 pytest 已运行并如实记录结果。
-- [ ] basedpyright、ruff、format check 和 `git diff --check` 通过。
-- [ ] stock 与 sector PDF 通过 `pdfinfo`、`pdffonts` 和 `pdftotext`。
-- [ ] stock 与 sector PDF 的所有页面完成视觉检查。
-- [ ] Reports 页面在具备真实前置数据时完成生成、刷新和下载验收。
-- [ ] runtime 文档记录系统依赖、安全策略和方案 B 条件。
-- [ ] `PROGRESS.md` 只记录真实完成和验证证据。
-- [ ] `git status` 已复核，没有覆盖用户的无关修改。
-- [ ] 未 commit、push 或创建 PR，除非用户另行授权。
+- [x] 方案 A 的生产依赖和 lockfile 已更新。
+- [x] 固定 CJK 字体、许可证、来源和 checksum 已记录。
+- [x] raw HTML、图片、URL 和 file access 安全边界已有测试。
+- [x] Markdown 标题、列表、表格、引用、代码和分隔线正确渲染。
+- [x] stock 和 sector 共用新 `ReportPdfRenderer`。
+- [x] 现有 API、job、history 和 download 合同未变化。
+- [x] 旧 `generate_pdf_report()` 与 `fpdf2` 未被误删。
+- [x] focused pytest 全绿。
+- [x] 完整后端 pytest 已运行并如实记录结果。
+- [x] basedpyright、ruff、format check 和 `git diff --check` 通过。
+- [x] stock 与 sector PDF 通过 `pdfinfo`、`pdffonts` 和 `pdftotext`。
+- [x] stock 与 sector PDF 的所有页面完成视觉检查。
+- [x] Reports 页面在具备真实前置数据时完成生成、刷新和下载验收。
+- [x] runtime 文档记录系统依赖、安全策略和方案 B 条件。
+- [x] `PROGRESS.md` 只记录真实完成和验证证据。
+- [x] `git status` 已复核，没有覆盖用户的无关修改。
+- [x] 未 commit、push 或创建 PR，除非用户另行授权。
 
 ## 13. 下一会话启动提示词
 

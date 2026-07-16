@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="author" content="IntelliFin Assistant">
+  <meta name="generator" content="IntelliFin Assistant">
+  <meta name="dcterms.created" content="{{ generated_at }}">
+  <title>{{ title }}</title>
+</head>
+<body>
+  <header class="running-header">
+    <span>IntelliFin Assistant</span>
+    <span>{{ report_type }} Source Report</span>
+  </header>
+  <footer class="running-footer">
+    <span>Generated {{ generated_at }}</span>
+  </footer>
+  <main>
+    <section class="report-hero">
+      <p class="eyebrow">{{ report_type }} Source Report</p>
+      <h1>{{ title }}</h1>
+      <dl class="report-metadata">
+        <div><dt>Report type</dt><dd>{{ report_type }}</dd></div>
+        <div><dt>Tickers</dt><dd>{{ tickers | join(", ") }}</dd></div>
+        <div><dt>Generated (UTC)</dt><dd>{{ generated_at }}</dd></div>
+      </dl>
+      <p class="source-note">Source report generated from persisted analysis data.</p>
+    </section>
+    {% for section in sections %}
+    <section class="report-section" id="section-{{ section.kind }}">
+      <div class="section-heading">
+        <span class="section-number">{{ loop.index | string | zfill(2) }}</span>
+        <h2>{{ section.title }}</h2>
+      </div>
+      <div class="markdown-body">{{ section.html }}</div>
+    </section>
+    {% endfor %}
+  </main>
+</body>
+</html>

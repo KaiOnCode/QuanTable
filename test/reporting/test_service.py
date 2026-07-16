@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from reporting.models import ReportSection, ReportType
+from reporting.pdf_renderer import ReportPdfRenderer
 from reporting.repository import ArtifactUnavailableError, ReportRepository
 from reporting.service import (
     ReportGenerationError,
@@ -17,7 +18,6 @@ from reporting.service import (
     ReportSourceResolver,
 )
 from storage.store import ContextStore
-from utils.pdf_generator import ReportPdfRenderer
 
 
 class _PdfRenderer:

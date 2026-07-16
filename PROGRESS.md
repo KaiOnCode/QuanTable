@@ -1,6 +1,61 @@
 # Progress & Roadmap
 
-Last updated: 2026-07-14 | Branch: `dev`
+Last updated: 2026-07-17 | Branch: `dev`
+
+## Prettier PDF Report Export ✅
+
+Completed on 2026-07-16 on `dev` under
+`plans/prettier-pdf-export/prettier-pdf-export-implementation-plan.md`.
+
+Delivered:
+
+- Stock and sector exports now share a production `ReportPdfRenderer` built on
+  restricted `markdown-it-py`, an autoescaped Jinja template, print CSS, and
+  WeasyPrint. The legacy `generate_pdf_report()` path and `fpdf2` remain intact.
+- Markdown headings, emphasis, nested lists, blockquotes, rules, inline/fenced
+  code, links, and paginated tables render semantically. A4 pages include a
+  report hero, section hierarchy, running header/footer, page counts, PDF
+  metadata, outlines, tagged text, and embedded Noto Sans CJK SC fonts.
+- Raw HTML is disabled; image syntax degrades to alt text; only HTTP(S) link
+  annotations survive; and the WeasyPrint fetcher denies network, data URLs,
+  files outside the bundled asset root, and bundled non-render assets. The
+  fetch allowlist contains only the stylesheet and two fixed fonts. Thread-safe
+  preflight validates the template, CSS, fonts, license, required CJK glyphs,
+  native runtime, and a real smoke render.
+- `ReportService`, API schemas, job states, history/list behavior, artifact
+  persistence, and download URLs are unchanged. Runtime packages, Linux system
+  requirements, font provenance/checksums, diagnostics, and the still-disabled
+  Chromium option are documented in `docs/pdf-report-runtime.md`.
+
+Verification:
+
+- Focused renderer/service/API pytest passed `27 passed, 1 warning`; the warning
+  is the existing Starlette/httpx deprecation warning. Changed-file
+  BasedPyright reported `0 errors, 0 warnings, 0 notes`; scoped Ruff check,
+  Ruff format, `git diff --check`, and WeasyPrint native diagnostics passed.
+- The repository-wide `uv run pytest test -q` was run but still stops during
+  collection at the unchanged `agentgraph/orchestrator.py` import of missing
+  `agents.PM` (`1 skipped, 1 warning, 1 error`). Repository-wide BasedPyright
+  was also run and retains 57 pre-existing errors in unchanged legacy,
+  archive, dataflow, proposal, and old test files; changed files are clean.
+- On 2026-07-17, isolated real FastAPI/TestClient flows again created, polled,
+  listed, and downloaded both report types through the final shared renderer.
+  Stock completed as an 8-page 1,952,180-byte PDF; sector completed as a 4-page
+  1,725,315-byte PDF, with the existing filenames and `application/pdf`
+  response contract.
+- `pdfinfo`, `pdfinfo -url`, `mutool show`, `pdffonts`, and `pdftotext -layout`
+  verified A4 metadata, tagged searchable text, outlines, only approved HTTPS
+  annotations, embedded/subsetted CJK Regular/Bold/Italic fonts, and no leaked
+  Markdown separators, fences, raw HTML, JavaScript, or blank pages.
+- All 12 pages were freshly rendered at 144 DPI and inspected individually.
+  Headers, footers, section starts, repeated table headers, long-cell wrapping,
+  lists, quotes, code, CJK glyphs, and final-page flow had no overlap, clipping,
+  tofu, isolated headings, or layout-induced blank tail pages. Evidence remains
+  outside the repository in `/tmp/prettier-pdf-final-20260717-rEpT5G/`.
+- Reports-page browser submission was not run because no suitable user-owned
+  stock and sector business sources were assumed or modified. The isolated API
+  fixture exercises the same public stock/sector creation, polling, history,
+  and download contracts without changing user business data.
 
 ## Backtest UI and Daily Insights Reliability Follow-up ✅
 
