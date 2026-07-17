@@ -163,6 +163,21 @@ A distinct strand of literature motivates the project's central thesis. Graph-ba
 *Positioning.* Where prior multi-agent trading systems compete on reported return, Agentic-Quant competes on *verifiability*. It adopts their organisational and debate structures but subordinates them to an engineering substrate — grounded data, deterministic simulation, and governed execution — designed to make every claim auditable.
 ]
 
+The following table sharpens this contrast against the closest systems in the literature. The comparison is qualitative and drawn from the cited papers' described designs; it is intended to locate Agentic-Quant's emphasis rather than to rank predictive performance.
+
+#table(
+  columns: (1.4fr, 1fr, 1fr, 1fr, 1fr),
+  align: (left, center, center, center, center),
+  stroke: 0.5pt,
+  inset: 6pt,
+  table.header([*System*], [*Multi-agent debate*], [*Layered memory*], [*Reproducible backtest*], [*Human oversight*]),
+  [TradingAgents @xiao_tradingagents:_2025], [Yes], [Partial], [Not emphasised], [No],
+  [FinCon @yu_fincon:_2024], [Yes (hierarchy)], [Yes (beliefs)], [Not emphasised], [No],
+  [FinMem @yu_finmem:_2023], [No], [Yes], [Not emphasised], [No],
+  [Alpha-GPT 2.0 @yuan_alpha-gpt_2024], [No], [No], [Not emphasised], [Yes],
+  [*Agentic-Quant* (this work)], [Yes], [Yes (OWM)], [*Enforced (hash)*], [Yes (FSM)],
+)
+
 // ═══════════════════════════════════════════
 //  3  Design Goals and Requirements
 // ═══════════════════════════════════════════
@@ -245,9 +260,13 @@ The single sanctioned bridge between tracks is the `run_analysis` tool in the AC
 
 The `AgentLoop` engine implements a five-phase iteration modelled on modern agent harnesses and the ReAct pattern @yao_react_2023: (1) *preprocess* — context compression; (2) *call model* — a streaming LLM invocation that begins executing tool calls as their JSON arguments complete; (3) *execute tools* — read-only tools in parallel, write tools serially; (4) *inject attachments* — a hook for memory/skill injection; and (5) *check terminate* — an error-classification and recovery decision. Iterations are bounded by a 25-turn safety net and a 600-second wall-clock timeout. Cross-iteration de-duplication, a two-strike consecutive-failure circuit breaker, and a permission manager (with `default`, `plan`, `accept_edits`, and `bypass` modes) round out the control logic. Sections 5.1–5.3 dissect the compression, recovery, and tool subsystems.
 
+The loop's control state is carried by a lightweight `WorkspaceMemory` object scoped to a single `run()` call: it holds per-tool call counters, a `called_keys` set for cross-iteration de-duplication, a `consecutive_failures` map for the circuit breaker, and a list of produced artefacts. This deliberately transient runtime memory is distinct from the persistent OWM store (Section 5.4); it exists only to make one reasoning episode efficient and self-correcting. A representative failure pattern the loop must handle is the model repeatedly requesting the same ticker's price: the de-duplication key `name:primary_identifier` (tool name plus ticker/query/URL) causes the second such call to be dropped and replaced with a system reminder to use the data already gathered, which empirically shortens sessions and curbs a common LLM looping pathology. When a tool for a given ticker fails twice, the breaker injects an explicit "STOP retrying — answer with what you have or state it is unavailable" instruction, converting silent stalls into graceful degradation.
+
 === LEGACY track: the LangGraph debate pipeline
 
-The frozen pipeline is a LangGraph `StateGraph` compiled with a `MemorySaver` checkpointer keyed by session. Three analyst nodes — market (technical), news, and fundamentals — fan out in parallel from `START`, each running its own isolated ReAct sub-loop over a private message channel and a bound tool subset. All three converge on a *barrier* risk-analyst node that returns empty (a no-op) until all three reports exist, at which point it synthesises position, stop-loss, take-profit, and time-window advice. The portfolio-manager node then produces the final decision through a `PydanticOutputParser` bound to the `TradingDecision` schema (`action ∈ {BUY, SELL, HOLD}`, `target_position_pct`, `report`), with outcome-weighted memories injected into its prompt. A terminal `remember_memory` node persists the decision, closing the observation → decision → memory loop advocated by FinMem @yu_finmem:_2023 and TradingAgents @xiao_tradingagents:_2025. Temperature is pinned to 0.0 throughout for determinism.
+The frozen pipeline is a LangGraph `StateGraph` compiled with a `MemorySaver` checkpointer keyed by session. Its shared blackboard, `AgentState`, subclasses LangGraph's `MessagesState` and adds the input fields (`ticker`, `date`, `current_position_pct`), five *per-agent message channels* (so each analyst's tool dialogue is isolated), four report slots (`market_report`, `news_report`, `fundamental_report`, `risk_report`), the portfolio-manager outputs (`Action`, `Target_position_pct`, `PM_report`), and the memory-integration fields (`relevant_memories`, `memory_context`). Three analyst nodes — market (technical), news, and fundamentals — fan out in parallel from `START`, each running its own isolated ReAct sub-loop over its private message channel and a bound tool subset (market binds `get_price`+`get_indicators`; news binds `get_news`; fundamentals binds `get_fundamentals`). A `create_tool_node_wrapper` copies each analyst's private channel into the shared `messages` slot for the duration of a `ToolNode` invocation and writes the result back only to that channel, so the three concurrent ReAct loops never collide.
+
+All three branches converge on a *barrier* risk-analyst node whose join logic is the crux of the design: it returns an empty dict (a LangGraph no-op) until all three reports are present, and short-circuits if a `risk_report` already exists — so although the graph invokes it up to three times (once per completing analyst), it computes exactly once, when the last report lands. It then synthesises position, stop-loss, take-profit, and time-window advice. The portfolio-manager node produces the final decision through a `PydanticOutputParser` bound to the `TradingDecision` schema (`action ∈ {BUY, SELL, HOLD}`, `target_position_pct`, `report`), with the top outcome-weighted memories injected into its system prompt under an explicit "history is advisory; current evidence wins on conflict" instruction. A terminal `remember_memory` node persists the decision, closing the observation → decision → memory loop advocated by FinMem @yu_finmem:_2023 and TradingAgents @xiao_tradingagents:_2025. Temperature is pinned to 0.0 throughout for determinism. Every analyst prompt enforces a fixed four-line header — direction, time-horizon, confidence in $[0,1]$, and a one-sentence conclusion — followed by quantified evidence and explicit "if–then" invalidation conditions, which both standardises downstream parsing and forces the model to commit to falsifiable claims.
 
 == Data Flow Patterns
 
@@ -256,6 +275,16 @@ The system supports several orthogonal execution patterns, of which three are ce
 - *Interactive analysis (Pattern A).* A user prompt to `POST /api/agent/chat` drives the ReAct loop; events (`thinking_delta`, `tool_call`, `tool_progress`, `tool_done`, `answer`) stream to the browser over SSE; the session transcript is persisted for continuation.
 - *Structured decision (Pattern B).* `POST /api/analyze` runs the LangGraph pipeline, streaming per-agent reports and an optional human-in-the-loop approval when risk rules trigger.
 - *Deterministic backtest (Pattern C).* A typed run specification is frozen, target and benchmark price series are pinned into a hashed snapshot, and a point-in-time runner replays eligible historical sessions, executing long-only orders at the next available open (Section 5.6).
+
+== The API and Transport Layer
+
+The FastAPI application is deliberately thin: it validates requests, delegates to the domain services, and streams results. On startup a single lifespan hook recovers any interrupted persistent jobs (backtests, report generation, insight generation) so a crash mid-run never leaves a job in a limbo state, and — when enabled — starts the three in-process schedulers. Routes are mounted under `/api` and, following the track discipline, are themselves labelled ACTIVE, LEGACY, or SHARED: the agent terminal and backtest endpoints are ACTIVE; the old `analyze` pipeline is LEGACY; and market data, strategies, memory, risk, scanner, reports, watchlist, monitor, approvals, insights, and settings are SHARED. A route track rule — enforced by an automated test — forbids SHARED routes from importing ACTIVE or LEGACY agent code, so the API surface cannot smuggle a dependency across a boundary.
+
+Streaming is realised with Server-Sent Events rather than WebSockets, because agent execution is a one-directional stream of reasoning and tool events rather than a bidirectional dialogue. The agent terminal bridges a synchronous worker thread and the async request handler through a bounded queue with a 300-second idle timeout, translating each internal loop event into a named SSE frame and disabling proxy buffering so tokens reach the browser as they are produced. This design keeps the request handler non-blocking while the underlying `AgentLoop` — which is synchronous and CPU/IO-mixed — runs to completion in its own thread.
+
+== Data Governance in Four Tiers
+
+The data plane is not merely a cache in front of providers; it embodies a deliberate governance philosophy in which data is *built up from public sources over time* rather than queried from a pre-existing commercial database. Collection is layered into four tiers of decreasing priority. Tier 1 continuously scrapes global market news to establish a macro backdrop; Tier 2 periodically refreshes the most active tickers to widen coverage; Tier 3 deeply and frequently refreshes the user's explicit watchlist and strategy tickers; and Tier 4 — the intended point of novelty — uses an LLM discovery agent every four hours to read recent conversations and watchlists and *propose* new tickers and themes worth tracking, which are then filled in during idle time. A priority queue ensures that a user actively waiting on an on-demand request is never blocked by background refresh work. This search-and-recommendation framing keeps the demand path fast and synchronous while the recommendation path quietly broadens the knowledge base, and it explains why the agent is restricted to *judgement* tasks (relevance, relationship, review) while raw retrieval is left to the deterministic collector.
 
 == The Anti-Hallucination Data Plane
 
@@ -267,7 +296,31 @@ Goal G1 is realised structurally rather than by prompt exhortation alone. Every 
 
 + *Verified caching.* Provider responses are cached as pickled blobs paired with a SHA-256 sidecar; reads recompute the digest and compare it in constant time (`hmac.compare_digest`), deleting corrupt entries, and honour a time-to-live (24 hours default, 4 hours for sentiment). This gives sub-20 ms warm reads while guaranteeing integrity.
 
+The table below summarises the provider matrix. Each adapter is wrapped in an exponential-backoff `retry` helper (three attempts, doubling delay), and the news scraper additionally uses `tenacity` with jitter to survive rate-limiting and CAPTCHA interstitials.
+
+#table(
+  columns: (auto, 1fr, auto),
+  align: (left, left, center),
+  stroke: 0.5pt,
+  inset: 6pt,
+  table.header([*Domain*], [*Provider chain / method*], [*Refresh*]),
+  [Prices / OHLCV], [Yahoo Finance (`auto_adjust`, +100-bar warm-up buffer, exclusive end)], [15 min],
+  [Indicators], [Computed from OHLCV via `pandas_ta`: RSI-14, MACD(12/26/9), SMA-20/50, ATR-14], [on demand],
+  [Fundamentals], [Yahoo live snapshot / AkShare point-in-time (TTM valuation, margins, growth)], [daily / ≥30-day staleness],
+  [News], [Google News → AkShare (East Money) → Yahoo structured; URL de-duplication + FTS5], [30 min],
+  [Sentiment], [Keyword aggregation (16 bullish / 16 bearish terms), confidence from sample size + variance], [60 min],
+  [Macro calendar], [Finnhub economic calendar (CPI, FOMC, NFP)], [daily 08:00 UTC],
+)
+
+Persistence of raw market data uses a dedicated `MarketDataStore` with `(ticker, date)` compound keys, a FTS5 virtual table with synchronising triggers for full-text news search, a `data_freshness` table that tracks per-source error counts and staleness, and startup migrations that purge malformed rows. Storage principles — compound keys, point-in-time `as_of`, source attribution, and freshness tracking — are applied uniformly so that any consumer can distinguish fresh, stale, and missing data rather than silently trusting whatever is present.
+
 On top of the data plane, the ACTIVE loop adds a post-generation *answer validator* that extracts numeric tokens from the model's final answer and cross-checks them against numbers present in the tool-result messages, appending a warning when three or more of at least five figures are unmatched. Grounding is thus defended at three layers: prompt rules, the data plane itself, and post-hoc validation.
+
+== Prompt Architecture
+
+Because an LLM agent's behaviour is governed as much by its prompt as by its code, the ACTIVE track treats prompt construction as a first-class, structured concern rather than a monolithic string. The system prompt is assembled from seven ordered sections: an identity block stamped with the current date and an explicit "never guess or fabricate financial data" directive; a task-discipline block of eleven rules (verify with tools, no gold-plating, no blind retries, match the user's language); a reversibility/blast-radius block governing destructive actions; a tool-usage block (pick the most specific tool, batch all needed calls, stop when data suffices, never repeat a call); the auto-generated per-tool descriptions; a ten-rule output block (be concise, lead with the number, use tables for comparisons, every figure must originate from a tool result); and an environment block (working directory, git branch, platform, tool count). Each rule encodes a *specific failure pattern* observed in practice — the prompt tells the model what *not* to do, which is more effective than abstract exhortation.
+
+Two further mechanisms make the prompt adaptive. First, a lightweight relevance selector scores the seventy-six skills against the user request via Chinese-bigram and English-token overlap and injects only the top-ranked skill summaries, so the agent is primed with domain methodology pertinent to the question without bloating every prompt. Second, following the once-per-session "system-reminder" pattern, a compact user-context message (date, available-tool count, key-tool hints) is injected exactly once at session start rather than on every turn, avoiding redundant repetition across a long dialogue.
 
 // ═══════════════════════════════════════════
 //  5  Implementation
@@ -346,9 +399,9 @@ The memory layer (goal G5) records each decision as a `MemoryRecord` with five c
   ]
 ]
 
-clamped to $[-1, 1]$. *Recency* decays exponentially with a thirty-day half-life; *context similarity* is the fraction of matching features among ticker, sector, market-cap bucket, and market trend. A subtle but important detail is that records are stored with a neutral similarity of 0.5 and then *re-scored against the live context at recall time*, so the same memory surfaces with different salience in different market regimes — an approximation of associative recall consistent with the layered-memory philosophy of FinMem @yu_finmem:_2023 and the verbal-reinforcement idea of Reflexion @shinn_reflexion_2023.
+clamped to $[-1, 1]$. *Recency* decays exponentially with a thirty-day half-life, $2^(-Delta t / 30)$; *context similarity* is the fraction of matching features among ticker, sector, market-cap bucket, and market trend, defaulting to a neutral 0.5 when no comparable features exist. A subtle but important detail is that records are stored with a neutral similarity of 0.5 and then *re-scored against the live context at recall time*, so the same memory surfaces with different salience in different market regimes — an approximation of associative recall consistent with the layered-memory philosophy of FinMem @yu_finmem:_2023 and the verbal-reinforcement idea of Reflexion @shinn_reflexion_2023. Concretely, recall pulls twice the requested number of candidates ordered by their stored score, recomputes each candidate's similarity and recency against the current market context, re-ranks by the refreshed OWM score, and returns the top few. These are then rendered into a compact prompt block for the portfolio manager, prefaced by the standing instruction that history is advisory and current evidence prevails on conflict — so the memory can inform but never override fresh analysis.
 
-Before any (simulated) trade, the memory subsystem also enforces five behavioural safety gates: a hard *drawdown* block, a *concentration* block (projected single-ticker weight over limit), a *losing-streak* block (five consecutive recalled losses), and softer warnings for repeated similar-ticker losses and anomalously large position sizing. These operationalise the risk-control and self-critique mechanisms described by FinCon @yu_fincon:_2024.
+Writing a memory is equally structured. After a decision, the service parses the fixed four-line header of the portfolio manager's report, computes the position delta relative to the current holding, and populates all five layers — an episodic narrative of the trade, a one-sentence semantic lesson, a compacted procedural summary of the four analyst reports, an affective note capturing direction, horizon, and confidence, and a raw trade record with full metadata — before persisting to a per-strategy-indexed SQLite table. Before any (simulated) trade, the memory subsystem also enforces five behavioural safety gates: a hard *drawdown* block, a *concentration* block (projected single-ticker weight over limit), a *losing-streak* block (five consecutive recalled losses), and softer warnings for repeated similar-ticker losses and anomalously large position sizing. These operationalise the risk-control and self-critique mechanisms described by FinCon @yu_fincon:_2024, and together they give the system a memory that is not a passive log but an active participant in each subsequent decision.
 
 == Persistence and Provenance
 
@@ -371,21 +424,41 @@ The point-in-time runner honours several fidelity rules that directly counter th
 - *Explicit non-fills.* Pending, rejected, cancelled, and end-of-window-unfilled orders are retained as evidence; a zero-trade result is reported as `completed_no_trades`, never dressed up as performance.
 - *Honest diagnostics.* Every result carries mandatory fidelity warnings — that the drawdown limit is not enforced, that capacity is not modelled, that adjusted prices are synthetic, and, for small samples, that fewer than 63 evaluation bars or 30 closed trades were observed.
 
-Performance metrics are computed by a trade ledger from reconstructed long-only episodes: total and annualised return, maximum drawdown and its duration, annualised volatility, the Sharpe ratio @sharpe_ratio_1994, win rate, profit factor, payoff ratio, realised/unrealised PnL, fees, slippage, and turnover. A `create_replay` path re-binds the identical frozen snapshot and re-runs the engine, and a verification routine proves the stored result matches a fresh recomputation.
+Performance metrics are computed by a trade ledger from reconstructed long-only episodes. Given a per-session equity series $E_0, E_1, dots, E_n$ with simple returns $r_t = E_t / E_(t-1) - 1$, the ledger reports total return $E_n/E_0 - 1$, calendar-annualised return $(1 + "total")^(365 / "days") - 1$, annualised volatility $sigma sqrt(252)$, and the Sharpe ratio @sharpe_ratio_1994
 
-The typed policies themselves are textbook constructions: a time-series-momentum rule after Moskowitz et al. @moskowitz_time_2012 and a fast/slow SMA crossover. The design anticipates integration of a formulaic-alpha library @kakushadze_101_2016 as additional deterministic signal generators. An *experimental* agent-driven mode exists but is explicitly labelled non-credible for performance claims (non-goal N1), using bounded one-shot structured decisions with a JSON-schema-constrained provider.
+#align(center)[
+  #block(fill: luma(246), inset: 9pt, radius: 3pt)[
+    $"Sharpe" = (macron(r) - r_f \/ 252) / sigma_r dot.c sqrt(252), quad "MaxDD" = max_t (1 - E_t / max_(s <= t) E_s)$
+  ]
+]
+
+alongside maximum-drawdown duration, win rate, profit factor (gross profit ÷ gross loss), payoff ratio, realised/unrealised PnL, total fees and slippage, and turnover. Closed trades are reconstructed by a long-only episode tracker that pairs entries and exits, allocates fees and slippage pro-rata, and computes per-lot realised PnL; any identity that ever goes short is excluded from closed-trade accounting to keep the long-only contract honest. Orders themselves flow through a virtual `MockBrokerEngine` with an explicit lifecycle (`NEW → FILLED | PARTIALLY_FILLED | REJECTED | CANCELED`), a pre-trade risk checker (cash sufficiency including fees and slippage, short-sell blocking, and a projected max-position-percent bound), and weighted-average-cost position accounting. A `create_replay` path re-binds the identical frozen snapshot and re-runs the engine, and a verification routine proves the stored result matches a fresh recomputation.
+
+The typed policies themselves are textbook constructions: a time-series-momentum rule after Moskowitz et al. @moskowitz_time_2012 (enter when trailing return over the lookback window exceeds an entry threshold, exit below an exit threshold) and a fast/slow SMA crossover (target the position when the fast average is above the slow average). Both are expressed as frozen Pydantic models under a discriminated union with cross-field validators, and the executor derives a long-only target-position transition by comparing the policy's target against the current holding with a floating-point tolerance, so a negligible drift never triggers spurious churn. The design anticipates integration of a formulaic-alpha library @kakushadze_101_2016 as additional deterministic signal generators. An *experimental* agent-driven mode exists but is explicitly labelled non-credible for performance claims (non-goal N1): it runs a scoped `AgentLoop` restricted to `get_price`, `get_indicators`, and a single `submit_backtest_decision` call, or a bounded one-shot structured decision from a JSON-schema-constrained provider, with typed retry/failure categories rather than silent holds.
 
 == Governance, Risk, and the Human-in-the-Loop
 
-Risk analytics computes, from persisted decision-target exposures, a portfolio Value-at-Risk (95% and 99% historical quantiles), Conditional VaR (expected shortfall of the 5% tail), maximum drawdown, a pairwise correlation matrix, and Herfindahl concentration by ticker and by sector, plus a uniform-market-shock stress test anchored to the historical worst day. When a portfolio-manager decision crosses configured thresholds — a position change over 20%, confidence below 0.5, or single-ticker concentration over 30% — a human-in-the-loop rule engine flags it, and an approval *state machine* (with `pending → approved | rejected | modified | timed_out` transitions and terminal decision states) routes it for human review, echoing the human-in-the-loop alpha discovery of Alpha-GPT 2.0 @yuan_alpha-gpt_2024. Approvals, decisions, and every tool call are written to the audit-trail `events` table, satisfying goal G4 and the accountability requirements of @tatsat_beyond_2025.
+Risk analytics computes, from persisted decision-target exposures, a portfolio Value-at-Risk at the 95% and 99% levels as the corresponding historical return quantiles, Conditional VaR (the expected shortfall of the 5% tail, $"CVaR"_95 = EE[r | r <= "VaR"_95]$), maximum drawdown, a pairwise Pearson correlation matrix, and Herfindahl concentration $H = sum_i w_i^2$ reported both by ticker and by sector, plus a uniform-market-shock stress test whose impact is the shock scaled by gross exposure and which is also anchored to the empirical worst historical day. The service requires at least sixty common return observations before reporting, degrading to an explicit `partial` status otherwise, so a thin history never masquerades as a confident risk estimate.
+
+When a portfolio-manager decision crosses configured thresholds — a position change over 20%, confidence below 0.5, or single-ticker concentration over 30% — a human-in-the-loop rule engine flags it, and an approval *state machine* routes it for human review. The machine admits transitions only from the non-terminal `pending` state to `approved`, `rejected`, `modified`, or `timed_out`; all decision states are terminal and illegal transitions raise an explicit error, so the approval lifecycle cannot be corrupted by out-of-order events. On a `modify` decision the reviewer's amended action and target position replace the originals before execution. This echoes the human-in-the-loop alpha discovery of Alpha-GPT 2.0 @yuan_alpha-gpt_2024. Approvals, decisions, and every tool call are written to the per-strategy audit-trail `events` table, satisfying goal G4 and the accountability requirements of @tatsat_beyond_2025.
+
+== Screening, Beliefs, and Knowledge
+
+Three further subsystems support the analytical workflow. The *scanner* screens a tracked universe (tickers unioned from strategies, watchlists, and the market store) against typed conditions using six operators (`< > <= >= == between`) over provenance-tagged snapshot features (price, change, volume, RSI, SMAs, PE, PB, market cap, sector). It offers three entry paths: a purely deterministic *rule* mode; an *agent* mode in which a restricted `AgentLoop` compiles a natural-language query into frozen conditions by calling the scanner tool exactly once; and a *belief* mode that derives conditions from a strategy's stated trading philosophy. The *belief engine* models a trading philosophy as a typed `TradingBelief` (natural-language text, style, tags, weight, and rolling win-rate/return statistics), seeded from five presets — event-driven, conservative-value, momentum-growth, technical-reversal, and macro-sensitive — echoing the conceptual verbal reinforcement of FinCon @yu_fincon:_2024. The *knowledge base* maintains, per strategy, three Markdown ledgers — verified `rules`, empirical `findings`, and falsified `failures` — that are injected as context before analysis, operationalising the failure-memory idea of Reflexion @shinn_reflexion_2023 in a human-auditable form.
 
 == The Skill System and Interoperability
 
-Rather than hard-coding domain methodology into prompts, the system externalises it into seventy-six declarative *skill documents* under nine categories (analysis, strategy, tool, asset-class, flow, crypto, data-sources, research, risk). Each skill is a Markdown file with a YAML frontmatter (`name`, `version`, `category`, `description`, `tools`, `model`, `temperature`) and a methodology body, discovered by a three-layer loader (user overrides → bundled → legacy) and surfaced to the agent through `list_skills` / `search_skills` / `load_skill`. A relevance selector injects the most pertinent skills into the system prompt based on keyword overlap with the user request. An MCP @anthropic_mcp_2024 base-tool abstraction and client manager provide interoperability scaffolding for exposing tools to, and loading tools from, external agents (currently an interface awaiting a `fastmcp` binding).
+Rather than hard-coding domain methodology into prompts, the system externalises it into seventy-six declarative *skill documents* under nine categories (analysis, strategy, tool, asset-class, flow, crypto, data-sources, research, risk). Each skill is a Markdown file with a YAML frontmatter (`name`, `version`, `category`, `description`, `tools`, `model`, `temperature`) and a methodology body, discovered by a three-layer loader (user overrides → bundled → legacy) and surfaced to the agent through `list_skills` / `search_skills` / `load_skill`. Because user skills override bundled ones by name, a user can specialise the system's behaviour without editing code — a lightweight analogue of tool-learning @schick_toolformer_2023 in which capability is authored declaratively. An MCP @anthropic_mcp_2024 base-tool abstraction and client manager provide interoperability scaffolding for exposing tools to, and loading tools from, external agents (currently an interface awaiting a `fastmcp` binding).
 
 == Frontend and Automation
 
 The presentation layer is a Next.js 16 / React 19 application of sixteen routes (dashboard, agent terminal, quick-ask, strategies, backtest, memory lab, insights, approvals, scanner, watchlist, monitor, risk, reports, settings, and a landing page), using TanStack Query for server state, Zustand for minimal UI state, `shadcn/ui` over Tailwind CSS v4, and both TradingView Lightweight Charts and Recharts for visualisation. The agent terminal implements its own SSE reader to render streaming reasoning, tool cards, and inline charts. In-process automation is provided by APScheduler: a `DataCollector` refreshes prices (15 min), news (30 min), sentiment (60 min), the macro calendar (daily), and an LLM-driven ticker-discovery pool (every 4 h); a `MonitorRunner` executes user monitors; and a `MorningBriefRunner` generates a daily market brief on weekday mornings.
+
+== A Worked Example: End-to-End Interactive Analysis
+
+To make the interaction between subsystems concrete, consider the request "Should I be worried about NVDA after today's news?" issued to the ACTIVE terminal. The server spawns an `AgentLoop` in a worker thread and streams events over SSE. On the first iteration the loop builds the seven-section system prompt, injects the sentiment- and news-analysis skills selected by keyword overlap, and calls the model. The model emits three read-only tool calls — `get_price`, `get_indicators`, and `get_news` for `NVDA` — whose arguments the streaming executor dispatches in parallel the instant each JSON payload completes; `thinking_delta` and `tool_call` events surface live in the browser. Each tool resolves through `DataService`: prices and indicators hit the SHA-256-verified cache (sub-20 ms), while news triggers the Google → AkShare → Yahoo fallback chain and returns article objects with source URLs.
+
+On the second iteration the preprocessing pass finds the transcript well within the 28 K-token warn threshold, so only the zero-cost L0/L1 layers run. The model, now holding grounded data, produces a final answer. Before it is emitted, the answer validator extracts the numeric tokens in the answer (price levels, RSI, percentage moves) and confirms each appears in a tool result; the grounded answer is returned with a `done` event carrying iteration count, tool count, and elapsed time, and the full transcript is persisted for continuation. Had a provider failed, the recovery ladder would have absorbed the error — a rate-limit would back off and retry, a context overflow would trigger `collapse_drain` — and had the model looped on a repeated `get_price` call, the de-duplication key would have dropped it with a reminder to answer from data already gathered. This single trace exercises the prompt architecture, streaming concurrency, the data plane, compression, recovery, and grounding validation in concert.
 
 // ═══════════════════════════════════════════
 //  6  Experimental Results and Analysis
@@ -393,6 +466,22 @@ The presentation layer is a Next.js 16 / React 19 application of sixteen routes 
 = Experimental Results and Analysis
 
 Consistent with the design philosophy (non-goal N1), the evaluation does *not* headline a backtest return. Instead it measures the properties the system was actually engineered to guarantee: determinism, latency, grounding, governance, and engineering quality. All figures are drawn from the project's own verification records and regression suite on the `dev` branch.
+
+The evaluation is organised around the six design goals of Section 3; the table below maps each goal to its verification method and headline evidence, and the subsections that follow elaborate.
+
+#table(
+  columns: (auto, 1.5fr, 1fr),
+  align: (left, left, left),
+  stroke: 0.5pt,
+  inset: 6pt,
+  table.header([*Goal*], [*Verification method*], [*Headline evidence*]),
+  [G1 Grounding], [Tool-output structure tests + answer-validator tests], [Un-retrieved figures cannot be emitted without a warning],
+  [G2 Reproducibility], [Hash-mutation + replay + snapshot-decode tests], [Every economic-field mutation fails the read; replay is identical],
+  [G3 Point-in-time], [`as_of` boundary tests + warm-up isolation tests], [No record after the boundary; `insufficient_history` on thin data],
+  [G4 Governability], [HITL rule + state-machine + approval-route tests], [Illegal transitions rejected; every action audited],
+  [G5 Learning], [OWM scoring + recall re-ranking + safety-gate tests], [Context-sensitive recall; five behavioural gates enforced],
+  [G6 Maintainability], [Architecture import-boundary tests + static analysis], [Track boundaries machine-checked; zero diagnostics],
+)
 
 == Experimental Setup
 
@@ -475,3 +564,31 @@ Several directions follow naturally. *Closing the belief-contest loop* would let
 // ═══════════════════════════════════════════
 #pagebreak()
 #bibliography("citations.bib", title: "References", style: "ieee")
+
+// ═══════════════════════════════════════════
+//  Appendix
+// ═══════════════════════════════════════════
+#pagebreak()
+#heading(numbering: none)[Appendix A: Persistence Layout]
+
+The table below records the physical database layout that realises the per-strategy isolation principle of Section 5.5. Runtime databases are git-ignored and rebuilt from public sources; only schema-defining code is version-controlled.
+
+#table(
+  columns: (auto, 1fr),
+  align: (left, left),
+  stroke: 0.5pt,
+  inset: 6pt,
+  table.header([*Database*], [*Contents*]),
+  [`system.db`], [Strategy registry, watchlists, monitors, scan runs, report jobs, insight generations, backtest jobs and snapshots],
+  [`market_data.db`], [OHLCV (compound key), fundamentals (point-in-time), news + FTS5 index, ticker metadata, data-freshness tracking],
+  [`memory.db`], [OWM memory records with per-strategy and score indexes],
+  [`insights.db`], [Daily briefs and monitoring reports],
+  [`data/{strategy_id}.db`], [Per-strategy sessions, agent reports, decisions, events (audit trail), HITL approvals],
+  [`data/agent-runs/`], [ReAct session transcripts and JSONL traces with blob off-loading],
+  [`skills/` (filesystem)], [76 declarative SKILL.md documents plus per-strategy Markdown knowledge ledgers],
+)
+
+#v(0.5em)
+#heading(numbering: none)[Appendix B: Reproducibility Chain]
+
+For completeness, the chain of hashes and typed contracts that together guarantee a reproducible backtest (Section 5.6) is: a frozen `BacktestRunSpec` pinning dates, mode, typed policy, and broker configuration; a `policy_hash` and `strategy_snapshot_hash` over canonical JSON; a `gzip`-compressed input snapshot whose `content_hash` is verified on write and re-verified on read; per-decision evidence rows carrying a `feature_hash` and `policy_hash`; and a canonical *economic result hash* recomputed on every read, with any mismatch downgrading the job to `storage_corrupt`. The `create_replay` path re-binds the identical snapshot and re-runs the deterministic engine, providing an independent reproduction of the persisted result.
