@@ -132,7 +132,7 @@
 
 The application of large language models (LLMs) to quantitative finance has produced a rapidly growing body of "trading agent" systems, yet most published prototypes optimise a single objective — reported backtest return — while treating reproducibility, look-ahead safety, tool grounding, and human oversight as afterthoughts. This dissertation presents *Agentic-Quant*, a reasoning-driven multi-agent framework that reframes the problem: rather than pursuing a single opaque predictor, it builds an *auditable analytical platform* in which every decision is grounded in tool-retrieved evidence, every backtest is deterministically reproducible, and every high-risk action can be routed to a human reviewer.
 
-The system contributes four inter-locking designs. First, a *dual-track agent architecture* unifies two complementary reasoning paradigms behind one service: a Claude-Code-style ReAct loop (25-iteration budget, streaming tool execution, five-layer context compression, and a cheapest-first error-recovery state machine) for open-ended interactive analysis, and a frozen LangGraph five-agent debate pipeline (parallel market/news/fundamentals analysts → risk analyst → portfolio manager) for structured, schema-constrained decisions. Second, an *anti-hallucination data plane* routes all data access through a single `DataService` abstraction with multi-provider fallback, point-in-time cut-offs, and SHA-256-verified caching, so that agents can never fabricate numbers. Third, an *outcome-weighted memory (OWM)* layer scores and recalls past decisions through a five-factor model and enforces pre-trade safety gates, giving the system a mechanism to learn from experience. Fourth, a *deterministic, fidelity-audited backtest engine* freezes a typed run specification, executes long-only orders only at the next historical open, and re-verifies a canonical economic result hash on every read, converting "trust me" performance claims into byte-reproducible evidence.
+The system contributes four inter-locking designs. First, a *dual-track agent architecture* unifies two complementary reasoning paradigms behind one service: a Claude-Code-style ReAct loop (25-iteration budget, streaming tool execution, five-layer context compression, and a cheapest-first error-recovery state machine) for open-ended interactive analysis, and a frozen LangGraph twelve-agent debate pipeline (four sequential analysts → bull/bear researcher debate → research manager → trader → three-way aggressive/conservative/neutral risk discussion → portfolio manager, selectable across three depth modes) for structured, schema-constrained decisions. Second, an *anti-hallucination data plane* routes all data access through a single `DataService` abstraction with multi-provider fallback, point-in-time cut-offs, and SHA-256-verified caching, so that agents can never fabricate numbers. Third, an *outcome-weighted memory (OWM)* layer scores and recalls past decisions through a five-factor model and enforces pre-trade safety gates, giving the system a mechanism to learn from experience. Fourth, a *deterministic, fidelity-audited backtest engine* freezes a typed run specification, executes long-only orders only at the next historical open, and re-verifies a canonical economic result hash on every read, converting "trust me" performance claims into byte-reproducible evidence.
 
 The framework comprises approximately 54,000 lines of Python across nineteen modules, a Next.js 16 / React 19 dashboard of sixteen routes, seventy-six declarative skill documents, and a regression suite of 645 tests. We describe the architecture and implementation in detail, evaluate the system along the axes of determinism, latency, tool grounding, and engineering quality, and discuss the trade-offs of prioritising verifiability over raw predictive performance. We conclude that treating a trading agent as a *governed, reproducible research instrument* — rather than a black-box oracle — is both feasible and a necessary precondition for the responsible deployment of LLM agents in finance.
 
@@ -164,7 +164,7 @@ Answering this question demands engineering contributions at every layer of the 
 
 The concrete contributions of Agentic-Quant are:
 
-+ *A dual-track agent architecture* (Section 4.2) that hosts a modern ReAct tool-use loop and a frozen LangGraph debate pipeline behind a single FastAPI service, with strict, statically enforced import boundaries preventing the two tracks from contaminating each other.
++ *A dual-track agent architecture* (Section 4.2) that hosts a modern ReAct tool-use loop and a twelve-agent TradingAgents-style debate pipeline supporting three depth modes behind a single FastAPI service, with strict, statically enforced import boundaries preventing the two tracks from contaminating each other.
 
 + *A five-layer context-compression pipeline and a cheapest-first error-recovery state machine* (Sections 5.1–5.2) that let a long-horizon agent operate within a bounded token budget while degrading gracefully under provider failures — engineering rarely documented in the academic agent literature.
 
@@ -195,7 +195,7 @@ The multi-agent paradigm is the direct antecedent of this project. TradingAgents
 
 == Agent Reasoning, Tool Use, and Memory
 
-The reasoning core of Agentic-Quant descends from general agent research rather than finance-specific work. ReAct @yao_react_2023 interleaves reasoning traces with actions, the pattern implemented by the ACTIVE track's loop. Toolformer @schick_toolformer_2023 established that language models can learn to invoke external tools, motivating the tool-registry design. Reflexion @shinn_reflexion_2023 introduced verbal reinforcement from past failures, mirrored in the reflection cycle of the memory layer. Retrieval-augmented generation @lewis_rag_2020 underpins the retrieval-first grounding discipline, and the Model Context Protocol @anthropic_mcp_2024 informs the interoperability scaffolding. FinMem @yu_finmem:_2023 specifically demonstrated a *layered memory* aligned with the cognition of human traders; Agentic-Quant's five-layer, outcome-weighted memory is a direct response, adding an explicit five-factor scoring function and behavioural safety gates.
+The reasoning core of Agentic-Quant descends from general agent research rather than finance-specific work. ReAct @yao_react_2023 interleaves reasoning traces with actions, the pattern implemented by the custom harness's loop. Toolformer @schick_toolformer_2023 established that language models can learn to invoke external tools, motivating the tool-registry design. Reflexion @shinn_reflexion_2023 introduced verbal reinforcement from past failures, mirrored in the reflection cycle of the memory layer. Retrieval-augmented generation @lewis_rag_2020 underpins the retrieval-first grounding discipline, and the Model Context Protocol @anthropic_mcp_2024 informs the interoperability scaffolding. FinMem @yu_finmem:_2023 specifically demonstrated a *layered memory* aligned with the cognition of human traders; Agentic-Quant's five-layer, outcome-weighted memory is a direct response, adding an explicit five-factor scoring function and behavioural safety gates.
 
 == Reproducibility, Interpretability, and Human Oversight
 
@@ -273,7 +273,7 @@ Agentic-Quant is a single-process FastAPI monolith with an in-process scheduler,
   table.header([*Layer*], [*Principal components*], [*Python LoC*]),
   [Presentation], [Next.js 16 / React 19 dashboard, 16 routes, TanStack Query + Zustand, shadcn/ui, TradingView Lightweight Charts + Recharts], [— (TS)],
   [API / Transport], [FastAPI app, CORS, SSE agent terminal, per-router lifespans, REST route groups], [5,399],
-  [Reasoning], [ACTIVE ReAct loop (`agent/`), LEGACY LangGraph pipeline (`quick_ask/`), skills loader], [7,470 + 1,212],
+  [Reasoning], [Custom-harness ReAct loop (`agent/`), LangGraph debate pipeline (`quick_ask/`), skills loader], [7,470 + 3,200],
   [Domain services], [Broker/backtest engine, risk analytics, scanner, reporting, notification, HITL, memory, knowledge, belief], [4,623 + 2,300],
   [Data plane], [`DataService`, multi-provider adapters, `MarketDataStore`, SHA-256 cache], [2,792],
   [Persistence], [`ContextStore` (per-strategy SQLite), memory/system/insights/knowledge DBs, backtest snapshots], [3,133],
@@ -290,62 +290,101 @@ The most consequential architectural decision is the *coexistence of two agent p
   stroke: 0.5pt,
   inset: 8pt,
   table.header([*Track*], [*Description and rules*]),
-  [ACTIVE — `agent/`], [The primary development target: a Claude-Code-style ReAct loop with a 21+ tool system. All new interactive features go here. Exposed at `POST /api/agent/chat`.],
-  [LEGACY — `quick_ask/`], [A frozen LangGraph five-agent pipeline. It may not be modified or extended; no new agents may be added. Exposed at `POST /api/analyze`.],
-  [SHARED — `dataflow/`, `memory/`, `storage/`, `scheduler/`, most routes], [Deterministic Python services usable by both tracks, forbidden from importing ACTIVE or LEGACY agent code.],
+  [Custom Harness — `agent/`], [A self-built Claude-Code-style ReAct loop with a 21+ tool system, five-layer compression, and a cheapest-first error-recovery state machine. All new interactive features go here. Exposed at `POST /api/agent/chat`.],
+  [LangGraph Pipeline — `quick_ask/`], [A frozen LangGraph twelve-agent TradingAgents-style pipeline with three depth modes (fast/standard/deep), multi-round bull/bear debate and three-way risk discussion. Reuses the LangGraph framework for structured multi-agent orchestration. Exposed at `POST /api/analyze`.],
+  [SHARED — `dataflow/`, `memory/`, `storage/`, `scheduler/`, most routes], [Deterministic Python services usable by both tracks, forbidden from importing agent-specific code from either track.],
 )
 
 #v(0.4em)
-The single sanctioned bridge between tracks is the `run_analysis` tool in the ACTIVE registry, which wraps the LEGACY pipeline as a black-box tool and imports it only at call time — never at module level. This inversion lets the modern agent *delegate* to the structured pipeline when a full multi-agent report is warranted, while keeping the dependency graph acyclic. The rationale for retaining two tracks rather than migrating is pragmatic: the LangGraph pipeline embodies the structured-debate contribution from the literature @xiao_tradingagents:_2025 and produces a schema-validated decision, whereas the ReAct loop provides open-ended, tool-composing flexibility. Rather than force one paradigm to serve both roles, the system offers each where it is strongest.
+The single sanctioned bridge between tracks is the `run_analysis` tool in the custom-harness registry, which wraps the LangGraph pipeline as a black-box tool and imports it only at call time — never at module level. This inversion lets the modern agent *delegate* to the structured pipeline when a full multi-agent report is warranted, while keeping the dependency graph acyclic. The rationale for retaining two tracks rather than migrating is pragmatic: the LangGraph pipeline embodies the structured-debate contribution from the literature @xiao_tradingagents:_2025 and produces a schema-validated decision, whereas the ReAct loop provides open-ended, tool-composing flexibility. Rather than force one paradigm to serve both roles, the system offers each where it is strongest.
 
-=== ACTIVE track: the ReAct reasoning loop
+=== Custom-harness track: the ReAct reasoning loop
 
 The `AgentLoop` engine implements a five-phase iteration modelled on modern agent harnesses and the ReAct pattern @yao_react_2023: (1) *preprocess* — context compression; (2) *call model* — a streaming LLM invocation that begins executing tool calls as their JSON arguments complete; (3) *execute tools* — read-only tools in parallel, write tools serially; (4) *inject attachments* — a hook for memory/skill injection; and (5) *check terminate* — an error-classification and recovery decision. Iterations are bounded by a 25-turn safety net and a 600-second wall-clock timeout. Cross-iteration de-duplication, a two-strike consecutive-failure circuit breaker, and a permission manager (with `default`, `plan`, `accept_edits`, and `bypass` modes) round out the control logic. Sections 5.1–5.3 dissect the compression, recovery, and tool subsystems.
 
 The loop's control state is carried by a lightweight `WorkspaceMemory` object scoped to a single `run()` call: it holds per-tool call counters, a `called_keys` set for cross-iteration de-duplication, a `consecutive_failures` map for the circuit breaker, and a list of produced artefacts. This deliberately transient runtime memory is distinct from the persistent OWM store (Section 5.4); it exists only to make one reasoning episode efficient and self-correcting. A representative failure pattern the loop must handle is the model repeatedly requesting the same ticker's price: the de-duplication key `name:primary_identifier` (tool name plus ticker/query/URL) causes the second such call to be dropped and replaced with a system reminder to use the data already gathered, which empirically shortens sessions and curbs a common LLM looping pathology. When a tool for a given ticker fails twice, the breaker injects an explicit "STOP retrying — answer with what you have or state it is unavailable" instruction, converting silent stalls into graceful degradation.
 
-=== LEGACY track: the LangGraph debate pipeline
+=== LangGraph track: the TradingAgents-style debate pipeline
 
-The frozen pipeline is a LangGraph `StateGraph` compiled with a `MemorySaver` checkpointer keyed by session. Its shared blackboard, `AgentState`, subclasses LangGraph's `MessagesState` and adds the input fields (`ticker`, `date`, `current_position_pct`), five *per-agent message channels* (so each analyst's tool dialogue is isolated), four report slots (`market_report`, `news_report`, `fundamental_report`, `risk_report`), the portfolio-manager outputs (`Action`, `Target_position_pct`, `PM_report`), and the memory-integration fields (`relevant_memories`, `memory_context`). Three analyst nodes — market (technical), news, and fundamentals — fan out in parallel from `START`, each running its own isolated ReAct sub-loop over its private message channel and a bound tool subset (market binds `get_price`+`get_indicators`; news binds `get_news`; fundamentals binds `get_fundamentals`). A `create_tool_node_wrapper` copies each analyst's private channel into the shared `messages` slot for the duration of a `ToolNode` invocation and writes the result back only to that channel, so the three concurrent ReAct loops never collide.
+The frozen pipeline is a LangGraph `StateGraph` structured as a twelve-agent sequential pipeline modelled on the TradingAgents architecture @xiao_tradingagents:_2025. It operates in three depth modes selectable at request time: *fast* (four analysts → portfolio manager, roughly 60 seconds), *standard* (one round of bull/bear investment debate and one round of three-way risk discussion, roughly 3 minutes), and *deep* (three rounds of each debate, roughly 6 minutes).
 
-All three branches converge on a *barrier* risk-analyst node whose join logic is the crux of the design: it returns an empty dict (a LangGraph no-op) until all three reports are present, and short-circuits if a `risk_report` already exists — so although the graph invokes it up to three times (once per completing analyst), it computes exactly once, when the last report lands. It then synthesises position, stop-loss, take-profit, and time-window advice. The portfolio-manager node produces the final decision through a `PydanticOutputParser` bound to the `TradingDecision` schema (`action ∈ {BUY, SELL, HOLD}`, `target_position_pct`, `report`), with the top outcome-weighted memories injected into its system prompt under an explicit "history is advisory; current evidence wins on conflict" instruction. A terminal `remember_memory` node persists the decision, closing the observation → decision → memory loop advocated by FinMem @yu_finmem:_2023 and TradingAgents @xiao_tradingagents:_2025. Temperature is pinned to 0.0 throughout for determinism. Every analyst prompt enforces a fixed four-line header — direction, time-horizon, confidence in $[0,1]$, and a one-sentence conclusion — followed by quantified evidence and explicit "if–then" invalidation conditions, which both standardises downstream parsing and forces the model to commit to falsifiable claims. @fig-pipeline depicts the resulting node topology.
+*Stage 1 — Sequential analysts.* Four analysts execute in strict sequence, each running its own isolated tool-calling sub-loop: Market Analyst (OHLCV, technical indicators, and a deterministic verified-market-snapshot tool that computes indicators from the local cache without LLM involvement, serving as a truth source), Sentiment Analyst (news sentiment, keyword aggregation, sector context), News Analyst (company news, global macro news, and FRED macro indicators with RSS fallback), and Fundamentals Analyst (valuation ratios and three financial statements: balance sheet, cash flow, income statement). Each analyst binds a distinct tool subset and writes to a private per-agent message channel, so tool dialogues never collide. A message-clearing node between analysts removes all prior messages and inserts a context-anchored placeholder, preventing stale tool calls from confusing subsequent agents.
+
+*Stage 2 — Investment debate.* A Bull Researcher and a Bear Researcher engage in multi-round structured debate, each receiving the four analyst reports and the opponent's prior argument, with a Research Manager adjudicating the exchange and producing a typed investment plan (recommendation, rationale, strategic actions).
+
+*Stage 3 — Trading proposal.* A Trader node converts the investment plan into a concrete trading proposal with entry price, stop-loss, and position sizing.
+
+*Stage 4 — Risk discussion.* Three risk analysts — Aggressive (high-risk/high-reward), Conservative (capital preservation), and Neutral (balanced) — engage in multi-round three-way discussion, each receiving the trader's proposal plus the other two analysts' prior responses. A Risk Analyst synthesises the discussion into a risk report.
+
+*Stage 5 — Final decision.* The Portfolio Manager produces the final decision through a `PydanticOutputParser` bound to the `TradingDecision` schema (`action ∈ {BUY, SELL, HOLD}`, `target_position_pct`, `report`), with a regex-based fallback for providers that do not support structured output. The top outcome-weighted memories are injected into its system prompt under an explicit "history is advisory; current evidence wins on conflict" instruction. A terminal `remember_memory` node persists the decision, closing the observation → decision → memory loop advocated by FinMem @yu_finmem:_2023 and TradingAgents @xiao_tradingagents:_2025. Temperature is pinned to 0.0 throughout. Every analyst prompt enforces a fixed four-line header — direction, time-horizon, confidence in $[0,1]$, and a one-sentence conclusion — followed by quantified evidence and explicit "if–then" invalidation conditions. The investment and risk debate histories are returned alongside agent reports in the result payload, making the full reasoning chain auditable. @fig-pipeline depicts the resulting node topology.
 
 #figure(
   align(center, cetz.canvas(length: 1cm, {
     import cetz.draw: *
-    // Node positions (x, y)
+    // Node positions — Stage 1: analysts (x=0), tools (x=2.8), clear (x=5.6)
+    // Stage 2-5: sequential rightward
     let p_start = (0, 0)
-    let p_mkt = (3.2, 2.1)
-    let p_news = (3.2, 0)
-    let p_fund = (3.2, -2.1)
-    let p_risk = (6.6, 0)
-    let p_pm = (9.4, 0)
-    let p_mem = (12.2, 0)
-    let p_end = (14.6, 0)
-    // Edges (drawn first, under boxes)
+    let p_mkt = (3.2, 2.8)
+    let p_sent = (6.4, 2.8)
+    let p_news = (9.6, 2.8)
+    let p_fund = (12.8, 2.8)
+    let p_bull = (0, -1.0)
+    let p_bear = (3.2, -1.0)
+    let p_rm = (6.4, -1.0)
+    let p_tr = (9.6, -1.0)
+    let p_agg = (0, -3.5)
+    let p_con = (3.2, -3.5)
+    let p_neu = (6.4, -3.5)
+    let p_risk = (9.6, -3.5)
+    let p_pm = (12.8, -3.5)
+    let p_end = (15.4, -3.5)
+    // Stage 1 edges (sequential)
     line(p_start, (p_mkt.at(0) - 1.3, p_mkt.at(1)), mark: (end: ">"), stroke: 0.5pt)
-    line(p_start, (p_news.at(0) - 1.3, p_news.at(1)), mark: (end: ">"), stroke: 0.5pt)
-    line(p_start, (p_fund.at(0) - 1.3, p_fund.at(1)), mark: (end: ">"), stroke: 0.5pt)
-    line((p_mkt.at(0) + 1.3, p_mkt.at(1)), (p_risk.at(0) - 1.3, p_risk.at(1) + 0.35), mark: (end: ">"), stroke: 0.5pt)
-    line((p_news.at(0) + 1.3, p_news.at(1)), (p_risk.at(0) - 1.3, p_risk.at(1)), mark: (end: ">"), stroke: 0.5pt)
-    line((p_fund.at(0) + 1.3, p_fund.at(1)), (p_risk.at(0) - 1.3, p_risk.at(1) - 0.35), mark: (end: ">"), stroke: 0.5pt)
-    line((p_risk.at(0) + 1.3, 0), (p_pm.at(0) - 1.3, 0), mark: (end: ">"), stroke: 0.5pt)
-    line((p_pm.at(0) + 1.3, 0), (p_mem.at(0) - 1.3, 0), mark: (end: ">"), stroke: 0.5pt)
-    line((p_mem.at(0) + 1.3, 0), (p_end.at(0) - 0.65, 0), mark: (end: ">"), stroke: 0.5pt)
+    line((p_mkt.at(0) + 1.3, p_mkt.at(1)), (p_sent.at(0) - 1.3, p_sent.at(1)), mark: (end: ">"), stroke: 0.5pt)
+    line((p_sent.at(0) + 1.3, p_sent.at(1)), (p_news.at(0) - 1.3, p_news.at(1)), mark: (end: ">"), stroke: 0.5pt)
+    line((p_news.at(0) + 1.3, p_news.at(1)), (p_fund.at(0) - 1.3, p_fund.at(1)), mark: (end: ">"), stroke: 0.5pt)
+    // Analysts → debate
+    line((p_fund.at(0) + 1.3, p_fund.at(1)), (p_fund.at(0) + 1.3, p_bull.at(1)), (p_bull.at(0) - 1.3, p_bull.at(1)), mark: (end: ">"), stroke: 0.5pt)
+    // Debate loop
+    line((p_bull.at(0) + 1.05, p_bull.at(1)), (p_bear.at(0) - 1.05, p_bear.at(1)), mark: (end: ">"), stroke: 0.5pt)
+    line((p_bear.at(0) + 1.05, p_bear.at(1)), (p_rm.at(0) - 1.05, p_rm.at(1)), mark: (end: ">"), stroke: 0.5pt)
+    line((p_bear.at(0), p_bear.at(1) - 0.45), (p_bear.at(0), -1.8), (p_bull.at(0), -1.8), (p_bull.at(0), p_bull.at(1) - 0.45), mark: (end: ">"), stroke: (dash: "dashed", thickness: 0.45pt))
+    // RM → trader → risk
+    line((p_rm.at(0) + 1.3, p_rm.at(1)), (p_tr.at(0) - 1.3, p_tr.at(1)), mark: (end: ">"), stroke: 0.5pt)
+    line((p_tr.at(0) + 1.3, p_tr.at(1)), (p_tr.at(0) + 1.3, p_agg.at(1)), (p_agg.at(0) - 1.3, p_agg.at(1)), mark: (end: ">"), stroke: 0.5pt)
+    // Risk loop
+    line((p_agg.at(0) + 1.05, p_agg.at(1)), (p_con.at(0) - 1.05, p_con.at(1)), mark: (end: ">"), stroke: 0.5pt)
+    line((p_con.at(0) + 1.05, p_con.at(1)), (p_neu.at(0) - 1.05, p_neu.at(1)), mark: (end: ">"), stroke: 0.5pt)
+    line((p_neu.at(0), p_neu.at(1) - 0.45), (p_neu.at(0), -4.2), (p_agg.at(0), -4.2), (p_agg.at(0), p_agg.at(1) - 0.45), mark: (end: ">"), stroke: (dash: "dashed", thickness: 0.45pt))
+    line((p_neu.at(0) + 1.3, p_neu.at(1)), (p_risk.at(0) - 1.3, p_risk.at(1)), mark: (end: ">"), stroke: 0.5pt)
+    // Risk → PM → END
+    line((p_risk.at(0) + 1.3, p_risk.at(1)), (p_pm.at(0) - 1.3, p_pm.at(1)), mark: (end: ">"), stroke: 0.5pt)
+    line((p_pm.at(0) + 1.3, p_pm.at(1)), (p_end.at(0) - 0.65, p_pm.at(1)), mark: (end: ">"), stroke: 0.5pt)
+    // Fast-mode shortcut
+    line((p_fund.at(0) + 1.3, p_fund.at(1) - 0.35), (p_fund.at(0) + 1.3, -2.4), (p_pm.at(0), -2.4), mark: (end: ">"), stroke: (dash: "dashed", thickness: 0.45pt))
     // Nodes
     tbox(p_start, [START], w: 1.3, bg: white)
     tbox(p_mkt, [Market\ analyst])
+    tbox(p_sent, [Sentiment\ analyst])
     tbox(p_news, [News\ analyst])
     tbox(p_fund, [Fundamentals\ analyst])
-    tbox(p_risk, [Risk\ (barrier)], bg: luma(224))
+    tbox(p_bull, [Bull\ Researcher])
+    tbox(p_bear, [Bear\ Researcher])
+    tbox(p_rm, [Research\ Manager], bg: luma(224))
+    tbox(p_tr, [Trader], bg: luma(224))
+    tbox(p_agg, [Aggressive\ Risk])
+    tbox(p_con, [Conservative\ Risk])
+    tbox(p_neu, [Neutral\ Risk])
+    tbox(p_risk, [Risk\ Analyst], bg: luma(224))
     tbox(p_pm, [Portfolio\ manager], bg: luma(224))
-    tbox(p_mem, [remember\_\ memory])
     tbox(p_end, [END], w: 1.3, bg: white)
     // Annotations
-    content((3.2, 3.05), text(7pt, style: "italic")[parallel fan-out])
-    content((6.6, 1.15), text(7pt, style: "italic")[fan-in join])
+    content((4.8, 3.65), text(6.5pt, style: "italic")[Stage 1: Sequential analysts])
+    content((3.2, -0.15), text(6.5pt, style: "italic")[Stage 2: Debate (multi-round)])
+    content((4.0, -2.7), text(6.5pt, style: "italic")[Stage 3-4: Trader + Risk (multi-round)])
+    content((14.2, -2.7), text(6.5pt, style: "italic")[Stage 5])
   })),
-  caption: [LEGACY LangGraph topology: `START` fans out to three parallel analysts, each running an isolated tool sub-loop; the barrier risk node joins them once all reports exist; the portfolio manager emits the typed decision; and `remember_memory` persists it before `END`. Each analyst also has a hidden `ToolNode` self-loop (omitted for clarity).],
+  caption: [LangGraph pipeline topology: four sequential analysts (Stage 1) feed into a multi-round bull/bear debate (Stage 2), a Research Manager and Trader (Stage 3), a three-way risk discussion (Stage 4), and the Portfolio Manager (Stage 5). Dashed lines denote debate loops; each analyst has a hidden `ToolNode` self-loop and message-clearing node (omitted for clarity). The fast-mode shortcut from Fundamentals directly to PM is shown as a dashed edge.],
 ) <fig-pipeline>
 
 == Data Flow Patterns
@@ -358,7 +397,7 @@ The system supports several orthogonal execution patterns, of which three are ce
 
 == The API and Transport Layer
 
-The FastAPI application is deliberately thin: it validates requests, delegates to the domain services, and streams results. On startup a single lifespan hook recovers any interrupted persistent jobs (backtests, report generation, insight generation) so a crash mid-run never leaves a job in a limbo state, and — when enabled — starts the three in-process schedulers. Routes are mounted under `/api` and, following the track discipline, are themselves labelled ACTIVE, LEGACY, or SHARED: the agent terminal and backtest endpoints are ACTIVE; the old `analyze` pipeline is LEGACY; and market data, strategies, memory, risk, scanner, reports, watchlist, monitor, approvals, insights, and settings are SHARED. A route track rule — enforced by an automated test — forbids SHARED routes from importing ACTIVE or LEGACY agent code, so the API surface cannot smuggle a dependency across a boundary.
+The FastAPI application is deliberately thin: it validates requests, delegates to the domain services, and streams results. On startup a single lifespan hook recovers any interrupted persistent jobs (backtests, report generation, insight generation) so a crash mid-run never leaves a job in a limbo state, and — when enabled — starts the three in-process schedulers. Routes are mounted under `/api` and follow the track discipline: the agent terminal and backtest endpoints belong to the custom-harness track; the `analyze` pipeline belongs to the LangGraph track; and market data, strategies, memory, risk, scanner, reports, watchlist, monitor, approvals, insights, and settings are SHARED. A route track rule — enforced by an automated test — forbids SHARED routes from importing agent-specific code from either reasoning track, so the API surface cannot smuggle a dependency across a boundary.
 
 Streaming is realised with Server-Sent Events rather than WebSockets, because agent execution is a one-directional stream of reasoning and tool events rather than a bidirectional dialogue. The agent terminal bridges a synchronous worker thread and the async request handler through a bounded queue with a 300-second idle timeout, translating each internal loop event into a named SSE frame and disabling proxy buffering so tokens reach the browser as they are produced. This design keeps the request handler non-blocking while the underlying `AgentLoop` — which is synchronous and CPU/IO-mixed — runs to completion in its own thread.
 
@@ -398,7 +437,7 @@ On top of the data plane, the ACTIVE loop adds a post-generation *answer validat
 
 == Prompt Architecture
 
-Because an LLM agent's behaviour is governed as much by its prompt as by its code, the ACTIVE track treats prompt construction as a first-class, structured concern rather than a monolithic string. The system prompt is assembled from seven ordered sections: an identity block stamped with the current date and an explicit "never guess or fabricate financial data" directive; a task-discipline block of eleven rules (verify with tools, no gold-plating, no blind retries, match the user's language); a reversibility/blast-radius block governing destructive actions; a tool-usage block (pick the most specific tool, batch all needed calls, stop when data suffices, never repeat a call); the auto-generated per-tool descriptions; a ten-rule output block (be concise, lead with the number, use tables for comparisons, every figure must originate from a tool result); and an environment block (working directory, git branch, platform, tool count). Each rule encodes a *specific failure pattern* observed in practice — the prompt tells the model what *not* to do, which is more effective than abstract exhortation.
+Because an LLM agent's behaviour is governed as much by its prompt as by its code, the custom-harness loop treats prompt construction as a first-class, structured concern rather than a monolithic string. The system prompt is assembled from seven ordered sections: an identity block stamped with the current date and an explicit "never guess or fabricate financial data" directive; a task-discipline block of eleven rules (verify with tools, no gold-plating, no blind retries, match the user's language); a reversibility/blast-radius block governing destructive actions; a tool-usage block (pick the most specific tool, batch all needed calls, stop when data suffices, never repeat a call); the auto-generated per-tool descriptions; a ten-rule output block (be concise, lead with the number, use tables for comparisons, every figure must originate from a tool result); and an environment block (working directory, git branch, platform, tool count). Each rule encodes a *specific failure pattern* observed in practice — the prompt tells the model what *not* to do, which is more effective than abstract exhortation.
 
 Two further mechanisms make the prompt adaptive. First, a lightweight relevance selector scores the seventy-six skills against the user request via Chinese-bigram and English-token overlap and injects only the top-ranked skill summaries, so the agent is primed with domain methodology pertinent to the question without bloating every prompt. Second, following the once-per-session "system-reminder" pattern, a compact user-context message (date, available-tool count, key-tool hints) is injected exactly once at session start rather than on every turn, avoiding redundant repetition across a long dialogue.
 
@@ -450,7 +489,7 @@ Terminal states are captured in a ten-value `TerminalReason` enumeration with `i
 
 == The Tool System
 
-The ACTIVE agent exposes roughly twenty-four tools discovered automatically from `BaseTool` subclasses. Each tool declares metadata — read-only vs. write, repeatable, timeout, cooldown, category, and an input schema — that the loop uses to schedule and guard execution. Tools return a canonical JSON envelope (`{"status": "ok" | "error", ...}`).
+The custom-harness agent exposes roughly twenty-four tools discovered automatically from `BaseTool` subclasses. Each tool declares metadata — read-only vs. write, repeatable, timeout, cooldown, category, and an input schema — that the loop uses to schedule and guard execution. Tools return a canonical JSON envelope (`{"status": "ok" | "error", ...}`).
 
 #table(
   columns: (auto, 1fr),
@@ -552,7 +591,7 @@ Three further subsystems support the analytical workflow. The *scanner* screens 
 
 == The Skill System and Interoperability
 
-Rather than hard-coding domain methodology into prompts, the system externalises it into seventy-six declarative *skill documents* under nine categories (analysis, strategy, tool, asset-class, flow, crypto, data-sources, research, risk). Each skill is a Markdown file with a YAML frontmatter (`name`, `version`, `category`, `description`, `tools`, `model`, `temperature`) and a methodology body, discovered by a three-layer loader (user overrides → bundled → legacy) and surfaced to the agent through `list_skills` / `search_skills` / `load_skill`. Because user skills override bundled ones by name, a user can specialise the system's behaviour without editing code — a lightweight analogue of tool-learning @schick_toolformer_2023 in which capability is authored declaratively. An MCP @anthropic_mcp_2024 base-tool abstraction and client manager provide interoperability scaffolding for exposing tools to, and loading tools from, external agents (currently an interface awaiting a `fastmcp` binding).
+Rather than hard-coding domain methodology into prompts, the system externalises it into seventy-six declarative *skill documents* under nine categories (analysis, strategy, tool, asset-class, flow, crypto, data-sources, research, risk). Each skill is a Markdown file with a YAML frontmatter (`name`, `version`, `category`, `description`, `tools`, `model`, `temperature`) and a methodology body, discovered by a three-layer loader (user overrides → bundled → vendor) and surfaced to the agent through `list_skills` / `search_skills` / `load_skill`. Because user skills override bundled ones by name, a user can specialise the system's behaviour without editing code — a lightweight analogue of tool-learning @schick_toolformer_2023 in which capability is authored declaratively. An MCP @anthropic_mcp_2024 base-tool abstraction and client manager provide interoperability scaffolding for exposing tools to, and loading tools from, external agents (currently an interface awaiting a `fastmcp` binding).
 
 == Frontend and Automation
 
@@ -560,7 +599,7 @@ The presentation layer is a Next.js 16 / React 19 application of sixteen routes 
 
 == A Worked Example: End-to-End Interactive Analysis
 
-To make the interaction between subsystems concrete, consider the request "Should I be worried about NVDA after today's news?" issued to the ACTIVE terminal. The server spawns an `AgentLoop` in a worker thread and streams events over SSE. On the first iteration the loop builds the seven-section system prompt, injects the sentiment- and news-analysis skills selected by keyword overlap, and calls the model. The model emits three read-only tool calls — `get_price`, `get_indicators`, and `get_news` for `NVDA` — whose arguments the streaming executor dispatches in parallel the instant each JSON payload completes; `thinking_delta` and `tool_call` events surface live in the browser. Each tool resolves through `DataService`: prices and indicators hit the SHA-256-verified cache (sub-20 ms), while news triggers the Google → AkShare → Yahoo fallback chain and returns article objects with source URLs.
+To make the interaction between subsystems concrete, consider the request "Should I be worried about NVDA after today's news?" issued to the agent terminal. The server spawns an `AgentLoop` in a worker thread and streams events over SSE. On the first iteration the loop builds the seven-section system prompt, injects the sentiment- and news-analysis skills selected by keyword overlap, and calls the model. The model emits three read-only tool calls — `get_price`, `get_indicators`, and `get_news` for `NVDA` — whose arguments the streaming executor dispatches in parallel the instant each JSON payload completes; `thinking_delta` and `tool_call` events surface live in the browser. Each tool resolves through `DataService`: prices and indicators hit the SHA-256-verified cache (sub-20 ms), while news triggers the Google → AkShare → Yahoo fallback chain and returns article objects with source URLs.
 
 On the second iteration the preprocessing pass finds the transcript well within the 28 K-token warn threshold, so only the zero-cost L0/L1 layers run. The model, now holding grounded data, produces a final answer. Before it is emitted, the answer validator extracts the numeric tokens in the answer (price levels, RSI, percentage moves) and confirms each appears in a tool result; the grounded answer is returned with a `done` event carrying iteration count, tool count, and elapsed time, and the full transcript is persisted for continuation. Had a provider failed, the recovery ladder would have absorbed the error — a rate-limit would back off and retry, a context overflow would trigger `collapse_drain` — and had the model looped on a repeated `get_price` call, the de-duplication key would have dropped it with a reminder to answer from data already gathered. This single trace exercises the prompt architecture, streaming concurrency, the data plane, compression, recovery, and grounding validation in concert.
 
@@ -613,7 +652,7 @@ The evaluation is organised around the six design goals of Section 3; the table 
 
 == Experimental Setup
 
-Experiments use DeepSeek OpenAI-compatible models (`deepseek-v4-flash` for quick reasoning, temperature 0.0) behind the ACTIVE loop and the LEGACY pipeline. Data providers are Yahoo Finance, AkShare, Google News, and Finnhub. The regression suite is executed with `pytest`; static analysis uses Ruff and BasedPyright; the frontend is validated with TypeScript, ESLint, and Node tests. The accumulated data plane at the time of evaluation held on the order of thousands of OHLCV rows, news articles, and fundamentals snapshots across a multi-market ticker universe (US, Hong Kong, A-share, Japan, Korea).
+Experiments use DeepSeek OpenAI-compatible models (`deepseek-v4-flash` for quick reasoning, temperature 0.0) behind the custom-harness loop and the LangGraph pipeline. Data providers are Yahoo Finance, AkShare, Google News, and Finnhub. The regression suite is executed with `pytest`; static analysis uses Ruff and BasedPyright; the frontend is validated with TypeScript, ESLint, and Node tests. The accumulated data plane at the time of evaluation held on the order of thousands of OHLCV rows, news articles, and fundamentals snapshots across a multi-market ticker universe (US, Hong Kong, A-share, Japan, Korea).
 
 == Reproducibility of Backtests (G2)
 
@@ -633,7 +672,7 @@ Warm data reads served from the SHA-256-verified cache complete in under about 2
 
 == Engineering Quality
 
-The system sustains a substantial automated-verification regime: a regression suite of *645 tests* passing (with one skip), zero Ruff and BasedPyright diagnostics, and a passing production frontend build across twenty pages, as recorded in the project's progress log. The test suite spans 59 files and roughly 21,000 lines, covering the agent loop, tool allow-listing, backtest determinism and hash mutations, storage migration integrity, snapshot decode integrity, risk and scanner services, and the HITL flow. Automated architecture tests enforce the ACTIVE/LEGACY/SHARED import boundaries (goal G6), converting a design rule into a machine-checked invariant.
+The system sustains a substantial automated-verification regime: a regression suite of *645 tests* passing (with one skip), zero Ruff and BasedPyright diagnostics, and a passing production frontend build across twenty pages, as recorded in the project's progress log. The test suite spans 59 files and roughly 21,000 lines, covering the agent loop, tool allow-listing, backtest determinism and hash mutations, storage migration integrity, snapshot decode integrity, risk and scanner services, and the HITL flow. Automated architecture tests enforce the track import boundaries (goal G6), converting a design rule into a machine-checked invariant.
 
 #table(
   columns: (1fr, auto),
@@ -668,7 +707,7 @@ Three trade-offs merit explicit comment. First, the *dual-track* decision double
 
 == Limitations
 
-The system has clear boundaries. The MCP interoperability layer is scaffolding pending a `fastmcp` integration; the HITL executor currently logs rather than dispatching to the broker; the belief-contest weighting is implemented as configuration rather than a fully closed evaluation loop; and the historical LangGraph *execution* variant contains a known broken import (`agents/PM.py`), so only the analysis-and-memory pipeline is runnable end-to-end. Sentiment analysis is keyword-based rather than model-based, a deliberate simplicity/cost choice that a finance-tuned classifier @delgadillo_finsosent:_2024 could improve. Most importantly, the deterministic policies are simple technical rules; the framework is a *platform* for grounded analysis, not a validated alpha strategy.
+The system has clear boundaries. The MCP interoperability layer is scaffolding pending a `fastmcp` integration; the HITL executor currently logs rather than dispatching to the broker; the belief-contest weighting is implemented as configuration rather than a fully closed evaluation loop; and the historical LangGraph `agents/` and `agentgraph/` directories have been archived into `quick_ask/legacy/` since the `quick_ask/` variant is the maintained LangGraph pipeline. Sentiment analysis is keyword-based rather than model-based, a deliberate simplicity/cost choice that a finance-tuned classifier @delgadillo_finsosent:_2024 could improve. Most importantly, the deterministic policies are simple technical rules; the framework is a *platform* for grounded analysis, not a validated alpha strategy.
 
 == Threats to Validity
 
