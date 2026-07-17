@@ -67,6 +67,14 @@
   }
 }))
 
+// ── Rounded box helper for topology diagrams ──
+#let tbox(pos, label, w: 2.6, h: 0.85, bg: luma(240)) = {
+  import cetz.draw: rect, content
+  let (x, y) = pos
+  rect((x - w/2, y - h/2), (x + w/2, y + h/2), radius: 0.12, fill: bg, stroke: 0.5pt)
+  content((x, y), text(8pt)[#label])
+}
+
 // ── Cover page ──
 #page(numbering: none)[
   #align(center)[
@@ -300,7 +308,45 @@ The loop's control state is carried by a lightweight `WorkspaceMemory` object sc
 
 The frozen pipeline is a LangGraph `StateGraph` compiled with a `MemorySaver` checkpointer keyed by session. Its shared blackboard, `AgentState`, subclasses LangGraph's `MessagesState` and adds the input fields (`ticker`, `date`, `current_position_pct`), five *per-agent message channels* (so each analyst's tool dialogue is isolated), four report slots (`market_report`, `news_report`, `fundamental_report`, `risk_report`), the portfolio-manager outputs (`Action`, `Target_position_pct`, `PM_report`), and the memory-integration fields (`relevant_memories`, `memory_context`). Three analyst nodes — market (technical), news, and fundamentals — fan out in parallel from `START`, each running its own isolated ReAct sub-loop over its private message channel and a bound tool subset (market binds `get_price`+`get_indicators`; news binds `get_news`; fundamentals binds `get_fundamentals`). A `create_tool_node_wrapper` copies each analyst's private channel into the shared `messages` slot for the duration of a `ToolNode` invocation and writes the result back only to that channel, so the three concurrent ReAct loops never collide.
 
-All three branches converge on a *barrier* risk-analyst node whose join logic is the crux of the design: it returns an empty dict (a LangGraph no-op) until all three reports are present, and short-circuits if a `risk_report` already exists — so although the graph invokes it up to three times (once per completing analyst), it computes exactly once, when the last report lands. It then synthesises position, stop-loss, take-profit, and time-window advice. The portfolio-manager node produces the final decision through a `PydanticOutputParser` bound to the `TradingDecision` schema (`action ∈ {BUY, SELL, HOLD}`, `target_position_pct`, `report`), with the top outcome-weighted memories injected into its system prompt under an explicit "history is advisory; current evidence wins on conflict" instruction. A terminal `remember_memory` node persists the decision, closing the observation → decision → memory loop advocated by FinMem @yu_finmem:_2023 and TradingAgents @xiao_tradingagents:_2025. Temperature is pinned to 0.0 throughout for determinism. Every analyst prompt enforces a fixed four-line header — direction, time-horizon, confidence in $[0,1]$, and a one-sentence conclusion — followed by quantified evidence and explicit "if–then" invalidation conditions, which both standardises downstream parsing and forces the model to commit to falsifiable claims.
+All three branches converge on a *barrier* risk-analyst node whose join logic is the crux of the design: it returns an empty dict (a LangGraph no-op) until all three reports are present, and short-circuits if a `risk_report` already exists — so although the graph invokes it up to three times (once per completing analyst), it computes exactly once, when the last report lands. It then synthesises position, stop-loss, take-profit, and time-window advice. The portfolio-manager node produces the final decision through a `PydanticOutputParser` bound to the `TradingDecision` schema (`action ∈ {BUY, SELL, HOLD}`, `target_position_pct`, `report`), with the top outcome-weighted memories injected into its system prompt under an explicit "history is advisory; current evidence wins on conflict" instruction. A terminal `remember_memory` node persists the decision, closing the observation → decision → memory loop advocated by FinMem @yu_finmem:_2023 and TradingAgents @xiao_tradingagents:_2025. Temperature is pinned to 0.0 throughout for determinism. Every analyst prompt enforces a fixed four-line header — direction, time-horizon, confidence in $[0,1]$, and a one-sentence conclusion — followed by quantified evidence and explicit "if–then" invalidation conditions, which both standardises downstream parsing and forces the model to commit to falsifiable claims. @fig-pipeline depicts the resulting node topology.
+
+#figure(
+  align(center, cetz.canvas(length: 1cm, {
+    import cetz.draw: *
+    // Node positions (x, y)
+    let p_start = (0, 0)
+    let p_mkt = (3.2, 2.1)
+    let p_news = (3.2, 0)
+    let p_fund = (3.2, -2.1)
+    let p_risk = (6.6, 0)
+    let p_pm = (9.4, 0)
+    let p_mem = (12.2, 0)
+    let p_end = (14.6, 0)
+    // Edges (drawn first, under boxes)
+    line(p_start, (p_mkt.at(0) - 1.3, p_mkt.at(1)), mark: (end: ">"), stroke: 0.5pt)
+    line(p_start, (p_news.at(0) - 1.3, p_news.at(1)), mark: (end: ">"), stroke: 0.5pt)
+    line(p_start, (p_fund.at(0) - 1.3, p_fund.at(1)), mark: (end: ">"), stroke: 0.5pt)
+    line((p_mkt.at(0) + 1.3, p_mkt.at(1)), (p_risk.at(0) - 1.3, p_risk.at(1) + 0.35), mark: (end: ">"), stroke: 0.5pt)
+    line((p_news.at(0) + 1.3, p_news.at(1)), (p_risk.at(0) - 1.3, p_risk.at(1)), mark: (end: ">"), stroke: 0.5pt)
+    line((p_fund.at(0) + 1.3, p_fund.at(1)), (p_risk.at(0) - 1.3, p_risk.at(1) - 0.35), mark: (end: ">"), stroke: 0.5pt)
+    line((p_risk.at(0) + 1.3, 0), (p_pm.at(0) - 1.3, 0), mark: (end: ">"), stroke: 0.5pt)
+    line((p_pm.at(0) + 1.3, 0), (p_mem.at(0) - 1.3, 0), mark: (end: ">"), stroke: 0.5pt)
+    line((p_mem.at(0) + 1.3, 0), (p_end.at(0) - 0.65, 0), mark: (end: ">"), stroke: 0.5pt)
+    // Nodes
+    tbox(p_start, [START], w: 1.3, bg: white)
+    tbox(p_mkt, [Market\ analyst])
+    tbox(p_news, [News\ analyst])
+    tbox(p_fund, [Fundamentals\ analyst])
+    tbox(p_risk, [Risk\ (barrier)], bg: luma(224))
+    tbox(p_pm, [Portfolio\ manager], bg: luma(224))
+    tbox(p_mem, [remember\_\ memory])
+    tbox(p_end, [END], w: 1.3, bg: white)
+    // Annotations
+    content((3.2, 3.05), text(7pt, style: "italic")[parallel fan-out])
+    content((6.6, 1.15), text(7pt, style: "italic")[fan-in join])
+  })),
+  caption: [LEGACY LangGraph topology: `START` fans out to three parallel analysts, each running an isolated tool sub-loop; the barrier risk node joins them once all reports exist; the portfolio manager emits the typed decision; and `remember_memory` persists it before `END`. Each analyst also has a hidden `ToolNode` self-loop (omitted for clarity).],
+) <fig-pipeline>
 
 == Data Flow Patterns
 
