@@ -33,6 +33,40 @@
   fill: luma(246), stroke: (left: 2pt + luma(150)), inset: 10pt, radius: 2pt, width: 100%, body,
 )
 
+// ── Sequence-diagram helper (built on cetz) ──
+#import "@preview/cetz:0.3.4"
+
+// Draw a UML-style sequence diagram.
+//   lifelines: array of (x, label)
+//   height: total vertical span of the lifelines
+//   messages: array of (from_x, to_x, y, label, dashed)
+#let seqdiagram(lifelines, height, messages) = align(center, cetz.canvas(length: 1cm, {
+  import cetz.draw: *
+  // Lifelines: header box + dashed vertical line
+  for (x, label) in lifelines {
+    rect((x - 0.85, 0.35), (x + 0.85, -0.35), fill: luma(240), stroke: 0.5pt)
+    content((x, 0), text(8pt, weight: "bold")[#label])
+    line((x, -0.35), (x, -height), stroke: (dash: "dotted", paint: luma(140)))
+  }
+  // Messages: arrows between lifelines
+  for m in messages {
+    let (fx, tx, y, label) = (m.at(0), m.at(1), m.at(2), m.at(3))
+    let dashed = if m.len() > 4 { m.at(4) } else { false }
+    let stroke-style = if dashed { (dash: "dashed", thickness: 0.5pt) } else { 0.5pt }
+    let self-msg = fx == tx
+    if self-msg {
+      // self-call loop
+      line((fx, y), (fx + 0.9, y), (fx + 0.9, y - 0.45), (fx + 0.03, y - 0.45),
+        mark: (end: ">"), stroke: stroke-style)
+      content((fx + 1.0, y - 0.22), anchor: "west", text(7.5pt)[#label])
+    } else {
+      let dir = if tx > fx { 1 } else { -1 }
+      line((fx, y), (tx, y), mark: (end: ">"), stroke: stroke-style)
+      content(((fx + tx) / 2, y + 0.22), text(7.5pt)[#label])
+    }
+  }
+}))
+
 // ── Cover page ──
 #page(numbering: none)[
   #align(center)[
@@ -424,6 +458,30 @@ The point-in-time runner honours several fidelity rules that directly counter th
 - *Explicit non-fills.* Pending, rejected, cancelled, and end-of-window-unfilled orders are retained as evidence; a zero-trade result is reported as `completed_no_trades`, never dressed up as performance.
 - *Honest diagnostics.* Every result carries mandatory fidelity warnings — that the drawdown limit is not enforced, that capacity is not modelled, that adjusted prices are synthetic, and, for small samples, that fewer than 63 evaluation bars or 30 closed trades were observed.
 
+@fig-backtest shows the lifecycle of a backtest job, from freezing the run specification through deterministic execution to the hash re-verification that gates every subsequent read.
+
+#figure(
+  seqdiagram(
+    ((0, [Client]), (2.6, [JobService]), (5.2, [Store]), (7.8, [Runner]), (10.4, [Broker])),
+    9.6,
+    (
+      (0, 2.6, -1.0, "POST /backtest"),
+      (2.6, 2.6, -1.6, "freeze RunSpec + hashes"),
+      (2.6, 5.2, -2.4, "pin gzip snapshot"),
+      (5.2, 2.6, -3.0, "content_hash", true),
+      (2.6, 7.8, -3.8, "run (async)"),
+      (7.8, 10.4, -4.5, "next-open order"),
+      (10.4, 7.8, -5.1, "fill / reject", true),
+      (7.8, 5.2, -5.9, "persist decisions + result"),
+      (2.6, 0, -6.7, "202 job id", true),
+      (0, 2.6, -7.5, "GET /backtest/{id}"),
+      (2.6, 2.6, -8.1, "recompute result hash"),
+      (2.6, 0, -8.9, "verified result", true),
+    ),
+  ),
+  caption: [Deterministic backtest (Pattern C): the run specification and price snapshot are frozen and hashed before execution; the point-in-time runner fills only at the next open; and every read recomputes the canonical economic result hash, downgrading to `storage_corrupt` on mismatch.],
+) <fig-backtest>
+
 Performance metrics are computed by a trade ledger from reconstructed long-only episodes. Given a per-session equity series $E_0, E_1, dots, E_n$ with simple returns $r_t = E_t / E_(t-1) - 1$, the ledger reports total return $E_n/E_0 - 1$, calendar-annualised return $(1 + "total")^(365 / "days") - 1$, annualised volatility $sigma sqrt(252)$, and the Sharpe ratio @sharpe_ratio_1994
 
 #align(center)[
@@ -459,6 +517,30 @@ The presentation layer is a Next.js 16 / React 19 application of sixteen routes 
 To make the interaction between subsystems concrete, consider the request "Should I be worried about NVDA after today's news?" issued to the ACTIVE terminal. The server spawns an `AgentLoop` in a worker thread and streams events over SSE. On the first iteration the loop builds the seven-section system prompt, injects the sentiment- and news-analysis skills selected by keyword overlap, and calls the model. The model emits three read-only tool calls — `get_price`, `get_indicators`, and `get_news` for `NVDA` — whose arguments the streaming executor dispatches in parallel the instant each JSON payload completes; `thinking_delta` and `tool_call` events surface live in the browser. Each tool resolves through `DataService`: prices and indicators hit the SHA-256-verified cache (sub-20 ms), while news triggers the Google → AkShare → Yahoo fallback chain and returns article objects with source URLs.
 
 On the second iteration the preprocessing pass finds the transcript well within the 28 K-token warn threshold, so only the zero-cost L0/L1 layers run. The model, now holding grounded data, produces a final answer. Before it is emitted, the answer validator extracts the numeric tokens in the answer (price levels, RSI, percentage moves) and confirms each appears in a tool result; the grounded answer is returned with a `done` event carrying iteration count, tool count, and elapsed time, and the full transcript is persisted for continuation. Had a provider failed, the recovery ladder would have absorbed the error — a rate-limit would back off and retry, a context overflow would trigger `collapse_drain` — and had the model looped on a repeated `get_price` call, the de-duplication key would have dropped it with a reminder to answer from data already gathered. This single trace exercises the prompt architecture, streaming concurrency, the data plane, compression, recovery, and grounding validation in concert.
+
+The sequence diagram in @fig-interactive traces this interaction across the participating components.
+
+#figure(
+  seqdiagram(
+    ((0, [Browser]), (2.7, [FastAPI]), (5.2, [AgentLoop]), (7.7, [DataService]), (10.2, [LLM])),
+    9.2,
+    (
+      (0, 2.7, -1.0, "POST /agent/chat"),
+      (2.7, 5.2, -1.6, "run() in thread"),
+      (5.2, 5.2, -2.2, "build prompt + skills"),
+      (5.2, 10.2, -3.0, "stream call"),
+      (10.2, 5.2, -3.6, "tool calls", true),
+      (5.2, 7.7, -4.2, "get_price / news"),
+      (7.7, 5.2, -4.8, "cached / fallback", true),
+      (5.2, 10.2, -5.4, "grounded turn"),
+      (10.2, 5.2, -6.0, "final answer", true),
+      (5.2, 5.2, -6.6, "validate numerics"),
+      (5.2, 2.7, -7.4, "answer + done", true),
+      (2.7, 0, -8.0, "SSE events", true),
+    ),
+  ),
+  caption: [Interactive analysis (Pattern A): the ReAct loop streams reasoning and tool events over SSE, grounding every figure through `DataService` before the answer is validated and returned. Dashed arrows denote returns/streamed responses.],
+) <fig-interactive>
 
 // ═══════════════════════════════════════════
 //  6  Experimental Results and Analysis
