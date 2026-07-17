@@ -10,14 +10,14 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 from pydantic import SecretStr
 
-from agentgraph.execution_node import create_execution_node
-from agentgraph.state import AgentState
-from agents.fundamentals_analyst import fundamentals_analyst_agent
-from agents.market_analyst import market_analyst_agent
-from agents.news_analyst import news_analyst_agent
-from agents.PM import PM_agent
-from agents.risk_analyst import risk_analyst_agent
-from agents.utils.agent_tools import (
+from quick_ask.legacy.agentgraph  # BROKEN: execution_node moved to quick_ask.execution_node import create_execution_node
+from quick_ask.legacy.agentgraph.state import AgentState
+from quick_ask.legacy.agents.fundamentals_analyst import fundamentals_analyst_agent
+from quick_ask.legacy.agents.market_analyst import market_analyst_agent
+from quick_ask.legacy.agents.news_analyst import news_analyst_agent
+from quick_ask.legacy.agents.PM import PM_agent
+from quick_ask.legacy.agents.risk_analyst import risk_analyst_agent
+from quick_ask.legacy.agents.utils.agent_tools import (
     get_fundamentals,
     get_indicators,
     get_news,

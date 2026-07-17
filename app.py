@@ -17,7 +17,7 @@ import sys
 
 import pandas as pd
 
-from agentgraph.orchestrator import IntelliFin_Assistant
+from quick_ask.orchestrator import IntelliFin_Assistant
 
 
 def main():
