@@ -1,310 +1,353 @@
-import os
-import sys
-import time
-import uuid
+"""IntelliFin_Assistant — TradingAgents-style 12-agent LangGraph pipeline."""
+
+from __future__ import annotations
+
 import logging
-from collections.abc import Hashable
-from typing import cast
+import os
+from typing import Any
 
 from dotenv import load_dotenv
+from langchain_core.messages import HumanMessage, RemoveMessage
 from langchain_openai import ChatOpenAI
-from langgraph.checkpoint.memory import MemorySaver
-from langgraph.graph import END, START, StateGraph
+from langgraph.graph import END, StateGraph
+from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode
 
-from memory import MemoryService
-from memory.service import memory_enabled as is_memory_enabled
-from quick_ask.agents.PM import PM_agent
-from quick_ask.agents.fundamentals_analyst import fundamentals_analyst_agent
-from quick_ask.agents.market_analyst import market_analyst_agent
-from quick_ask.agents.news_analyst import news_analyst_agent
-from quick_ask.agents.risk_analyst import risk_analyst_agent
+from quick_ask.agents.analysts.fundamentals_analyst import (
+    fundamentals_analyst_agent,
+)
+from quick_ask.agents.analysts.market_analyst import market_analyst_agent
+from quick_ask.agents.analysts.news_analyst import news_analyst_agent
+from quick_ask.agents.analysts.risk_analyst import risk_analyst_agent
+from quick_ask.agents.analysts.sentiment_analyst import sentiment_analyst_agent
+from quick_ask.agents.managers.PM import PM_agent
+from quick_ask.agents.researchers.bear_researcher import bear_researcher_agent
+from quick_ask.agents.researchers.bull_researcher import bull_researcher_agent
+from quick_ask.agents.researchers.research_manager import (
+    research_manager_agent,
+)
+from quick_ask.agents.risk_mgmt.aggressive_analyst import aggressive_analyst_agent
+from quick_ask.agents.risk_mgmt.conservative_analyst import (
+    conservative_analyst_agent,
+)
+from quick_ask.agents.risk_mgmt.neutral_analyst import neutral_analyst_agent
+from quick_ask.agents.trader.trader import trader_agent
 from quick_ask.agents.utils.agent_tools import (
+    get_balance_sheet,
+    get_cashflow,
     get_fundamentals,
+    get_global_news,
+    get_income_statement,
     get_indicators,
+    get_macro,
+    get_macro_indicators,
     get_news,
     get_price,
+    get_sector,
+    get_sentiment,
+    get_verified_market_snapshot,
 )
 from quick_ask.state import AgentState
 from server.llm_defaults import DEFAULT_QUICK_THINK_MODEL
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 load_dotenv("properties.env")
-os.environ["LANGCHAIN_TRACING_V2"] = os.getenv("LANGCHAIN_TRACING_V2", "false")
-os.environ["LANGCHAIN_API_KEY"] = os.getenv("LANGCHAIN_API_KEY", "")
-
 logger = logging.getLogger(__name__)
 
+MARKET_TOOLS = [get_price, get_indicators, get_verified_market_snapshot]
+SENTIMENT_TOOLS = [get_sentiment, get_news, get_sector]
+NEWS_TOOLS = [get_news, get_global_news, get_macro_indicators, get_macro]
+FUNDAMENTALS_TOOLS = [
+    get_fundamentals, get_balance_sheet, get_cashflow, get_income_statement,
+]
 
-def create_tool_node_wrapper(node_name: str, tools):
-    """创建工具节点包装器，使用各自的 messages 列表"""
-    tool_node = ToolNode(tools)
 
-    def wrapper(state: AgentState):
-        # 获取对应的 messages 列表
-        messages_key = f"{node_name}_messages"
-        messages = state.get(messages_key, [])
+# ── Core helpers ────────────────────────────────────────────
 
-        if not messages:
-            return {messages_key: []}
+def _invoke(fn, state):
+    """Call agent — supports plain fn, LangChain Runnable, raw AIMessage."""
+    result = fn.invoke(state) if hasattr(fn, "invoke") else fn(state)
+    if not isinstance(result, dict):
+        result = {"messages": [result]}
+    return result
 
-        # 临时将各自的 messages 同步到 state["messages"]，供 ToolNode 使用
-        temp_state = {**state, "messages": messages}
 
-        # 执行工具节点
-        result = tool_node.invoke(temp_state)
+def _last_msg(result, key):
+    """Get last message from result dict, trying per-agent key then shared."""
+    for k in (key, "messages"):
+        msgs = result.get(k, [])
+        if msgs:
+            return msgs[-1]
+    return None
 
-        # 将工具执行结果同步回各自的 messages
-        # 确保消息列表是完整的
-        updated_messages = result.get("messages", messages)
 
+def _has_tc(state, key):
+    """Check if last per-agent message has pending tool calls."""
+    msgs = state.get(key, [])
+    return bool(msgs and getattr(msgs[-1], "tool_calls", None))
+
+
+# ── Graph nodes ─────────────────────────────────────────────
+
+def _msg_clear_node(label):
+    """Clear shared messages, insert context anchor."""
+    def _run(state):
+        ops = [RemoveMessage(id=m.id) for m in state["messages"]]
+        ops.append(HumanMessage(content=f"Proceed. {label}"))
+        return {"messages": ops}
+    return _run
+
+
+def _tool_node(tools, msg_key):
+    """ToolNode that reads/writes per-agent message list."""
+    base = ToolNode(tools)
+    def _run(state):
+        state["messages"] = state.get(msg_key, [])
+        r = base.invoke(state)
+        return {msg_key: r["messages"]}
+    return _run
+
+
+def _agent_node(fn, msg_key, report_key="", on_start=None, node_name=""):
+    """Agent node — pass through all result keys. Inject debate/risk state."""
+    def _run(state):
+        if on_start:
+            on_start(node_name)
+        state["messages"] = state.get(msg_key, [])
+        # Flatten debate state for agents that need it as template vars
+        db = state.get("investment_debate_state", {})
+        if db:
+            state.setdefault("debate_history", db.get("history", ""))
+        rb = state.get("risk_debate_state", {})
+        if rb:
+            state.setdefault("current_aggressive_response", rb.get("current_aggressive_response", ""))
+            state.setdefault("current_conservative_response", rb.get("current_conservative_response", ""))
+            state.setdefault("current_neutral_response", rb.get("current_neutral_response", ""))
+        r = _invoke(fn, state)
+        # If result already has the per-agent key, pass everything through
+        if msg_key in r:
+            out = dict(r)
+            out.setdefault("messages", out.get(msg_key, []))
+            # Extract report from last per-agent message if no tool_calls
+            per_msgs = out.get(msg_key, [])
+            if report_key and per_msgs:
+                last = per_msgs[-1]
+                if not getattr(last, "tool_calls", None):
+                    out[report_key] = str(last.content)
+            return out
+        # Bare message result — wrap
+        msg = _last_msg(r, msg_key) or _last_msg(r, "messages")
+        if msg is None:
+            return {}
+        out = {msg_key: [msg], "messages": [msg]}
+        if report_key and not getattr(msg, "tool_calls", None):
+            out[report_key] = str(msg.content)
+        return out
+    return _run
+
+
+def _debate_node(fn, msg_key, prefix, on_start=None, node_name=""):
+    """Debate agent — injects debate state into top-level keys for template vars."""
+    def _run(state):
+        if on_start:
+            on_start(node_name)
+        state["messages"] = state.get(msg_key, [])
+        db = state.get("investment_debate_state", {})
+        # Flatten debate state so {{history}} and {{current_response}} work
+        state["history"] = db.get("history", "")
+        state["current_response"] = db.get("current_response", "")
+        r = _invoke(fn, state)
+        msg = _last_msg(r, msg_key) or _last_msg(r, "messages")
+        if msg is None:
+            return {}
+        content = str(msg.content)
         return {
-            messages_key: updated_messages,
+            msg_key: [msg], "messages": [msg],
+            "investment_debate_state": {
+                **db, "count": db.get("count", 0) + 1,
+                "history": db.get("history", "") + f"\n{prefix}: {content[:500]}\n",
+                "current_response": f"{prefix}: {content[:500]}",
+            },
         }
-
-    return wrapper
-
-
-def should_continue(node_name: str):
-    def should_tool_node(state: AgentState):
-        # 根据节点名称获取对应的 messages 列表
-        messages_key = f"{node_name}_messages"
-        messages = state.get(messages_key, [])
-
-        # 如果 messages 为空，说明 agent 返回了空状态
-        # 对于 risk_analyst：如果三个报告没齐，返回空状态，此时 messages 为空，直接结束
-        # 对于三个分析师：如果 messages 为空，说明有问题，直接结束
-        if not messages:
-            return END
-
-        last_message = messages[-1]
-        # 检查是否有工具调用
-        if hasattr(last_message, "tool_calls") and last_message.tool_calls:
-            # risk_analyst 没有工具节点，即使有工具调用也直接继续
-            if node_name == "risk_analyst":
-                return "PM_agent"
-            return f"{node_name}_tool"
-
-        # 如果没有工具调用，说明 agent 已经完成，继续到下一步
-        if node_name == "risk_analyst":
-            return "PM_agent"
-        return "risk_analyst"
-
-    return should_tool_node
+    return _run
 
 
-def _remember_memory_node(state: AgentState):
-    """Graph node: persist PM decision after analysis completes."""
-    try:
-        strategy_id = str(state.get("strategy_id") or "default")
-        enabled_value = state.get("memory_enabled")
-        enabled = enabled_value if isinstance(enabled_value, bool) else None
-        service = MemoryService(
-            strategy_id=strategy_id,
-            enabled=enabled,
-        )
-        memory_record_id = service.remember_decision(state)
-        if memory_record_id:
-            logger.info("Memory recorded: %s", memory_record_id)
-            return {"memory_record_id": memory_record_id}
-    except Exception as exc:
-        logger.warning("Memory remember failed: %s", exc)
+def _risk_node(fn, msg_key, name, on_start=None, node_name=""):
+    """Risk debate agent — flattens risk state for template vars."""
+    def _run(state):
+        if on_start:
+            on_start(node_name)
+        state["messages"] = state.get(msg_key, [])
+        rb = state.get("risk_debate_state", {})
+        state["history"] = rb.get("history", "")
+        # Map response keys: store each speaker's last response
+        resp_key = {
+            "Aggressive": "current_aggressive_response",
+            "Conservative": "current_conservative_response",
+            "Neutral": "current_neutral_response",
+        }
+        for spk, key in resp_key.items():
+            state[key] = rb.get(key, "")
+        r = _invoke(fn, state)
+        msg = _last_msg(r, msg_key) or _last_msg(r, "messages")
+        if msg is None:
+            return {}
+        content = str(msg.content)
+        # Save THIS speaker's response into the risk state for others to read
+        updates = {
+            **rb, "count": rb.get("count", 0) + 1,
+            "history": rb.get("history", "") + f"\n{name}: {content[:500]}\n",
+            "latest_speaker": name,
+        }
+        if name in resp_key:
+            updates[resp_key[name]] = content[:500]
+        return {
+            msg_key: [msg], "messages": [msg],
+            "risk_debate_state": updates,
+        }
+    return _run
 
-    return {}
+
+# ── Conditionals ────────────────────────────────────────────
+
+def _debate_next(state):
+    c = state.get("investment_debate_state", {}).get("count", 0)
+    return "research_manager" if c >= 2 * state.get("max_debate_rounds", 1) else "bull_researcher"
+
+def _risk_next(state):
+    c = state.get("risk_debate_state", {}).get("count", 0)
+    return "risk_analyst" if c >= 3 * state.get("max_risk_rounds", 1) else "aggressive_analyst"
+
+# Tool-loop conditional: agent → tool or next
+def _tc_a(state, mk, tn, nn):
+    return tn if _has_tc(state, mk) else nn
+
+# Tool-loop conditional: tool → agent or next
+def _tc_t(state, mk, tn, an):
+    return tn if _has_tc(state, mk) else an
 
 
-def _build_initial_state(
-    *,
-    ticker: str,
-    date: str | None,
-    current_position_pct: float,
-    strategy_id: str,
-    session_id: str,
-    memory_enabled: bool | None,
-    account_id: str | None,
-    decision_id: str | None,
-) -> dict:
-    relevant_memories = []
-    memory_context = ""
-    memory_active = is_memory_enabled(memory_enabled)
-
-    if memory_active:
-        try:
-            service = MemoryService(strategy_id=strategy_id, enabled=memory_active)
-            market_context = {
-                "ticker": ticker,
-                "date": date,
-                "current_position_pct": current_position_pct,
-            }
-            relevant_memories = service.recall_records(ticker, market_context)
-            memory_context = service.recall_context(ticker, market_context)
-            logger.info("Recalled %d memories for %s", len(relevant_memories), ticker)
-        except Exception as exc:
-            logger.debug("Memory recall skipped: %s", exc)
-
-    return {
-        "ticker": ticker,
-        "date": date,
-        "current_position_pct": current_position_pct,
-        "relevant_memories": relevant_memories,
-        "memory_context": memory_context,
-        "memory_enabled": memory_active,
-        "session_id": session_id,
-        "strategy_id": strategy_id,
-        "account_id": account_id or "",
-        "decision_id": decision_id or "",
-        "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-    }
-
+# ── Orchestrator ────────────────────────────────────────────
 
 class IntelliFin_Assistant:
-    def __init__(self):
-        # self.llm = ChatOpenAI(
-        #     model="deepseek-v3-250324",
-        #     openai_api_key="",
-        #     openai_api_base="",
-        #     )
-        api_base = os.getenv("OPENAI_API_BASE", "")
+    """12-agent TradingAgents-style analysis pipeline."""
+
+    def __init__(self, on_node_start=None):
         self.llm = ChatOpenAI(
             model=os.getenv("OPENAI_MODEL", DEFAULT_QUICK_THINK_MODEL),
-            api_key=lambda: os.getenv("OPENAI_API_KEY") or "",
-            base_url=api_base if api_base else None,
+            openai_api_key=lambda: os.getenv("OPENAI_API_KEY"),
+            openai_api_base=os.getenv("OPENAI_API_BASE") or None,
             temperature=0.0,
+            max_retries=3,
+            request_timeout=120,
         )
+        self._on_node_start = on_node_start
 
-        self.tool_nodes = self._create_tool_nodes()
-        self.agent_nodes = self._create_agent_nodes()
-
+    def _build(self) -> CompiledStateGraph:
         wf = StateGraph(AgentState)
 
-        for node_name, node in self.tool_nodes.items():
-            # market, news, fundamentals 分析师的可能路径
-            path_map: dict[Hashable, str] = {
-                f"{node_name}_tool": f"{node_name}_tool",
-                "risk_analyst": "risk_analyst",
-                END: END,
-            }
+        # ── Analysts ──────────────────────────────────────
+        mk, mt, mcl = "market_analyst", "market_tool", "market_clear"
+        sk, st, scl = "sentiment_analyst", "sentiment_tool", "sentiment_clear"
+        nk, nt, ncl = "news_analyst", "news_tool", "news_clear"
+        fk, ft, fcl = "fundamentals_analyst", "fundamentals_tool", "fundamentals_clear"
 
-            wf.add_node(f"{node_name}_tool", node)  # 工具节点
-            wf.add_node(node_name, self.agent_nodes[node_name])  # 代理节点
-            wf.add_conditional_edges(
-                node_name, should_continue(node_name), path_map
-            )  # 条件边（工具节点或下一步代理节点）三个分析节点到风险分析师
-            wf.add_edge(f"{node_name}_tool", node_name)  # 工具节点到代理节点的边
+        wf.add_node(mk, _agent_node(market_analyst_agent(self.llm), "market_analyst_messages", "market_report", on_start=self._on_node_start, node_name="market_analyst"))
+        wf.add_node(mt, _tool_node(MARKET_TOOLS, "market_analyst_messages"))
+        wf.add_node(mcl, _msg_clear_node("market→sentiment"))
 
-        # 单独添加 risk_analyst 节点（没有工具节点）
-        wf.add_node("risk_analyst", self.agent_nodes["risk_analyst"])
-        wf.add_conditional_edges(
-            "risk_analyst",
-            should_continue("risk_analyst"),
-            cast(dict[Hashable, str], {"PM_agent": "PM_agent", END: END}),
-        )  # risk_analyst 的条件边：直接到 PM_agent 或结束
+        wf.add_node(sk, _agent_node(sentiment_analyst_agent(self.llm), "sentiment_analyst_messages", "sentiment_report", on_start=self._on_node_start, node_name="sentiment_analyst"))
+        wf.add_node(st, _tool_node(SENTIMENT_TOOLS, "sentiment_analyst_messages"))
+        wf.add_node(scl, _msg_clear_node("sentiment→news"))
 
-        # 添加 PM + Remember 节点
-        wf.add_node("PM_agent", self.agent_nodes["PM_agent"])
-        wf.add_node("remember_memory", _remember_memory_node)
-        wf.add_edge("PM_agent", "remember_memory")
-        wf.add_edge("remember_memory", END)
+        wf.add_node(nk, _agent_node(news_analyst_agent(self.llm), "news_analyst_messages", "news_report", on_start=self._on_node_start, node_name="news_analyst"))
+        wf.add_node(nt, _tool_node(NEWS_TOOLS, "news_analyst_messages"))
+        wf.add_node(ncl, _msg_clear_node("news→fundamentals"))
 
-        wf.add_edge(START, "market_analyst")
-        wf.add_edge(START, "news_analyst")
-        wf.add_edge(START, "fundamentals_analyst")
+        wf.add_node(fk, _agent_node(fundamentals_analyst_agent(self.llm), "fundamentals_analyst_messages", "fundamental_report", on_start=self._on_node_start, node_name="fundamentals_analyst"))
+        wf.add_node(ft, _tool_node(FUNDAMENTALS_TOOLS, "fundamentals_analyst_messages"))
+        wf.add_node(fcl, _msg_clear_node("fundamentals→next"))
 
-        # 初始化内存，在图运行时存储状态（状态持久化）
-        checkpoint = MemorySaver()  # 可拓展redis,mongoDB
-        self.wf = wf.compile(checkpointer=checkpoint)
+        # ── Debate ────────────────────────────────────────
+        buk, bek, rmk = "bull_researcher", "bear_researcher", "research_manager"
+        wf.add_node(buk, _debate_node(bull_researcher_agent(self.llm), "bull_researcher_messages", "Bull", on_start=self._on_node_start, node_name="bull_researcher"))
+        wf.add_node(bek, _debate_node(bear_researcher_agent(self.llm), "bear_researcher_messages", "Bear", on_start=self._on_node_start, node_name="bear_researcher"))
+        wf.add_node(rmk, _agent_node(research_manager_agent(self.llm), "research_manager_messages", "investment_plan", on_start=self._on_node_start, node_name="research_manager"))
 
-    def run(
-        self,
-        ticker: str,
-        date: str | None = None,
-        current_position_pct: float = 0.0,
-        strategy_id: str = "default",
-        session_id: str | None = None,
-        memory_enabled: bool | None = None,
-        account_id: str | None = None,
-        decision_id: str | None = None,
-    ):
-        # Generate session ID
-        sid = session_id or str(uuid.uuid4())
+        # ── Trader ────────────────────────────────────────
+        wf.add_node("trader", _agent_node(trader_agent(self.llm), "trader_messages", "trader_proposal", on_start=self._on_node_start, node_name="trader"))
 
-        initial_state = _build_initial_state(
-            ticker=ticker,
-            date=date,
-            current_position_pct=current_position_pct,
-            strategy_id=strategy_id,
-            session_id=sid,
-            memory_enabled=memory_enabled,
-            account_id=account_id,
-            decision_id=decision_id,
-        )
-        return self.wf.invoke(
-            cast(AgentState, initial_state),
-            config={"configurable": {"thread_id": sid}},
-        )
+        # ── Risk ──────────────────────────────────────────
+        ak, ck, nuk = "aggressive_analyst", "conservative_analyst", "neutral_analyst"
+        wf.add_node(ak, _risk_node(aggressive_analyst_agent(self.llm), "aggressive_messages", "Aggressive", on_start=self._on_node_start, node_name="aggressive_analyst"))
+        wf.add_node(ck, _risk_node(conservative_analyst_agent(self.llm), "conservative_messages", "Conservative", on_start=self._on_node_start, node_name="conservative_analyst"))
+        wf.add_node(nuk, _risk_node(neutral_analyst_agent(self.llm), "neutral_messages", "Neutral", on_start=self._on_node_start, node_name="neutral_analyst"))
+        wf.add_node("risk_analyst", _agent_node(risk_analyst_agent(self.llm), "risk_analyst_messages", "risk_report", on_start=self._on_node_start, node_name="risk_analyst"))
 
-    def stream(
-        self,
-        ticker: str,
-        date: str | None = None,
-        current_position_pct: float = 0.0,
-        strategy_id: str = "default",
-        session_id: str | None = None,
-        memory_enabled: bool | None = None,
-        account_id: str | None = None,
-        decision_id: str | None = None,
-    ):
-        """Stream analysis — yields {node_name: state_update} as each agent completes."""
-        sid = session_id or str(uuid.uuid4())
+        # ── PM ────────────────────────────────────────────
+        wf.add_node("PM_agent", _agent_node(PM_agent(self.llm), "PM_agent_messages", "", on_start=self._on_node_start, node_name="PM_agent"))
 
-        initial_state = _build_initial_state(
-            ticker=ticker,
-            date=date,
-            current_position_pct=current_position_pct,
-            strategy_id=strategy_id,
-            session_id=sid,
-            memory_enabled=memory_enabled,
-            account_id=account_id,
-            decision_id=decision_id,
-        )
-        for event in self.wf.stream(
-            cast(AgentState, initial_state),
-            config={"configurable": {"thread_id": sid}},
-            stream_mode="updates",
-        ):
-            yield event
+        # ── Edges ─────────────────────────────────────────
+        wf.set_entry_point(mk)
+        # Market: agent ⇄ tool → clear → sentiment
+        wf.add_conditional_edges(mk, lambda s: _tc_a(s, "market_analyst_messages", mt, mcl), {mt: mt, mcl: mcl})
+        wf.add_edge(mt, mk)  # tool always back to agent — agent decides when done
+        wf.add_edge(mcl, sk)
+        # Sentiment: agent ⇄ tool → clear → news
+        wf.add_conditional_edges(sk, lambda s: _tc_a(s, "sentiment_analyst_messages", st, scl), {st: st, scl: scl})
+        wf.add_edge(st, sk)
+        wf.add_edge(scl, nk)
+        # News: agent ⇄ tool → clear → fundamentals
+        wf.add_conditional_edges(nk, lambda s: _tc_a(s, "news_analyst_messages", nt, ncl), {nt: nt, ncl: ncl})
+        wf.add_edge(nt, nk)
+        wf.add_edge(ncl, fk)
+        # Fundamentals: agent ⇄ tool → clear → mode routing
+        wf.add_conditional_edges(fk, lambda s: _tc_a(s, "fundamentals_analyst_messages", ft, fcl), {ft: ft, fcl: fcl})
+        wf.add_edge(ft, fk)
+        # Mode routing: fast → PM, standard/deep → debate
+        wf.add_conditional_edges(fcl, lambda s: "PM_agent" if s.get("mode") == "fast" else buk, {"PM_agent": "PM_agent", buk: buk})
+        # Debate: bull → bear → (continue or research_manager) → trader
+        wf.add_edge(buk, bek)
+        wf.add_conditional_edges(bek, _debate_next, {buk: buk, rmk: rmk})
+        wf.add_edge(rmk, "trader")
+        # Trader → risk discussion
+        wf.add_edge("trader", ak)
+        wf.add_edge(ak, ck)
+        wf.add_edge(ck, nuk)
+        wf.add_conditional_edges(nuk, _risk_next, {ak: ak, "risk_analyst": "risk_analyst"})
+        # PM
+        wf.add_edge("risk_analyst", "PM_agent")
+        wf.add_edge("PM_agent", END)
 
-    def visualize(self):
-        with open("graph.png", "wb") as f:
-            f.write(self.wf.get_graph().draw_mermaid_png())
+        return wf.compile()
 
-    def _create_tool_nodes(self):
-        return {
-            "market_analyst": create_tool_node_wrapper(
-                "market_analyst", [get_price, get_indicators]
-            ),
-            "news_analyst": create_tool_node_wrapper("news_analyst", [get_news]),
-            "fundamentals_analyst": create_tool_node_wrapper(
-                "fundamentals_analyst", [get_fundamentals]
-            ),
-        }
+    @property
+    def wf(self):
+        if not hasattr(self, "_wf"):
+            self._wf = self._build()
+        return self._wf
 
-    def _create_agent_nodes(self):
-        return {
-            "market_analyst": market_analyst_agent(self.llm),
-            "news_analyst": news_analyst_agent(self.llm),
-            "fundamentals_analyst": fundamentals_analyst_agent(self.llm),
-            "risk_analyst": risk_analyst_agent(self.llm),
-            "PM_agent": PM_agent(self.llm),
-        }
+    def run(self, **kw):
+        return self.wf.invoke(_init(**kw))
+
+    def stream(self, **kw):
+        yield from self.wf.stream(_init(**kw), stream_mode="updates")
 
 
-if __name__ == "__main__":
-    tradeagent = IntelliFin_Assistant()
-    result = tradeagent.run(
-        "AAPL", date="2024-01-15T00:00:00Z", current_position_pct=20
-    )
-    tradeagent.visualize()
-    print(result.get("PM_report"))
-    print(result.get("Action"))
-    print(result.get("Target_position_pct"), "%")
+def _init(**kw) -> dict:
+    t, d, m = kw.get("ticker", ""), kw.get("date", ""), str(kw.get("mode", "standard"))
+    return {
+        "ticker": t, "date": d,
+        "current_position_pct": kw.get("current_position_pct", 0.0),
+        "mode": m,
+        "max_debate_rounds": 0 if m == "fast" else (3 if m == "deep" else 1),
+        "max_risk_rounds": 0 if m == "fast" else (3 if m == "deep" else 1),
+        "instrument_context": f"Stock: {t}",
+        "session_id": str(kw.get("session_id", "")),
+        "strategy_id": str(kw.get("strategy_id", "default")),
+        "account_id": str(kw.get("account_id", "default")),
+        "decision_id": str(kw.get("decision_id", "")),
+        "memory_enabled": kw.get("memory_enabled", True),
+        "memory_context": str(kw.get("memory_context", "")),
+        "relevant_memories": kw.get("relevant_memories", []),
+        "messages": [HumanMessage(content=f"Analyze {t}")],
+    }

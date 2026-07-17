@@ -46,7 +46,6 @@ def PM_agent(llm):
             or not market_report
             or not fundamental_report
             or not news_report
-            or not risk_report
         ):
             return {}
 
@@ -110,18 +109,34 @@ def PM_agent(llm):
             ]
 
         chain = prompt | llm | output_parser
-        result = chain.invoke({"messages": messages})
+        try:
+            result = chain.invoke({"messages": messages})
+            action = result.action
+            pos = result.target_position_pct
+            report = result.report
+        except Exception:
+            # DeepSeek doesn't output strict JSON — extract fields from text
+            import re
+            raw_chain = prompt | llm
+            raw_result = raw_chain.invoke({"messages": messages})
+            raw_text = str(raw_result.content) if hasattr(raw_result, "content") else str(raw_result)
 
-        # result 是 TradingDecision 对象（Pydantic 模型），不是消息对象
-        # PM agent 是最终节点，不需要将 Pydantic 对象添加到 messages
-        # 保持 messages 不变即可
+            action_match = re.search(r'(?:action|动作|决策)[:\s]*(BUY|SELL|HOLD)', raw_text, re.IGNORECASE)
+            action = action_match.group(1).upper() if action_match else "HOLD"
+
+            pos_match = re.search(r'(?:target_position_pct|目标仓位|仓位)[:\s]*(-?\d+\.?\d*)', raw_text)
+            pos = float(pos_match.group(1)) if pos_match else 0.0
+            if pos > 100:
+                pos = min(pos, 100.0)
+
+            report = raw_text
+
         updated_messages = messages
-
         return {
             "PM_agent_messages": updated_messages,
-            "Action": result.action,
-            "Target_position_pct": result.target_position_pct,
-            "PM_report": result.report,
+            "Action": action,
+            "Target_position_pct": pos,
+            "PM_report": report,
         }
 
     return run

@@ -62,6 +62,8 @@ export type SSEResultEvent = {
   agent_reports?: Record<string, string>;
   target_position_pct?: number;
   debate_records?: SSEDebateEvent[];
+  investment_debate_history?: string;
+  risk_debate_history?: string;
   news_articles?: { title: string; source: string; url: string; published_at: string }[];
   elapsed_s?: number;
   approval_required?: boolean;

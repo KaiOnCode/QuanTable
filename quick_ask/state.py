@@ -1,46 +1,66 @@
-# pyright: reportGeneralTypeIssues=false
-"""AgentState for the LEGACY LangGraph 5-agent pipeline.
+"""AgentState for the TradingAgents-style multi-agent pipeline.
 
-FROZEN — do not modify. Used only by quick_ask/orchestrator.py.
+12 agents across 5 stages: Analysts → Debate → Trader → Risk → PM.
+Supports 3 modes: fast (no debate), standard (1 round), deep (3 rounds).
 """
 
-from typing import Annotated, List, Optional
+from __future__ import annotations
+
+from typing import Annotated, Any, List, Optional
 
 from langchain_core.messages import BaseMessage
 from langgraph.graph import MessagesState, add_messages
 
 
 class AgentState(MessagesState):
-    """Legacy LangGraph state for the 5-agent pipeline.
+    """Full state for the 12-agent pipeline."""
 
-    Workflow: 3 parallel analysts → risk → PM → memory.
-    """
+    # ── Input ──────────────────────────────────────────────
+    ticker: str = ""
+    date: str = ""
+    current_position_pct: float = 0.0
+    mode: str = "standard"  # fast | standard | deep
+    max_debate_rounds: int = 1
+    max_risk_rounds: int = 1
 
-    ticker: Annotated[str, "Stock ticker, e.g. AAPL"]
-    date: Annotated[str, "Date, e.g. 2024-01-15T00:00:00Z"]
-    current_position_pct: Annotated[float, "Current position % (0-100)"] = 0.0
-
-    # Per-agent message lists
+    # ── Per-agent message lists ───────────────────────────
     market_analyst_messages: Annotated[List[BaseMessage], add_messages] = []
+    sentiment_analyst_messages: Annotated[List[BaseMessage], add_messages] = []
     news_analyst_messages: Annotated[List[BaseMessage], add_messages] = []
     fundamentals_analyst_messages: Annotated[List[BaseMessage], add_messages] = []
-    risk_analyst_messages: Annotated[List[BaseMessage], add_messages] = []
+    bull_researcher_messages: Annotated[List[BaseMessage], add_messages] = []
+    bear_researcher_messages: Annotated[List[BaseMessage], add_messages] = []
+    research_manager_messages: Annotated[List[BaseMessage], add_messages] = []
+    trader_messages: Annotated[List[BaseMessage], add_messages] = []
+    aggressive_messages: Annotated[List[BaseMessage], add_messages] = []
+    conservative_messages: Annotated[List[BaseMessage], add_messages] = []
+    neutral_messages: Annotated[List[BaseMessage], add_messages] = []
+    risk_analyst_messages: Annotated[List[BaseMessage], add_messages] = []  # legacy
     PM_agent_messages: Annotated[List[BaseMessage], add_messages] = []
 
-    # Stage 1: parallel analysts
-    market_report: Annotated[Optional[str], "Market analyst report"] = ""
-    news_report: Annotated[Optional[str], "News analyst report"] = ""
-    fundamental_report: Annotated[Optional[str], "Fundamentals analyst report"] = ""
+    # ── Stage 1: Analyst reports ──────────────────────────
+    market_report: str = ""
+    sentiment_report: str = ""
+    news_report: str = ""
+    fundamental_report: str = ""
 
-    # Stage 2: risk analyst
-    risk_report: Annotated[Optional[str], "Risk analyst report"] = ""
+    # ── Stage 2: Investment debate ────────────────────────
+    investment_debate_state: dict[str, Any] = {}
+    investment_plan: str = ""  # Research Manager output
 
-    # Stage 3: PM decision
-    PM_report: Annotated[Optional[str], "PM final report"] = ""
-    Action: Annotated[Optional[str], "BUY/HOLD/SELL"] = ""
-    Target_position_pct: Annotated[Optional[float], "Target position % (0-100)"] = 0.0
+    # ── Stage 3: Trader proposal ──────────────────────────
+    trader_proposal: str = ""
 
-    # Memory
+    # ── Stage 4: Risk discussion ──────────────────────────
+    risk_debate_state: dict[str, Any] = {}
+    risk_report: str = ""  # legacy
+
+    # ── Stage 5: PM final decision ────────────────────────
+    PM_report: str = ""
+    Action: str = ""
+    Target_position_pct: float = 0.0
+
+    # ── Memory ────────────────────────────────────────────
     relevant_memories: list = []
     memory_context: str = ""
     memory_enabled: bool = True
@@ -48,5 +68,8 @@ class AgentState(MessagesState):
     session_id: str = ""
     account_id: str = ""
     decision_id: str = ""
-    started_at: str = ""
     strategy_id: str = "default"
+    started_at: str = ""
+
+    # ── Instrument context (TradingAgents: deterministic identity) ──
+    instrument_context: str = ""

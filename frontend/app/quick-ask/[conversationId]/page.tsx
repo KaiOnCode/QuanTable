@@ -22,7 +22,7 @@ import { ActionBadge, DirectionBadge } from "@/components/shared/badges";
 import { analyzeApi } from "@/lib/api/analyze";
 import { formatDateTime } from "@/lib/utils";
 import type { AnalysisSessionSnapshot } from "@/lib/types/models";
-import { ArrowLeft, Loader2, Clock, Zap } from "lucide-react";
+import { ArrowLeft, Loader2, Clock, Zap, ChevronDown, ChevronRight } from "lucide-react";
 import { Markdown } from "@/components/markdown";
 
 function parseReport(report: string) {
@@ -58,6 +58,9 @@ export default function HistoryDetailPage() {
   const [session, setSession] = useState<AnalysisSessionSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [resultCollapsed, setResultCollapsed] = useState(false);
+  const [reportsCollapsed, setReportsCollapsed] = useState(false);
+  const [newsCollapsed, setNewsCollapsed] = useState(false);
 
   useEffect(() => {
     if (!conversationId) return;
@@ -223,12 +226,23 @@ export default function HistoryDetailPage() {
           </Card>
         )}
 
-        {/* Result Card */}
+        {/* Result Card — collapsible */}
         {result && (
         <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Analysis Result</CardTitle>
+          <CardHeader
+            className="cursor-pointer select-none"
+            onClick={() => setResultCollapsed(!resultCollapsed)}
+          >
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base">Analysis Result</CardTitle>
+              {resultCollapsed ? (
+                <ChevronRight className="h-4 w-4 text-muted-foreground" />
+              ) : (
+                <ChevronDown className="h-4 w-4 text-muted-foreground" />
+              )}
+            </div>
           </CardHeader>
+          {!resultCollapsed && (
           <CardContent className="space-y-4">
             {/* Badge Row */}
             <div className="flex items-center gap-3 flex-wrap">
@@ -269,16 +283,28 @@ export default function HistoryDetailPage() {
               </ScrollArea>
             )}
           </CardContent>
+          )}
         </Card>
         )}
 
-        {/* Agent Reports */}
+        {/* Agent Reports — collapsible */}
         {result?.agent_reports &&
           Object.keys(result.agent_reports).length > 0 && (
             <Card>
-              <CardHeader>
-                <CardTitle className="text-sm">Agent Reports</CardTitle>
+              <CardHeader
+                className="cursor-pointer select-none"
+                onClick={() => setReportsCollapsed(!reportsCollapsed)}
+              >
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm">Agent Reports</CardTitle>
+                  {reportsCollapsed ? (
+                    <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                  ) : (
+                    <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                  )}
+                </div>
               </CardHeader>
+              {!reportsCollapsed && (
               <CardContent>
                 <Accordion>
                   {Object.entries(result.agent_reports).map(
@@ -299,17 +325,29 @@ export default function HistoryDetailPage() {
                   )}
                 </Accordion>
               </CardContent>
+              )}
             </Card>
           )}
 
-        {/* News Sources */}
+        {/* News Sources — collapsible */}
         {result?.news_articles && result.news_articles.length > 0 && (
           <Card>
-            <CardHeader>
-              <CardTitle className="text-sm">
-                News Sources ({result.news_articles.length})
-              </CardTitle>
+            <CardHeader
+              className="cursor-pointer select-none"
+              onClick={() => setNewsCollapsed(!newsCollapsed)}
+            >
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm">
+                  News Sources ({result.news_articles.length})
+                </CardTitle>
+                {newsCollapsed ? (
+                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                ) : (
+                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                )}
+              </div>
             </CardHeader>
+            {!newsCollapsed && (
             <CardContent>
               <div className="space-y-2">
                 {result.news_articles.map((a, i) => (
@@ -340,6 +378,7 @@ export default function HistoryDetailPage() {
                 ))}
               </div>
             </CardContent>
+            )}
           </Card>
         )}
       </div>

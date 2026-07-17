@@ -213,9 +213,11 @@ async def agent_chat(req: AgentChatRequest):
                         "total_turns": prev.get("total_turns", 1) + 1 if prev else 1,
                         "messages": (prev.get("messages") or []) if prev else [],
                     }
-                    # Append new messages (skip system prompt = index 0)
+                    # Append new messages, keep only last 30
                     for m in full_messages[1:]:
                         session_data["messages"].append(m)
+                    if len(session_data["messages"]) > 30:
+                        session_data["messages"] = session_data["messages"][-30:]
                     sp.write_text(
                         json.dumps(session_data, ensure_ascii=False, indent=2)
                     )
@@ -251,31 +253,39 @@ async def agent_chat(req: AgentChatRequest):
 
 
 @router.get("/agent/sessions")
-async def list_sessions(limit: int = Query(200, ge=1, le=1000)):
-    """List recent agent sessions."""
+async def list_sessions(limit: int = Query(50, ge=1, le=500)):
+    """List recent agent sessions. Only reads file stats, not full JSON."""
+    import os as _os
+
     items = []
-    for d in sorted(RUNS_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)[
-        :limit
-    ]:
+    # Collect (mtime, dirname) tuples without reading JSON
+    entries = []
+    for d in RUNS_DIR.iterdir():
         if d.is_dir():
-            sp = d / "session.json"
-            data = {}
-            if sp.exists():
-                try:
-                    data = json.loads(sp.read_text())
-                except Exception:
-                    pass
-            items.append(
-                {
-                    "session_id": d.name,
-                    "modified": d.stat().st_mtime,
-                    "first_message": data.get("first_message", "")[:100],
-                    "tool_count": data.get("tool_count", 0),
-                    "iterations": data.get("iterations", 0),
-                    "elapsed_s": data.get("elapsed_s", 0),
-                    "total_turns": data.get("total_turns", 1),
-                }
-            )
+            try:
+                st = d.stat()
+                entries.append((st.st_mtime, d.name))
+            except OSError:
+                pass
+    entries.sort(reverse=True)
+
+    for mtime, name in entries[:limit]:
+        sp = RUNS_DIR / name / "session.json"
+        data = {}
+        if sp.exists():
+            try:
+                data = json.loads(sp.read_text())
+            except Exception:
+                pass
+        items.append({
+            "session_id": name,
+            "modified": mtime,
+            "first_message": data.get("first_message", "")[:100],
+            "tool_count": data.get("tool_count", 0),
+            "iterations": data.get("iterations", 0),
+            "elapsed_s": data.get("elapsed_s", 0),
+            "total_turns": data.get("total_turns", 1),
+        })
     return {"sessions": items, "total": len(items)}
 
 

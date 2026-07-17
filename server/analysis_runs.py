@@ -157,7 +157,11 @@ def list_snapshots(limit: int = 20) -> list[dict[str, Any]]:
         if is_snapshot_deleted(session_id):
             continue
         try:
-            snapshots.append(json.loads(path.read_text(encoding="utf-8")))
+            data = json.loads(path.read_text(encoding="utf-8"))
+            # Strip large fields for list view
+            data.pop("agent_reports", None)
+            data.pop("progress_events", None)
+            snapshots.append(data)
         except Exception:
             continue
     return snapshots
@@ -233,12 +237,20 @@ def run_orchestrator_stream(
     memory_enabled: bool,
     account_id: str,
     decision_id: str,
+    mode: str = "standard",
 ):
+    from queue import Queue
     from quick_ask.orchestrator import IntelliFin_Assistant
 
-    assistant = IntelliFin_Assistant()
-    yield from assistant.stream(
-        ticker,
+    start_queue: Queue = Queue()
+
+    def _on_start(node_name: str):
+        """Called from inside the graph node BEFORE the LLM call."""
+        start_queue.put(node_name)
+
+    assistant = IntelliFin_Assistant(on_node_start=_on_start)
+    for event in assistant.stream(
+        ticker=ticker,
         date=date,
         current_position_pct=current_position_pct,
         strategy_id=strategy_id,
@@ -246,4 +258,13 @@ def run_orchestrator_stream(
         memory_enabled=memory_enabled,
         account_id=account_id,
         decision_id=decision_id,
-    )
+        mode=mode,
+    ):
+        # Drain pending start signals before yielding completion
+        while not start_queue.empty():
+            try:
+                node_name = start_queue.get_nowait()
+            except Exception:
+                break
+            yield {node_name: {"_started": True}}
+        yield event

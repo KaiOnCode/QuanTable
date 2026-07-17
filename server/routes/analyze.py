@@ -30,16 +30,32 @@ router = APIRouter(tags=["analysis"])
 # Map node name → report key in state
 _AGENT_REPORT_KEYS: dict[str, str] = {
     "market_analyst": "market_report",
+    "sentiment_analyst": "sentiment_report",
     "news_analyst": "news_report",
     "fundamentals_analyst": "fundamental_report",
+    "bull_researcher": "investment_debate_state",
+    "bear_researcher": "investment_debate_state",
+    "research_manager": "investment_plan",
+    "trader": "trader_proposal",
+    "aggressive_analyst": "risk_debate_state",
+    "conservative_analyst": "risk_debate_state",
+    "neutral_analyst": "risk_debate_state",
     "risk_analyst": "risk_report",
     "PM_agent": "PM_report",
 }
 
 _AGENT_LABELS: dict[str, str] = {
     "market_analyst": "Market Analyst",
+    "sentiment_analyst": "Sentiment Analyst",
     "news_analyst": "News Analyst",
     "fundamentals_analyst": "Fundamentals Analyst",
+    "bull_researcher": "Bull Researcher",
+    "bear_researcher": "Bear Researcher",
+    "research_manager": "Research Manager",
+    "trader": "Trader",
+    "aggressive_analyst": "Aggressive Risk",
+    "conservative_analyst": "Conservative Risk",
+    "neutral_analyst": "Neutral Risk",
     "risk_analyst": "Risk Analyst",
     "PM_agent": "PM Decision",
 }
@@ -185,6 +201,7 @@ async def _execute_analysis_run(
                     memory_enabled=analysis_memory_enabled,
                     account_id=request.account_id,
                     decision_id=decision_id,
+                    mode=request.mode,
                 ):
                     queue.put(("event", event))
                 queue.put(("done", None))
@@ -223,6 +240,39 @@ async def _execute_analysis_run(
             for node_name, update in payload.items():
                 if not isinstance(update, dict):
                     continue
+
+                # Handle _started marker (from on_node_start callback)
+                if update.get("_started"):
+                    if node_name in _AGENT_REPORT_KEYS:
+                        _publish_progress(session_id, {
+                            "agent": node_name,
+                            "status": "started",
+                            "report": "",
+                            "duration_ms": 0,
+                            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        })
+                    continue
+
+                # Only process agent nodes (not tool/clear nodes)
+                if node_name not in _AGENT_REPORT_KEYS:
+                    continue
+
+                # Publish "completed" when agent produces its report
+                report_key = _AGENT_REPORT_KEYS[node_name]
+                if update.get(report_key) and node_name not in seen_reports:
+                    seen_reports.add(node_name)
+                    report_text = update[report_key]
+                    _publish_progress(session_id, {
+                        "agent": node_name,
+                        "status": "completed",
+                        "report": report_text,
+                        "duration_ms": 0,
+                        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    })
+                    logger.debug(
+                        "Agent %s completed (%d chars)", node_name, len(report_text)
+                    )
+
                 for key, value in update.items():
                     if key in _AGENT_REPORT_KEYS.values() or key in (
                         "Action",
@@ -230,22 +280,19 @@ async def _execute_analysis_run(
                         "memory_record_id",
                     ):
                         final_result[key] = value
-                report_key = _AGENT_REPORT_KEYS.get(node_name)
-                if (
-                    report_key
-                    and update.get(report_key)
-                    and node_name not in seen_reports
-                ):
+
+                # Publish "completed" when agent produces its report
+                report_key = _AGENT_REPORT_KEYS[node_name]
+                if update.get(report_key) and node_name not in seen_reports:
                     seen_reports.add(node_name)
                     report_text = update[report_key]
-                    progress_payload = {
+                    _publish_progress(session_id, {
                         "agent": node_name,
                         "status": "completed",
                         "report": report_text,
                         "duration_ms": 0,
                         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                    }
-                    _publish_progress(session_id, progress_payload)
+                    })
                     logger.debug(
                         "Agent %s completed (%d chars)", node_name, len(report_text)
                     )
@@ -305,15 +352,21 @@ async def _build_result_payload(
     agent_reports = {}
     for agent_name, report_key in _AGENT_REPORT_KEYS.items():
         report = final_result.get(report_key, "")
-        if report:
+        if not report:
+            continue
+        # Convert dict values (debate/risk state) to their history strings
+        if isinstance(report, dict):
+            history = report.get("history", "")
+            if history:
+                agent_reports[agent_name] = history
+        elif isinstance(report, str) and report.strip():
             agent_reports[agent_name] = report
 
     news_articles = []
     try:
-        from dataflow.service import DataService
+        from quick_ask.agents.utils.agent_tools import _fetch_news_multi_source
 
-        svc = DataService()
-        news_articles = svc.get_news(request.ticker, window_days=7)
+        news_articles, _ = _fetch_news_multi_source(request.ticker, window_days=7)
     except Exception:
         pass
 
@@ -394,6 +447,8 @@ async def _build_result_payload(
         "agent_reports": agent_reports,
         "target_position_pct": target_position_pct,
         "debate_records": final_result.get("debate_history", []),
+        "investment_debate_history": final_result.get("investment_debate_state", {}).get("history", ""),
+        "risk_debate_history": final_result.get("risk_debate_state", {}).get("history", ""),
         "news_articles": [
             {
                 "title": a["title"],
@@ -401,7 +456,7 @@ async def _build_result_payload(
                 "url": a.get("url", ""),
                 "published_at": a.get("published_at", ""),
             }
-            for a in news_articles[:8]
+            for a in news_articles
         ],
         "elapsed_s": elapsed,
         "approval_required": approval_status == "pending",

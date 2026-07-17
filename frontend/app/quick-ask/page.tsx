@@ -37,6 +37,8 @@ import {
   AlertCircle,
   TrendingUp,
   Shield,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import { Markdown } from "@/components/markdown";
 import { analyzeApi } from "@/lib/api/analyze";
@@ -63,28 +65,26 @@ type AgentStatus = {
 };
 
 const AGENTS = [
-  { name: "company_overview", label: "Company Overview", stage: 0 },
   { name: "market_analyst", label: "Market Analyst", stage: 1 },
+  { name: "sentiment_analyst", label: "Sentiment", stage: 1 },
   { name: "news_analyst", label: "News Analyst", stage: 1 },
   { name: "fundamentals_analyst", label: "Fundamentals", stage: 1 },
-  { name: "sentiment_analyst", label: "Sentiment", stage: 1 },
-  { name: "technical_analyst", label: "Technical", stage: 1 },
-  { name: "macro_analyst", label: "Macro", stage: 1 },
   { name: "bull_researcher", label: "Bull Researcher", stage: 2 },
   { name: "bear_researcher", label: "Bear Researcher", stage: 2 },
-  { name: "aggressive_risk", label: "Aggressive Risk", stage: 3 },
-  { name: "safe_risk", label: "Safe Risk", stage: 3 },
-  { name: "neutral_risk", label: "Neutral Risk", stage: 3 },
-  { name: "risk_manager", label: "Risk Manager", stage: 4 },
+  { name: "research_manager", label: "Research Manager", stage: 2 },
+  { name: "trader", label: "Trader", stage: 3 },
+  { name: "aggressive_analyst", label: "Aggressive Risk", stage: 4 },
+  { name: "conservative_analyst", label: "Conservative Risk", stage: 4 },
+  { name: "neutral_analyst", label: "Neutral Risk", stage: 4 },
+  { name: "risk_analyst", label: "Risk Analyst", stage: 4 },
   { name: "PM_agent", label: "PM Decision", stage: 5 },
 ];
 
 const STAGE_LABELS: Record<number, string> = {
-  0: "Context",
   1: "Analysis",
   2: "Debate",
-  3: "Risk Assessment",
-  4: "Risk Synthesis",
+  3: "Trading",
+  4: "Risk Assessment",
   5: "Final Decision",
 };
 
@@ -169,6 +169,10 @@ function parseReport(report: string): ParsedReport {
 
 function ReportCard({ result }: { result: SSEResultEvent }) {
   const [showFull, setShowFull] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+  const [newsCollapsed, setNewsCollapsed] = useState(false);
+  const [debateCollapsed, setDebateCollapsed] = useState(false);
+  const [riskCollapsed, setRiskCollapsed] = useState(false);
   const parsed = result.report ? parseReport(result.report) : null;
   const oneliner = parsed?.oneliner || "";
   const bodyText = parsed?.body || result.report || "";
@@ -181,9 +185,17 @@ function ReportCard({ result }: { result: SSEResultEvent }) {
     <div className="space-y-4">
       {/* Decision Summary Card */}
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Analysis Result</CardTitle>
+        <CardHeader className="cursor-pointer select-none" onClick={() => setCollapsed(!collapsed)}>
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base">Analysis Result</CardTitle>
+            {collapsed ? (
+              <ChevronRight className="h-4 w-4 text-muted-foreground" />
+            ) : (
+              <ChevronDown className="h-4 w-4 text-muted-foreground" />
+            )}
+          </div>
         </CardHeader>
+        {!collapsed && (
         <CardContent className="space-y-4">
           {/* Badge Row */}
           <div className="flex items-center gap-3 flex-wrap">
@@ -243,17 +255,73 @@ function ReportCard({ result }: { result: SSEResultEvent }) {
               ))}
             </Accordion>
           )}
+
+          {/* Investment Debate History — collapsible */}
+          {result.investment_debate_history && (
+            <div className="space-y-1">
+              <h4
+                className="text-sm font-medium text-muted-foreground cursor-pointer select-none flex items-center gap-1"
+                onClick={() => setDebateCollapsed(!debateCollapsed)}
+              >
+                {debateCollapsed ? (
+                  <ChevronRight className="h-3 w-3" />
+                ) : (
+                  <ChevronDown className="h-3 w-3" />
+                )}
+                Investment Debate
+              </h4>
+              {!debateCollapsed && (
+              <div className="p-3 rounded-lg bg-muted/20 text-xs leading-relaxed max-h-64 overflow-y-auto prose prose-sm dark:prose-invert max-w-none">
+                <Markdown>{String(result.investment_debate_history)}</Markdown>
+              </div>
+              )}
+            </div>
+          )}
+
+          {/* Risk Debate History — collapsible */}
+          {result.risk_debate_history && (
+            <div className="space-y-1">
+              <h4
+                className="text-sm font-medium text-muted-foreground cursor-pointer select-none flex items-center gap-1"
+                onClick={() => setRiskCollapsed(!riskCollapsed)}
+              >
+                {riskCollapsed ? (
+                  <ChevronRight className="h-3 w-3" />
+                ) : (
+                  <ChevronDown className="h-3 w-3" />
+                )}
+                Risk Discussion
+              </h4>
+              {!riskCollapsed && (
+              <div className="p-3 rounded-lg bg-muted/20 text-xs leading-relaxed max-h-64 overflow-y-auto prose prose-sm dark:prose-invert max-w-none">
+                <Markdown>{String(result.risk_debate_history)}</Markdown>
+              </div>
+              )}
+            </div>
+          )}
         </CardContent>
+        )}
       </Card>
 
-      {/* News Sources */}
+      {/* News Sources — collapsible */}
       {news.length > 0 && (
         <Card>
-          <CardHeader>
-            <CardTitle className="text-base">News Sources ({news.length})</CardTitle>
+          <CardHeader
+            className="cursor-pointer select-none"
+            onClick={() => setNewsCollapsed(!newsCollapsed)}
+          >
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base">News Sources ({news.length})</CardTitle>
+              {newsCollapsed ? (
+                <ChevronRight className="h-4 w-4 text-muted-foreground" />
+              ) : (
+                <ChevronDown className="h-4 w-4 text-muted-foreground" />
+              )}
+            </div>
           </CardHeader>
+          {!newsCollapsed && (
           <CardContent>
-            <div className="space-y-2">
+            <div className="space-y-2 max-h-96 overflow-y-auto">
               {news.map((a, i) => (
                 <div key={`${a.url}-${a.published_at}`} className="flex items-start gap-2 text-sm">
                   <span className="text-muted-foreground shrink-0 mt-0.5">{i + 1}.</span>
@@ -270,6 +338,7 @@ function ReportCard({ result }: { result: SSEResultEvent }) {
               ))}
             </div>
           </CardContent>
+          )}
         </Card>
       )}
     </div>
@@ -290,6 +359,7 @@ function QuickAskContent() {
   const [ticker, setTicker] = useState("");
   const [mode, setMode] = useState<"fast" | "standard" | "deep">("standard");
   const [analyzing, setAnalyzing] = useState(false);
+  const [progressCollapsed, setProgressCollapsed] = useState(false);
   const [agentStatuses, setAgentStatuses] = useState<Map<string, AgentStatus>>(
     new Map()
   );
@@ -556,74 +626,91 @@ function QuickAskContent() {
           <TickerPreview ticker={ticker.toUpperCase()} />
         )}
 
-        {/* Analysis Progress */}
-        {analyzing && (
+        {/* Analysis Progress — collapsible, stays after completion */}
+        {agentStatuses.size > 0 && (
           <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Analysis Progress</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {[0, 1, 2, 3, 4, 5].map((stage) => {
-                  const agents = getStageAgents(stage);
-                  const allDone = agents.every(
-                    (a) => a?.status === "completed"
-                  );
-                  const hasError = agents.some(
-                    (a) => a?.status === "error"
-                  );
-                  const inProgress = agents.some(
-                    (a) =>
-                      a?.status === "started" ||
-                      a?.status === "tool_call"
-                  );
-
-                  return (
-                    <div key={stage}>
-                      <div className="flex items-center gap-2 mb-2">
-                        {allDone ? (
-                          <CheckCircle2 className="h-4 w-4 text-green-500" />
-                        ) : hasError ? (
-                          <AlertCircle className="h-4 w-4 text-red-500" />
-                        ) : inProgress ? (
-                          <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
-                        ) : (
-                          <Clock className="h-4 w-4 text-muted-foreground" />
-                        )}
-                        <span className="text-sm font-medium">
-                          {STAGE_LABELS[stage]}
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2 ml-6">
-                        {agents.map((agent) => (
-                          <div
-                            key={agent?.name}
-                            className="flex items-center gap-2 p-2 rounded bg-muted/50 text-xs"
-                          >
-                            {agent?.status === "completed" ? (
-                              <CheckCircle2 className="h-3 w-3 text-green-500 shrink-0" />
-                            ) : agent?.status === "error" ? (
-                              <AlertCircle className="h-3 w-3 text-red-500 shrink-0" />
-                            ) : agent?.status === "started" ||
-                              agent?.status === "tool_call" ? (
-                              <Loader2 className="h-3 w-3 animate-spin text-blue-500 shrink-0" />
-                            ) : (
-                              <Clock className="h-3 w-3 text-muted-foreground shrink-0" />
-                            )}
-                            <span className="truncate">{agent?.label}</span>
-                            {agent?.duration_ms && (
-                              <span className="text-muted-foreground ml-auto">
-                                {(agent.duration_ms / 1000).toFixed(1)}s
-                              </span>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
+            <CardHeader
+              className="cursor-pointer select-none"
+              onClick={() => setProgressCollapsed(!progressCollapsed)}
+            >
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base">Analysis Progress</CardTitle>
+                {progressCollapsed ? (
+                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                ) : (
+                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                )}
               </div>
-            </CardContent>
+            </CardHeader>
+            {!progressCollapsed && (
+              <CardContent>
+                <div className="space-y-4">
+                  {[1, 2, 3, 4, 5].map((stage) => {
+                    const agents = getStageAgents(stage);
+                    if (agents.every((a) => !a)) return null;
+                    const allDone = agents.every(
+                      (a) => a?.status === "completed"
+                    );
+                    const hasError = agents.some(
+                      (a) => a?.status === "error"
+                    );
+                    const inProgress = agents.some(
+                      (a) =>
+                        a?.status === "started" ||
+                        a?.status === "tool_call"
+                    );
+
+                    return (
+                      <div key={stage}>
+                        <div className={`flex items-center gap-2 mb-2 ${inProgress ? "text-blue-400" : ""}`}>
+                          {allDone ? (
+                            <CheckCircle2 className="h-4 w-4 text-green-500" />
+                          ) : hasError ? (
+                            <AlertCircle className="h-4 w-4 text-red-500" />
+                          ) : inProgress ? (
+                            <Loader2 className="h-4 w-4 animate-spin text-blue-400" />
+                          ) : (
+                            <Clock className="h-4 w-4 text-muted-foreground" />
+                          )}
+                          <span className={`text-sm font-medium ${inProgress ? "animate-pulse" : ""}`}>
+                            {STAGE_LABELS[stage]}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2 ml-6">
+                          {agents.map((agent) => {
+                            const isRunning = agent?.status === "started" || agent?.status === "tool_call";
+                            return (
+                            <div
+                              key={agent?.name}
+                              className={`flex items-center gap-2 p-2 rounded text-xs transition-colors ${
+                                isRunning
+                                  ? "bg-blue-500/10 border border-blue-500/30 animate-pulse"
+                                  : agent?.status === "completed"
+                                  ? "bg-muted/50"
+                                  : "bg-muted/50"
+                              }`}
+                            >
+                              {agent?.status === "completed" ? (
+                                <CheckCircle2 className="h-3 w-3 text-green-500 shrink-0" />
+                              ) : agent?.status === "error" ? (
+                                <AlertCircle className="h-3 w-3 text-red-500 shrink-0" />
+                              ) : isRunning ? (
+                                <Loader2 className="h-3 w-3 animate-spin text-blue-400 shrink-0" />
+                              ) : (
+                                <Clock className="h-3 w-3 text-muted-foreground shrink-0" />
+                              )}
+                              <span className={`truncate ${isRunning ? "text-blue-400 font-medium" : ""}`}>
+                                {agent?.label}
+                              </span>
+                            </div>
+                          );})}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            )}
           </Card>
         )}
 
