@@ -5,22 +5,22 @@
 
 // ── Page & typography ──
 #set page(paper: "a4", margin: (x: 2.5cm, y: 2.5cm))
-#set text(size: 11pt, font: "Libertinus Serif")
+#set text(size: 12pt, font: "Times New Roman")
 #set par(justify: true, leading: 0.65em, first-line-indent: 0em)
 #set heading(numbering: "1.1")
 #show heading.where(level: 1): it => {
   v(0.7em)
-  text(size: 15pt, weight: "bold", it)
+  text(size: 16pt, weight: "bold", it)
   v(0.35em)
 }
 #show heading.where(level: 2): it => {
   v(0.45em)
-  text(size: 12.5pt, weight: "bold", it)
+  text(size: 13.5pt, weight: "bold", it)
   v(0.2em)
 }
 #show heading.where(level: 3): it => {
   v(0.35em)
-  text(size: 11.5pt, weight: "bold", style: "italic", it)
+  text(size: 12.5pt, weight: "bold", style: "italic", it)
   v(0.15em)
 }
 #show raw.where(block: false): it => box(
@@ -116,6 +116,43 @@
   ]
 ]
 
+// ── Abstract (own page, before TOC) ──
+#page(numbering: none)[
+  #heading(numbering: none)[Abstract]
+
+  Large language model (LLM) agents are increasingly applied to quantitative finance, yet most systems cannot self-optimize — they remain static across runs, never becoming smarter with use. This dissertation presents *Agentic-Quant*, a dual-track agent framework addressing this limitation.
+
+  The framework unifies two reasoning paradigms: a self-built ReAct harness for interactive analysis, and a LangGraph twelve-agent debate pipeline for structured decisions. To improve over time, we add three mechanisms: an outcome-weighted memory that records, scores, and recalls decisions, letting the agent iterate and learn each simulation; an expanded capability surface — more data sources, financial tools, and a dedicated harness — grounding reasoning in more evidence; and a human-in-the-loop layer routing high-risk decisions to approval, with WhatsApp and email notifications surfacing findings.
+
+  The system also ships practical automation: daily reports, sector monitoring, and an agent-based backtest that replays historical prices, news, and technical indicators at each past decision point, forcing the agent to reason strictly within contemporaneous information. We evaluate across determinism, grounding, and engineering quality, concluding that an agent that learns from use under human oversight is both feasible and essential — a step toward more usable, adaptable, and self-evolving LLM agents in finance and beyond.
+
+  #v(0.5em)
+  *Keywords:* LLM Agents, Multi-Agent Systems, Self-Evolution, ReAct, LangGraph, Quantitative Finance, Agentic Memory, Human-in-the-Loop.
+]
+
+// ── Declaration (own page, before TOC) ──
+#page(numbering: none)[
+  #heading(numbering: none)[Declaration]
+
+  I declare that this project report represents my own work, except where due acknowledgement is made to other sources. I confirm that this report has not been previously published in whole or in part, and that I have not submitted it, in whole or in part, for any other degree or qualification at this or any other institution.
+
+  I acknowledge that the electronic copy of this report may be placed on the MSc Intranet by the Programme Office for the general reference of all students and staff.
+
+  I hereby declare that the work reported in this report does not infringe upon any existing copyright or other rights of third parties, and that no part of the report has been copied from any other sources without due acknowledgement.
+
+  #v(1.5em)
+
+  Student: Ying Tingkai (3036657615)
+
+  Student: Wang Wenhan (3036656398)
+
+  Student: Cao Yujuncheng (3036654819)
+
+  Student: Wang Pengcheng (3036656427)
+
+  Student: Gao Ziteng (3036654259)
+]
+
 // ── Table of contents ──
 #page(numbering: none)[
   #outline(indent: auto, depth: 2)
@@ -124,20 +161,6 @@
 // ── Start body page numbering ──
 #set page(numbering: "1")
 #counter(page).update(1)
-
-// ═══════════════════════════════════════════
-//  Abstract
-// ═══════════════════════════════════════════
-#heading(numbering: none)[Abstract]
-
-The application of large language models (LLMs) to quantitative finance has produced a rapidly growing body of "trading agent" systems, yet most published prototypes optimise a single objective — reported backtest return — while treating reproducibility, look-ahead safety, tool grounding, and human oversight as afterthoughts. This dissertation presents *Agentic-Quant*, a reasoning-driven multi-agent framework that reframes the problem: rather than pursuing a single opaque predictor, it builds an *auditable analytical platform* in which every decision is grounded in tool-retrieved evidence, every backtest is deterministically reproducible, and every high-risk action can be routed to a human reviewer.
-
-The system contributes four inter-locking designs. First, a *dual-track agent architecture* unifies two complementary reasoning paradigms behind one service: a Claude-Code-style ReAct loop (25-iteration budget, streaming tool execution, five-layer context compression, and a cheapest-first error-recovery state machine) for open-ended interactive analysis, and a frozen LangGraph twelve-agent debate pipeline (four sequential analysts → bull/bear researcher debate → research manager → trader → three-way aggressive/conservative/neutral risk discussion → portfolio manager, selectable across three depth modes) for structured, schema-constrained decisions. Second, an *anti-hallucination data plane* routes all data access through a single `DataService` abstraction with multi-provider fallback, point-in-time cut-offs, and SHA-256-verified caching, so that agents can never fabricate numbers. Third, an *outcome-weighted memory (OWM)* layer scores and recalls past decisions through a five-factor model and enforces pre-trade safety gates, giving the system a mechanism to learn from experience. Fourth, a *deterministic, fidelity-audited backtest engine* freezes a typed run specification, executes long-only orders only at the next historical open, and re-verifies a canonical economic result hash on every read, converting "trust me" performance claims into byte-reproducible evidence.
-
-The framework comprises approximately 54,000 lines of Python across nineteen modules, a Next.js 16 / React 19 dashboard of sixteen routes, seventy-six declarative skill documents, and a regression suite of 645 tests. We describe the architecture and implementation in detail, evaluate the system along the axes of determinism, latency, tool grounding, and engineering quality, and discuss the trade-offs of prioritising verifiability over raw predictive performance. We conclude that treating a trading agent as a *governed, reproducible research instrument* — rather than a black-box oracle — is both feasible and a necessary precondition for the responsible deployment of LLM agents in finance.
-
-#v(0.5em)
-*Keywords:* LLM Agents, Multi-Agent Systems, ReAct, LangGraph, Quantitative Finance, Reproducible Backtesting, Retrieval Grounding, Human-in-the-Loop, Agentic Memory.
 
 // ═══════════════════════════════════════════
 //  1  Introduction
