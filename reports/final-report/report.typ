@@ -4,8 +4,10 @@
 // ═══════════════════════════════════════════════════════════════
 
 // ── Page & typography ──
-#set page(paper: "a4", margin: (x: 2.5cm, y: 2.5cm))
+#set page(paper: "a4", margin: (x: 2.8cm, y: 2.5cm))
 #set text(size: 12pt, font: "Times New Roman")
+#set figure(numbering: "1")
+#set math.equation(numbering: "(1)")
 #set par(justify: true, leading: 0.65em, first-line-indent: 0em)
 #set heading(numbering: "1.1")
 #show heading.where(level: 1): it => {
@@ -230,7 +232,8 @@ A distinct strand of literature motivates the project's central thesis. Graph-ba
 
 The following table sharpens this contrast against the closest systems in the literature. The comparison is qualitative and drawn from the cited papers' described designs; it is intended to locate Agentic-Quant's emphasis rather than to rank predictive performance.
 
-#table(
+#figure(
+  table(
   columns: (1.4fr, 1fr, 1fr, 1fr, 1fr),
   align: (left, center, center, center, center),
   stroke: 0.5pt,
@@ -242,6 +245,9 @@ The following table sharpens this contrast against the closest systems in the li
   [Alpha-GPT 2.0 @yuan_alpha-gpt_2024], [No], [No], [Not emphasised], [Yes],
   [*Agentic-Quant* (this work)], [Yes], [Yes (OWM)], [*Enforced (hash)*], [Yes (FSM)],
 )
+,
+  caption: [Comparison of Agentic-Quant with closely related trading-agent systems.],
+)
 
 // ═══════════════════════════════════════════
 //  3  Design Goals and Requirements
@@ -250,7 +256,8 @@ The following table sharpens this contrast against the closest systems in the li
 
 The architecture is the direct consequence of six design goals (G1–G6) and three explicit non-goals (N1–N3), fixed early and enforced throughout.
 
-#table(
+#figure(
+  table(
   columns: (auto, 1fr),
   align: (left, left),
   stroke: 0.5pt,
@@ -263,10 +270,14 @@ The architecture is the direct consequence of six design goals (G1–G6) and thr
   [G5 — Learning], [The system must record every decision and recall relevant past experience at future decision time.],
   [G6 — Maintainability], [Distinct reasoning paradigms must be isolated behind hard architectural boundaries so that experimental code cannot break stable code.],
 )
+,
+  caption: [Design goals G1–G6 and their rationale.],
+)
 
 #v(0.4em)
 
-#table(
+#figure(
+  table(
   columns: (auto, 1fr),
   align: (left, left),
   stroke: 0.5pt,
@@ -275,6 +286,9 @@ The architecture is the direct consequence of six design goals (G1–G6) and thr
   [N1 — Alpha claims], [The deterministic backtest path does not claim predictive accuracy or out-of-sample robustness; those require a separately specified research protocol.],
   [N2 — Live brokerage], [Execution is simulated through a virtual exchange; no capital is placed with a real broker.],
   [N3 — Distributed scale], [The system is a single-process monolith; horizontal scaling (Celery, Redis, Kubernetes) is explicitly deferred to keep the research prototype debuggable.],
+)
+,
+  caption: [Design non-goals N1–N3.],
 )
 
 These commitments explain design choices that would otherwise appear conservative — for example, the deliberate refusal to invoke an LLM per bar in the canonical backtest (which would destroy G2), and the enforced import boundary between the two agent tracks (G6).
@@ -288,7 +302,8 @@ These commitments explain design choices that would otherwise appear conservativ
 
 Agentic-Quant is a single-process FastAPI monolith with an in-process scheduler, fronted by a decoupled React application communicating over REST and Server-Sent Events (SSE). No external message broker, cache server, or container runtime is required for development. Figure-equivalent layering is summarised in the table below; the codebase totals roughly 54,000 lines of Python across nineteen top-level modules plus the frontend.
 
-#table(
+#figure(
+  table(
   columns: (auto, 1fr, auto),
   align: (left, left, right),
   stroke: 0.5pt,
@@ -302,12 +317,16 @@ Agentic-Quant is a single-process FastAPI monolith with an in-process scheduler,
   [Persistence], [`ContextStore` (per-strategy SQLite), memory/system/insights/knowledge DBs, backtest snapshots], [3,133],
   [Automation], [APScheduler `DataCollector`, `MonitorRunner`, `MorningBriefRunner`], [517],
 )
+,
+  caption: [System architecture layering with approximate Python line counts.],
+)
 
 == The Dual-Track Agent Architecture
 
 The most consequential architectural decision is the *coexistence of two agent paradigms* behind one service, governed by a strict track discipline (goal G6). The codebase is partitioned into three tracks whose boundaries are enforced by convention, documentation, and automated architecture tests.
 
-#table(
+#figure(
+  table(
   columns: (36%, 1fr),
   align: (left, left),
   stroke: 0.5pt,
@@ -316,6 +335,9 @@ The most consequential architectural decision is the *coexistence of two agent p
   [Custom Harness — `agent/`], [A self-built Claude-Code-style ReAct loop with a 21+ tool system, five-layer compression, and a cheapest-first error-recovery state machine. All new interactive features go here. Exposed at `POST /api/agent/chat`.],
   [LangGraph Pipeline — `quick_ask/`], [A frozen LangGraph twelve-agent TradingAgents-style pipeline with three depth modes (fast/standard/deep), multi-round bull/bear debate and three-way risk discussion. Reuses the LangGraph framework for structured multi-agent orchestration. Exposed at `POST /api/analyze`.],
   [SHARED — `dataflow/`, `memory/`, `storage/`, `scheduler/`, most routes], [Deterministic Python services usable by both tracks, forbidden from importing agent-specific code from either track.],
+)
+,
+  caption: [The three architectural tracks and their rules.],
 )
 
 #v(0.4em)
@@ -440,7 +462,8 @@ Goal G1 is realised structurally rather than by prompt exhortation alone. Every 
 
 The table below summarises the provider matrix. Each adapter is wrapped in an exponential-backoff `retry` helper (three attempts, doubling delay), and the news scraper additionally uses `tenacity` with jitter to survive rate-limiting and CAPTCHA interstitials.
 
-#table(
+#figure(
+  table(
   columns: (auto, 1fr, auto),
   align: (left, left, center),
   stroke: 0.5pt,
@@ -452,6 +475,9 @@ The table below summarises the provider matrix. Each adapter is wrapped in an ex
   [News], [Google News → AkShare (East Money) → Yahoo structured; URL de-duplication + FTS5], [30 min],
   [Sentiment], [Keyword aggregation (16 bullish / 16 bearish terms), confidence from sample size + variance], [60 min],
   [Macro calendar], [Finnhub economic calendar (CPI, FOMC, NFP)], [daily 08:00 UTC],
+)
+,
+  caption: [The five-layer context-compression pipeline.],
 )
 
 Persistence of raw market data uses a dedicated `MarketDataStore` with `(ticker, date)` compound keys, a FTS5 virtual table with synchronising triggers for full-text news search, a `data_freshness` table that tracks per-source error counts and staleness, and startup migrations that purge malformed rows. Storage principles — compound keys, point-in-time `as_of`, source attribution, and freshness tracking — are applied uniformly so that any consumer can distinguish fresh, stale, and missing data rather than silently trusting whatever is present.
@@ -475,7 +501,8 @@ This section examines the subsystems whose design is most novel or most load-bea
 
 Long-horizon tool use rapidly exhausts an LLM context window; a single web fetch can return hundreds of kilobytes. The ACTIVE loop therefore runs a serial, layered compression pipeline before *every* model call, escalating from zero-cost text surgery to an LLM-based summary only when necessary.
 
-#table(
+#figure(
+  table(
   columns: (auto, auto, 1fr),
   align: (left, center, left),
   stroke: 0.5pt,
@@ -486,6 +513,9 @@ Long-horizon tool use rapidly exhausts an LLM context window; a single web fetch
   [L2 — collapse large texts], [> 28 K tokens], [Collapse any message > 2 K chars to a 900-char head + 500-char tail, idempotently.],
   [L3 — LLM summary], [> 40 K tokens], [Summarise the head of the transcript into a four-section digest (Key Decisions / Data Collected / Current State / Findings) while protecting a 20 K-token recent tail (needle-in-haystack protection); orphaned tool messages are repaired.],
 )
+,
+  caption: [Error recovery ladders by error type.],
+)
 
 #v(0.4em)
 A fifth "collapse-drain" layer, invoked only by the recovery machine under a context-overflow error, aggressively truncates tool results to release space without an LLM call. Token counts are estimated heuristically at four characters per token. The design principle — mirroring production agent harnesses — is that compression must be *cheap by default and expensive only when forced*, and must never orphan a tool result whose parent tool call has been summarised away (which would provoke an API error). L3 additionally checkpoints the full transcript to a timestamped JSONL file before compressing, making the operation crash-safe.
@@ -494,7 +524,8 @@ A fifth "collapse-drain" layer, invoked only by the recovery machine under a con
 
 Provider outages, rate limits, and context overflows are the norm rather than the exception when composing many tools. The loop classifies each turn's failure into one of five error types and applies the *cheapest viable recovery first*, tracking attempts in a `RecoveryState` object so that no recovery can loop indefinitely.
 
-#table(
+#figure(
+  table(
   columns: (auto, 1fr),
   align: (left, left),
   stroke: 0.5pt,
@@ -506,6 +537,9 @@ Provider outages, rate limits, and context overflows are the norm rather than th
   [`RATE_LIMIT`], [exponential backoff `min(2^n, 60)` s (≤ 3×) → stop],
   [`MODEL_ERROR`], [terminate immediately (auth/unknown errors are unrecoverable)],
 )
+,
+  caption: [The custom-harness tool system by category.],
+)
 
 #v(0.4em)
 Terminal states are captured in a ten-value `TerminalReason` enumeration with `is_user_initiated` and `is_recoverable` properties, and a `TransitionType` enumeration records *why* each iteration occurred, which is essential for preventing infinite recovery cycles. Soft counters (empty-response, rate-limit) reset on a successful turn, while hard blockers (compaction attempts) persist for the run.
@@ -514,7 +548,8 @@ Terminal states are captured in a ten-value `TerminalReason` enumeration with `i
 
 The custom-harness agent exposes roughly twenty-four tools discovered automatically from `BaseTool` subclasses. Each tool declares metadata — read-only vs. write, repeatable, timeout, cooldown, category, and an input schema — that the loop uses to schedule and guard execution. Tools return a canonical JSON envelope (`{"status": "ok" | "error", ...}`).
 
-#table(
+#figure(
+  table(
   columns: (auto, 1fr),
   align: (left, left),
   stroke: 0.5pt,
@@ -526,6 +561,9 @@ The custom-harness agent exposes roughly twenty-four tools discovered automatica
   [Skills], [`load_skill`, `search_skills`, `list_skills`, `save_skill` (write), `delete_skill` (write)],
   [Workspace], [`read_file`, `glob` (read), `write_file`, `bash` (write, shell-gated)],
   [Scanner & backtest], [`scan_tracked_universe` (read), `submit_backtest_decision` (write, non-repeatable)],
+)
+,
+  caption: [Multi-provider data-source matrix.],
 )
 
 #v(0.4em)
@@ -659,7 +697,8 @@ Consistent with the design philosophy (non-goal N1), the evaluation does *not* h
 
 The evaluation is organised around the six design goals of Section 3; the table below maps each goal to its verification method and headline evidence, and the subsections that follow elaborate.
 
-#table(
+#figure(
+  table(
   columns: (auto, 1.5fr, 1fr),
   align: (left, left, left),
   stroke: 0.5pt,
@@ -671,6 +710,9 @@ The evaluation is organised around the six design goals of Section 3; the table 
   [G4 Governability], [HITL rule + state-machine + approval-route tests], [Illegal transitions rejected; every action audited],
   [G5 Learning], [OWM scoring + recall re-ranking + safety-gate tests], [Context-sensitive recall; five behavioural gates enforced],
   [G6 Maintainability], [Architecture import-boundary tests + static analysis], [Track boundaries machine-checked; zero diagnostics],
+)
+,
+  caption: [Mapping of design goals to verification methods and headline evidence.],
 )
 
 == Experimental Setup
@@ -697,7 +739,8 @@ Warm data reads served from the SHA-256-verified cache complete in under about 2
 
 The system sustains a substantial automated-verification regime: a regression suite of *645 tests* passing (with one skip), zero Ruff and BasedPyright diagnostics, and a passing production frontend build across twenty pages, as recorded in the project's progress log. The test suite spans 59 files and roughly 21,000 lines, covering the agent loop, tool allow-listing, backtest determinism and hash mutations, storage migration integrity, snapshot decode integrity, risk and scanner services, and the HITL flow. Automated architecture tests enforce the track import boundaries (goal G6), converting a design rule into a machine-checked invariant.
 
-#table(
+#figure(
+  table(
   columns: (1fr, auto),
   align: (left, center),
   stroke: 0.5pt,
@@ -709,6 +752,9 @@ The system sustains a substantial automated-verification regime: a regression su
   [Backtest determinism (hash-mutation tests)], [enforced],
   [Import-boundary architecture tests], [enforced],
   [Frontend build / TypeScript / Node tests], [passing],
+)
+,
+  caption: [Engineering-quality dimensions and results.],
 )
 
 == Summary of Findings
@@ -763,7 +809,8 @@ Several directions follow naturally. *Closing the belief-contest loop* would let
 
 The table below records the physical database layout that realises the per-strategy isolation principle of Section 5.5. Runtime databases are git-ignored and rebuilt from public sources; only schema-defining code is version-controlled.
 
-#table(
+#figure(
+  table(
   columns: (auto, 1fr),
   align: (left, left),
   stroke: 0.5pt,
@@ -776,6 +823,9 @@ The table below records the physical database layout that realises the per-strat
   [`data/{strategy_id}.db`], [Per-strategy sessions, agent reports, decisions, events (audit trail), HITL approvals],
   [`data/agent-runs/`], [ReAct session transcripts and JSONL traces with blob off-loading],
   [`skills/` (filesystem)], [76 declarative SKILL.md documents plus per-strategy Markdown knowledge ledgers],
+)
+,
+  caption: [Physical database layout (Appendix A).],
 )
 
 #v(0.5em)
