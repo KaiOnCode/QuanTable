@@ -574,9 +574,8 @@ Concurrency is handled by a `StreamingToolExecutor`: as each tool call's argumen
 The memory layer (goal G5) records each decision as a `MemoryRecord` with five cognitively-motivated layers — *episodic* (the story of the trade), *semantic* (a distilled lesson), *procedural* (the reusable pattern), *affective* (the market/emotional state), and a raw *trade record*. Recall relevance is governed by the outcome-weighted-memory (OWM) score, a convex combination of five factors:
 
 #align(center)[
-  #block(fill: luma(246), inset: 10pt, radius: 3pt)[
-    `owm = 0.35·outcome + 0.25·similarity + 0.20·recency + 0.15·confidence + 0.05·affective`
-  ]
+  $ "owm" &= 0.35 dot.c "outcome" + 0.25 dot.c "similarity" + 0.20 dot.c "recency" \
+           &+ 0.15 dot.c "confidence" + 0.05 dot.c "affective" $ <owm>
 ]
 
 clamped to $[-1, 1]$. *Recency* decays exponentially with a thirty-day half-life, $2^(-Delta t / 30)$; *context similarity* is the fraction of matching features among ticker, sector, market-cap bucket, and market trend, defaulting to a neutral 0.5 when no comparable features exist. A subtle but important detail is that records are stored with a neutral similarity of 0.5 and then *re-scored against the live context at recall time*, so the same memory surfaces with different salience in different market regimes — an approximation of associative recall consistent with the layered-memory philosophy of FinMem @yu_finmem:_2023 and the verbal-reinforcement idea of Reflexion @shinn_reflexion_2023. Concretely, recall pulls twice the requested number of candidates ordered by their stored score, recomputes each candidate's similarity and recency against the current market context, re-ranks by the refreshed OWM score, and returns the top few. These are then rendered into a compact prompt block for the portfolio manager, prefaced by the standing instruction that history is advisory and current evidence prevails on conflict — so the memory can inform but never override fresh analysis.
@@ -631,9 +630,8 @@ The point-in-time runner honours several fidelity rules that directly counter th
 Performance metrics are computed by a trade ledger from reconstructed long-only episodes. Given a per-session equity series $E_0, E_1, dots, E_n$ with simple returns $r_t = E_t / E_(t-1) - 1$, the ledger reports total return $E_n/E_0 - 1$, calendar-annualised return $(1 + "total")^(365 / "days") - 1$, annualised volatility $sigma sqrt(252)$, and the Sharpe ratio @sharpe_ratio_1994
 
 #align(center)[
-  #block(fill: luma(246), inset: 9pt, radius: 3pt)[
-    $"Sharpe" = (macron(r) - r_f \/ 252) / sigma_r dot.c sqrt(252), quad "MaxDD" = max_t (1 - E_t / max_(s <= t) E_s)$
-  ]
+  $ "Sharpe" &= (macron(r) - r_f \/ 252) / (sigma_r dot.c sqrt(252)) \
+             &= "MaxDD" = max_t (1 - E_t / max_(s <= t) E_s) $ <sharpe>
 ]
 
 alongside maximum-drawdown duration, win rate, profit factor (gross profit ÷ gross loss), payoff ratio, realised/unrealised PnL, total fees and slippage, and turnover. Closed trades are reconstructed by a long-only episode tracker that pairs entries and exits, allocates fees and slippage pro-rata, and computes per-lot realised PnL; any identity that ever goes short is excluded from closed-trade accounting to keep the long-only contract honest. Orders themselves flow through a virtual `MockBrokerEngine` with an explicit lifecycle (`NEW → FILLED | PARTIALLY_FILLED | REJECTED | CANCELED`), a pre-trade risk checker (cash sufficiency including fees and slippage, short-sell blocking, and a projected max-position-percent bound), and weighted-average-cost position accounting. A `create_replay` path re-binds the identical frozen snapshot and re-runs the engine, and a verification routine proves the stored result matches a fresh recomputation.
