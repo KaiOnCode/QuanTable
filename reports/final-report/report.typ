@@ -887,3 +887,19 @@ The table below records the physical database layout that realises the per-strat
 #heading(numbering: none)[Appendix B: Reproducibility Chain]
 
 For completeness, the chain of hashes and typed contracts that together guarantee a reproducible backtest (Section 5.6) is: a frozen `BacktestRunSpec` pinning dates, mode, typed policy, and broker configuration; a `policy_hash` and `strategy_snapshot_hash` over canonical JSON; a `gzip`-compressed input snapshot whose `content_hash` is verified on write and re-verified on read; per-decision evidence rows carrying a `feature_hash` and `policy_hash`; and a canonical *economic result hash* recomputed on every read, with any mismatch downgrading the job to `storage_corrupt`. The `create_replay` path re-binds the identical snapshot and re-runs the deterministic engine, providing an independent reproduction of the persisted result.
+
+// ═══════════════════════════════════════════
+//  Declaration of Individual Contributions
+// ═══════════════════════════════════════════
+#pagebreak()
+#heading(numbering: none)[Declaration of Individual Contributions]
+
+As the project leader, *Ying Tingkai* led the overall system and data-source architecture and designed the dual-track agent framework. He implemented the custom ReAct harness (the agent loop, streaming tool executor, context-compression pipeline, recovery state machine, and tool system) and built the Quick Ask module — the twelve-agent pipeline, its three depth modes, and the multi-source news data plane — along with the frontend and the integration of the market-data providers (Yahoo Finance, Google News RSS, AkShare, Finnhub) into a unified `DataService`.
+
+*Wang Wenhan* designed and implemented the deterministic backtest subsystem: the `MockBrokerEngine`, the trade ledger with long-only episode reconstruction and performance metrics, the pre-trade risk checker, and the hash-verified backtest runner enforcing next-open execution.
+
+*Gao Ziteng* implemented the outcome-weighted memory subsystem, including the five-factor OWM scoring function, the SQLite-backed memory store, and the pre-trade safety gates.
+
+*Wang Pengcheng* contributed to the human-in-the-loop approval framework.
+
+*Cao Yujuncheng* contributed to the notification channels.
