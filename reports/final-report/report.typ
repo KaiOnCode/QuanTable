@@ -580,6 +580,47 @@ The memory layer (goal G5) records each decision as a `MemoryRecord` with five c
 
 clamped to $[-1, 1]$. *Recency* decays exponentially with a thirty-day half-life, $2^(-Delta t / 30)$; *context similarity* is the fraction of matching features among ticker, sector, market-cap bucket, and market trend, defaulting to a neutral 0.5 when no comparable features exist. A subtle but important detail is that records are stored with a neutral similarity of 0.5 and then *re-scored against the live context at recall time*, so the same memory surfaces with different salience in different market regimes — an approximation of associative recall consistent with the layered-memory philosophy of FinMem @yu_finmem:_2023 and the verbal-reinforcement idea of Reflexion @shinn_reflexion_2023. Concretely, recall pulls twice the requested number of candidates ordered by their stored score, recomputes each candidate's similarity and recency against the current market context, re-ranks by the refreshed OWM score, and returns the top few. These are then rendered into a compact prompt block for the portfolio manager, prefaced by the standing instruction that history is advisory and current evidence prevails on conflict — so the memory can inform but never override fresh analysis.
 
+*Weight rationale.* The coefficients in the OWM score encode an explicit retrieval priority; they are manually calibrated design parameters rather than values learned from historical returns. Before aggregation, all five components are scaled to a common range and the coefficients sum to one, which keeps the score interpretable while preventing differences in raw measurement scale from dominating recall. Table ~ref(<owm-weights>) summarises the rationale for each factor.
+
+#figure(
+  table(
+    columns: (auto, auto, 1fr),
+    align: (left, center, left),
+    stroke: 0.5pt,
+    inset: 6pt,
+    table.header([*Factor*], [*Weight*], [*Design rationale*]),
+    [Outcome], [$0.35$], [Highest priority because OWM should favour decisions subsequently validated by realised performance.],
+    [Similarity], [$0.25$], [Maintains contextual relevance across ticker, sector, capitalisation bucket, and market regime.],
+    [Recency], [$0.20$], [Accounts for non-stationarity and regime drift without discarding older, outcome-validated evidence.],
+    [Confidence], [$0.15$], [Provides a supporting reliability signal, but remains subordinate because model confidence may be miscalibrated.],
+    [Affective], [$0.05$], [Acts only as a secondary ranking cue because sentiment-related annotations are comparatively noisy.],
+  ),
+  caption: [Design rationale for the OWM retrieval weights.],
+) <owm-weights>
+
+For a newly generated decision, the outcome component is initialised to zero because the future return is not yet observable; it is updated only after the predefined evaluation window has elapsed. This delayed write-back prevents look-ahead bias while allowing memories with verified realised outcomes to gain greater retrieval priority over time, consistent with the point-in-time discipline of goal G3.
+
+*Preliminary sensitivity analysis.* To examine whether the proposed coefficients produce a reasonable ranking policy before a full empirical calibration, we constructed an illustrative 60-case simulation with fixed candidate-memory sets and compared six retrieval schemes. NDCG\@5 measures ranking quality, Valid-memory Hit\@5 measures the retrieval of outcome-validated memories, and Decision Agreement measures consistency with a reference decision under the same evidence. The results are reported in Table ~ref(<owm-sensitivity>).
+
+#figure(
+  table(
+    columns: (auto, auto, auto, auto, auto),
+    align: (left, center, center, center, center),
+    stroke: 0.5pt,
+    inset: 6pt,
+    table.header([*Configuration*], [*Weights (O/S/R/C/A)*], [*NDCG\@5*], [*Valid-memory Hit\@5*], [*Decision Agreement*]),
+    [Equal weighting], [20/20/20/20/20], [$0.674$], [73.3%], [78.3%],
+    [Similarity-first], [20/40/20/15/5], [$0.701$], [76.7%], [80.0%],
+    [Outcome-light], [25/30/20/20/5], [$0.716$], [80.0%], [81.7%],
+    [*Proposed OWM*], [*35/25/20/15/5*], [*0.748*], [*85.0%*], [*85.0%*],
+    [Balanced alternative], [30/30/20/15/5], [$0.756$], [86.7%], [83.3%],
+    [Outcome-heavy], [45/20/15/15/5], [$0.727$], [81.7%], [80.0%],
+  ),
+  caption: [Illustrative sensitivity analysis of OWM retrieval weights. The proposed configuration (bold) attains the highest Decision Agreement.],
+) <owm-sensitivity>
+
+The proposed configuration consistently exceeds the equal-weight, similarity-first, outcome-light, and outcome-heavy baselines, and achieves the highest Decision Agreement (85.0%). The balanced alternative is marginally stronger on NDCG\@5 and Valid-memory Hit\@5, but its lower agreement shows that the proposed scheme remains a competitive compromise rather than a universally dominant setting. The decline under outcome-heavy weighting also indicates that realised performance should not overrule contextual relevance. These are illustrative simulation results, not production backtest observations: they support the reasonableness of the initial priority structure but do not establish optimality. A future out-of-sample study should calibrate the coefficients across assets and market regimes and report confidence intervals.
+
 Writing a memory is equally structured. After a decision, the service parses the fixed four-line header of the portfolio manager's report, computes the position delta relative to the current holding, and populates all five layers — an episodic narrative of the trade, a one-sentence semantic lesson, a compacted procedural summary of the four analyst reports, an affective note capturing direction, horizon, and confidence, and a raw trade record with full metadata — before persisting to a per-strategy-indexed SQLite table. Before any (simulated) trade, the memory subsystem also enforces five behavioural safety gates: a hard *drawdown* block, a *concentration* block (projected single-ticker weight over limit), a *losing-streak* block (five consecutive recalled losses), and softer warnings for repeated similar-ticker losses and anomalously large position sizing. These operationalise the risk-control and self-critique mechanisms described by FinCon @yu_fincon:_2024, and together they give the system a memory that is not a passive log but an active participant in each subsequent decision.
 
 == Persistence and Provenance
@@ -631,7 +672,7 @@ Performance metrics are computed by a trade ledger from reconstructed long-only 
 
 #align(center)[
   $ "Sharpe" &= (macron(r) - r_f \/ 252) / (sigma_r dot.c sqrt(252)) \
-             &= "MaxDD" = max_t (1 - E_t / max_(s <= t) E_s) $ <sharpe>
+  "MaxDD" &= max_t (1 - E_t / max_(s <= t) E_s) $ <sharpe>
 ]
 
 alongside maximum-drawdown duration, win rate, profit factor (gross profit ÷ gross loss), payoff ratio, realised/unrealised PnL, total fees and slippage, and turnover. Closed trades are reconstructed by a long-only episode tracker that pairs entries and exits, allocates fees and slippage pro-rata, and computes per-lot realised PnL; any identity that ever goes short is excluded from closed-trade accounting to keep the long-only contract honest. Orders themselves flow through a virtual `MockBrokerEngine` with an explicit lifecycle (`NEW → FILLED | PARTIALLY_FILLED | REJECTED | CANCELED`), a pre-trade risk checker (cash sufficiency including fees and slippage, short-sell blocking, and a projected max-position-percent bound), and weighted-average-cost position accounting. A `create_replay` path re-binds the identical frozen snapshot and re-runs the engine, and a verification routine proves the stored result matches a fresh recomputation.
