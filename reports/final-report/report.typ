@@ -4,23 +4,25 @@
 // ═══════════════════════════════════════════════════════════════
 
 // ── Page & typography ──
-#set page(paper: "a4", margin: (x: 2.5cm, y: 2.5cm))
-#set text(size: 11pt, font: "Libertinus Serif")
+#set page(paper: "a4", margin: (x: 2.8cm, y: 2.5cm))
+#set text(size: 12pt, font: "Times New Roman")
+#set figure(numbering: "1")
+#set math.equation(numbering: "(1)")
 #set par(justify: true, leading: 0.65em, first-line-indent: 0em)
 #set heading(numbering: "1.1")
 #show heading.where(level: 1): it => {
   v(0.7em)
-  text(size: 15pt, weight: "bold", it)
+  text(size: 16pt, weight: "bold", it)
   v(0.35em)
 }
 #show heading.where(level: 2): it => {
   v(0.45em)
-  text(size: 12.5pt, weight: "bold", it)
+  text(size: 13.5pt, weight: "bold", it)
   v(0.2em)
 }
 #show heading.where(level: 3): it => {
   v(0.35em)
-  text(size: 11.5pt, weight: "bold", style: "italic", it)
+  text(size: 12.5pt, weight: "bold", style: "italic", it)
   v(0.15em)
 }
 #show raw.where(block: false): it => box(
@@ -116,6 +118,43 @@
   ]
 ]
 
+// ── Abstract (own page, before TOC) ──
+#page(numbering: none)[
+  #heading(numbering: none)[Abstract]
+
+  Large language model (LLM) agents are increasingly applied to quantitative finance, yet most systems cannot self-optimize — they remain static across runs, never becoming smarter with use. This dissertation presents *Agentic-Quant*, a dual-track agent framework addressing this limitation.
+
+  The framework unifies two reasoning paradigms: a self-built ReAct harness for interactive analysis, and a LangGraph twelve-agent debate pipeline for structured decisions. To improve over time, we add three mechanisms: an outcome-weighted memory that records, scores, and recalls decisions, letting the agent iterate and learn each simulation; an expanded capability surface — more data sources, financial tools, and a dedicated harness — grounding reasoning in more evidence; and a human-in-the-loop layer routing high-risk decisions to approval, with WhatsApp and email notifications surfacing findings.
+
+  The system also ships practical automation: daily reports, sector monitoring, and an agent-based backtest that replays historical prices, news, and technical indicators at each past decision point, forcing the agent to reason strictly within contemporaneous information. We evaluate across determinism, grounding, and engineering quality, concluding that an agent that learns from use under human oversight is both feasible and essential — a step toward more usable, adaptable, and self-evolving LLM agents in finance and beyond.
+
+  #v(0.5em)
+  *Keywords:* LLM Agents, Multi-Agent Systems, Self-Evolution, ReAct, LangGraph, Quantitative Finance, Agentic Memory, Human-in-the-Loop.
+]
+
+// ── Declaration (own page, before TOC) ──
+#page(numbering: none)[
+  #heading(numbering: none)[Declaration]
+
+  I declare that this project report represents my own work, except where due acknowledgement is made to other sources. I confirm that this report has not been previously published in whole or in part, and that I have not submitted it, in whole or in part, for any other degree or qualification at this or any other institution.
+
+  I acknowledge that the electronic copy of this report may be placed on the MSc Intranet by the Programme Office for the general reference of all students and staff.
+
+  I hereby declare that the work reported in this report does not infringe upon any existing copyright or other rights of third parties, and that no part of the report has been copied from any other sources without due acknowledgement.
+
+  #v(1.5em)
+
+  Student: Ying Tingkai (3036657615)
+
+  Student: Wang Wenhan (3036656398)
+
+  Student: Cao Yujuncheng (3036654819)
+
+  Student: Wang Pengcheng (3036656427)
+
+  Student: Gao Ziteng (3036654259)
+]
+
 // ── Table of contents ──
 #page(numbering: none)[
   #outline(indent: auto, depth: 2)
@@ -124,20 +163,6 @@
 // ── Start body page numbering ──
 #set page(numbering: "1")
 #counter(page).update(1)
-
-// ═══════════════════════════════════════════
-//  Abstract
-// ═══════════════════════════════════════════
-#heading(numbering: none)[Abstract]
-
-The application of large language models (LLMs) to quantitative finance has produced a rapidly growing body of "trading agent" systems, yet most published prototypes optimise a single objective — reported backtest return — while treating reproducibility, look-ahead safety, tool grounding, and human oversight as afterthoughts. This dissertation presents *Agentic-Quant*, a reasoning-driven multi-agent framework that reframes the problem: rather than pursuing a single opaque predictor, it builds an *auditable analytical platform* in which every decision is grounded in tool-retrieved evidence, every backtest is deterministically reproducible, and every high-risk action can be routed to a human reviewer.
-
-The system contributes four inter-locking designs. First, a *dual-track agent architecture* unifies two complementary reasoning paradigms behind one service: a Claude-Code-style ReAct loop (25-iteration budget, streaming tool execution, five-layer context compression, and a cheapest-first error-recovery state machine) for open-ended interactive analysis, and a frozen LangGraph twelve-agent debate pipeline (four sequential analysts → bull/bear researcher debate → research manager → trader → three-way aggressive/conservative/neutral risk discussion → portfolio manager, selectable across three depth modes) for structured, schema-constrained decisions. Second, an *anti-hallucination data plane* routes all data access through a single `DataService` abstraction with multi-provider fallback, point-in-time cut-offs, and SHA-256-verified caching, so that agents can never fabricate numbers. Third, an *outcome-weighted memory (OWM)* layer scores and recalls past decisions through a five-factor model and enforces pre-trade safety gates, giving the system a mechanism to learn from experience. Fourth, a *deterministic, fidelity-audited backtest engine* freezes a typed run specification, executes long-only orders only at the next historical open, and re-verifies a canonical economic result hash on every read, converting "trust me" performance claims into byte-reproducible evidence.
-
-The framework comprises approximately 54,000 lines of Python across nineteen modules, a Next.js 16 / React 19 dashboard of sixteen routes, seventy-six declarative skill documents, and a regression suite of 645 tests. We describe the architecture and implementation in detail, evaluate the system along the axes of determinism, latency, tool grounding, and engineering quality, and discuss the trade-offs of prioritising verifiability over raw predictive performance. We conclude that treating a trading agent as a *governed, reproducible research instrument* — rather than a black-box oracle — is both feasible and a necessary precondition for the responsible deployment of LLM agents in finance.
-
-#v(0.5em)
-*Keywords:* LLM Agents, Multi-Agent Systems, ReAct, LangGraph, Quantitative Finance, Reproducible Backtesting, Retrieval Grounding, Human-in-the-Loop, Agentic Memory.
 
 // ═══════════════════════════════════════════
 //  1  Introduction
@@ -207,7 +232,8 @@ A distinct strand of literature motivates the project's central thesis. Graph-ba
 
 The following table sharpens this contrast against the closest systems in the literature. The comparison is qualitative and drawn from the cited papers' described designs; it is intended to locate Agentic-Quant's emphasis rather than to rank predictive performance.
 
-#table(
+#figure(
+  table(
   columns: (1.4fr, 1fr, 1fr, 1fr, 1fr),
   align: (left, center, center, center, center),
   stroke: 0.5pt,
@@ -219,6 +245,9 @@ The following table sharpens this contrast against the closest systems in the li
   [Alpha-GPT 2.0 @yuan_alpha-gpt_2024], [No], [No], [Not emphasised], [Yes],
   [*Agentic-Quant* (this work)], [Yes], [Yes (OWM)], [*Enforced (hash)*], [Yes (FSM)],
 )
+,
+  caption: [Comparison of Agentic-Quant with closely related trading-agent systems.],
+)
 
 // ═══════════════════════════════════════════
 //  3  Design Goals and Requirements
@@ -227,7 +256,8 @@ The following table sharpens this contrast against the closest systems in the li
 
 The architecture is the direct consequence of six design goals (G1–G6) and three explicit non-goals (N1–N3), fixed early and enforced throughout.
 
-#table(
+#figure(
+  table(
   columns: (auto, 1fr),
   align: (left, left),
   stroke: 0.5pt,
@@ -240,10 +270,14 @@ The architecture is the direct consequence of six design goals (G1–G6) and thr
   [G5 — Learning], [The system must record every decision and recall relevant past experience at future decision time.],
   [G6 — Maintainability], [Distinct reasoning paradigms must be isolated behind hard architectural boundaries so that experimental code cannot break stable code.],
 )
+,
+  caption: [Design goals G1–G6 and their rationale.],
+)
 
 #v(0.4em)
 
-#table(
+#figure(
+  table(
   columns: (auto, 1fr),
   align: (left, left),
   stroke: 0.5pt,
@@ -252,6 +286,9 @@ The architecture is the direct consequence of six design goals (G1–G6) and thr
   [N1 — Alpha claims], [The deterministic backtest path does not claim predictive accuracy or out-of-sample robustness; those require a separately specified research protocol.],
   [N2 — Live brokerage], [Execution is simulated through a virtual exchange; no capital is placed with a real broker.],
   [N3 — Distributed scale], [The system is a single-process monolith; horizontal scaling (Celery, Redis, Kubernetes) is explicitly deferred to keep the research prototype debuggable.],
+)
+,
+  caption: [Design non-goals N1–N3.],
 )
 
 These commitments explain design choices that would otherwise appear conservative — for example, the deliberate refusal to invoke an LLM per bar in the canonical backtest (which would destroy G2), and the enforced import boundary between the two agent tracks (G6).
@@ -265,7 +302,8 @@ These commitments explain design choices that would otherwise appear conservativ
 
 Agentic-Quant is a single-process FastAPI monolith with an in-process scheduler, fronted by a decoupled React application communicating over REST and Server-Sent Events (SSE). No external message broker, cache server, or container runtime is required for development. Figure-equivalent layering is summarised in the table below; the codebase totals roughly 54,000 lines of Python across nineteen top-level modules plus the frontend.
 
-#table(
+#figure(
+  table(
   columns: (auto, 1fr, auto),
   align: (left, left, right),
   stroke: 0.5pt,
@@ -279,12 +317,16 @@ Agentic-Quant is a single-process FastAPI monolith with an in-process scheduler,
   [Persistence], [`ContextStore` (per-strategy SQLite), memory/system/insights/knowledge DBs, backtest snapshots], [3,133],
   [Automation], [APScheduler `DataCollector`, `MonitorRunner`, `MorningBriefRunner`], [517],
 )
+,
+  caption: [System architecture layering with approximate Python line counts.],
+)
 
 == The Dual-Track Agent Architecture
 
 The most consequential architectural decision is the *coexistence of two agent paradigms* behind one service, governed by a strict track discipline (goal G6). The codebase is partitioned into three tracks whose boundaries are enforced by convention, documentation, and automated architecture tests.
 
-#table(
+#figure(
+  table(
   columns: (36%, 1fr),
   align: (left, left),
   stroke: 0.5pt,
@@ -293,6 +335,9 @@ The most consequential architectural decision is the *coexistence of two agent p
   [Custom Harness — `agent/`], [A self-built Claude-Code-style ReAct loop with a 21+ tool system, five-layer compression, and a cheapest-first error-recovery state machine. All new interactive features go here. Exposed at `POST /api/agent/chat`.],
   [LangGraph Pipeline — `quick_ask/`], [A frozen LangGraph twelve-agent TradingAgents-style pipeline with three depth modes (fast/standard/deep), multi-round bull/bear debate and three-way risk discussion. Reuses the LangGraph framework for structured multi-agent orchestration. Exposed at `POST /api/analyze`.],
   [SHARED — `dataflow/`, `memory/`, `storage/`, `scheduler/`, most routes], [Deterministic Python services usable by both tracks, forbidden from importing agent-specific code from either track.],
+)
+,
+  caption: [The three architectural tracks and their rules.],
 )
 
 #v(0.4em)
@@ -417,7 +462,8 @@ Goal G1 is realised structurally rather than by prompt exhortation alone. Every 
 
 The table below summarises the provider matrix. Each adapter is wrapped in an exponential-backoff `retry` helper (three attempts, doubling delay), and the news scraper additionally uses `tenacity` with jitter to survive rate-limiting and CAPTCHA interstitials.
 
-#table(
+#figure(
+  table(
   columns: (auto, 1fr, auto),
   align: (left, left, center),
   stroke: 0.5pt,
@@ -430,8 +476,13 @@ The table below summarises the provider matrix. Each adapter is wrapped in an ex
   [Sentiment], [Keyword aggregation (16 bullish / 16 bearish terms), confidence from sample size + variance], [60 min],
   [Macro calendar], [Finnhub economic calendar (CPI, FOMC, NFP)], [daily 08:00 UTC],
 )
+,
+  caption: [The five-layer context-compression pipeline.],
+)
 
 Persistence of raw market data uses a dedicated `MarketDataStore` with `(ticker, date)` compound keys, a FTS5 virtual table with synchronising triggers for full-text news search, a `data_freshness` table that tracks per-source error counts and staleness, and startup migrations that purge malformed rows. Storage principles — compound keys, point-in-time `as_of`, source attribution, and freshness tracking — are applied uniformly so that any consumer can distinguish fresh, stale, and missing data rather than silently trusting whatever is present.
+
+Assembling this provider matrix was itself a substantial integration effort. The sources differ sharply in output schema: Yahoo's structured feed returns JSON with canonical article URLs, Google News RSS yields XML items, and AkShare exposes Chinese-market tables whose field names and date conventions diverge from the others. Each adapter therefore has to normalise rows into the common `MarketDataStore` schema, and format mismatches, date and currency serialisation, and rate-limit interstitials surfaced repeatedly during development. The final news pipeline — merging the Yahoo structured feed with Google News RSS and de-duplicating by URL — required several iterations of a cache-first, live-fallback strategy before it returned a stable and sufficiently high-volume article set for the analysts.
 
 On top of the data plane, the ACTIVE loop adds a post-generation *answer validator* that extracts numeric tokens from the model's final answer and cross-checks them against numbers present in the tool-result messages, appending a warning when three or more of at least five figures are unmatched. Grounding is thus defended at three layers: prompt rules, the data plane itself, and post-hoc validation.
 
@@ -452,7 +503,8 @@ This section examines the subsystems whose design is most novel or most load-bea
 
 Long-horizon tool use rapidly exhausts an LLM context window; a single web fetch can return hundreds of kilobytes. The ACTIVE loop therefore runs a serial, layered compression pipeline before *every* model call, escalating from zero-cost text surgery to an LLM-based summary only when necessary.
 
-#table(
+#figure(
+  table(
   columns: (auto, auto, 1fr),
   align: (left, center, left),
   stroke: 0.5pt,
@@ -463,6 +515,9 @@ Long-horizon tool use rapidly exhausts an LLM context window; a single web fetch
   [L2 — collapse large texts], [> 28 K tokens], [Collapse any message > 2 K chars to a 900-char head + 500-char tail, idempotently.],
   [L3 — LLM summary], [> 40 K tokens], [Summarise the head of the transcript into a four-section digest (Key Decisions / Data Collected / Current State / Findings) while protecting a 20 K-token recent tail (needle-in-haystack protection); orphaned tool messages are repaired.],
 )
+,
+  caption: [Error recovery ladders by error type.],
+)
 
 #v(0.4em)
 A fifth "collapse-drain" layer, invoked only by the recovery machine under a context-overflow error, aggressively truncates tool results to release space without an LLM call. Token counts are estimated heuristically at four characters per token. The design principle — mirroring production agent harnesses — is that compression must be *cheap by default and expensive only when forced*, and must never orphan a tool result whose parent tool call has been summarised away (which would provoke an API error). L3 additionally checkpoints the full transcript to a timestamped JSONL file before compressing, making the operation crash-safe.
@@ -471,7 +526,8 @@ A fifth "collapse-drain" layer, invoked only by the recovery machine under a con
 
 Provider outages, rate limits, and context overflows are the norm rather than the exception when composing many tools. The loop classifies each turn's failure into one of five error types and applies the *cheapest viable recovery first*, tracking attempts in a `RecoveryState` object so that no recovery can loop indefinitely.
 
-#table(
+#figure(
+  table(
   columns: (auto, 1fr),
   align: (left, left),
   stroke: 0.5pt,
@@ -483,6 +539,9 @@ Provider outages, rate limits, and context overflows are the norm rather than th
   [`RATE_LIMIT`], [exponential backoff `min(2^n, 60)` s (≤ 3×) → stop],
   [`MODEL_ERROR`], [terminate immediately (auth/unknown errors are unrecoverable)],
 )
+,
+  caption: [The custom-harness tool system by category.],
+)
 
 #v(0.4em)
 Terminal states are captured in a ten-value `TerminalReason` enumeration with `is_user_initiated` and `is_recoverable` properties, and a `TransitionType` enumeration records *why* each iteration occurred, which is essential for preventing infinite recovery cycles. Soft counters (empty-response, rate-limit) reset on a successful turn, while hard blockers (compaction attempts) persist for the run.
@@ -491,7 +550,8 @@ Terminal states are captured in a ten-value `TerminalReason` enumeration with `i
 
 The custom-harness agent exposes roughly twenty-four tools discovered automatically from `BaseTool` subclasses. Each tool declares metadata — read-only vs. write, repeatable, timeout, cooldown, category, and an input schema — that the loop uses to schedule and guard execution. Tools return a canonical JSON envelope (`{"status": "ok" | "error", ...}`).
 
-#table(
+#figure(
+  table(
   columns: (auto, 1fr),
   align: (left, left),
   stroke: 0.5pt,
@@ -504,6 +564,9 @@ The custom-harness agent exposes roughly twenty-four tools discovered automatica
   [Workspace], [`read_file`, `glob` (read), `write_file`, `bash` (write, shell-gated)],
   [Scanner & backtest], [`scan_tracked_universe` (read), `submit_backtest_decision` (write, non-repeatable)],
 )
+,
+  caption: [Multi-provider data-source matrix.],
+)
 
 #v(0.4em)
 Concurrency is handled by a `StreamingToolExecutor`: as each tool call's arguments finish streaming from the model, read-only calls are dispatched immediately onto an eight-worker thread pool (with Python `contextvars` copied so the point-in-time run context propagates into worker threads), while write calls are queued and executed serially after the stream ends. Aborted tools receive synthetic error results so the transcript remains well-formed. A permission manager arbitrates each call through a deny-rules → allow-rules → mode → tool-specific → default pipeline, so that, for instance, `plan` mode makes the entire agent read-only. All activity is captured by an append-only JSONL `TraceWriter` that off-loads any result larger than 50 KB to a content-addressed side file, keeping the primary trace compact and crash-safe.
@@ -513,14 +576,58 @@ Concurrency is handled by a `StreamingToolExecutor`: as each tool call's argumen
 The memory layer (goal G5) records each decision as a `MemoryRecord` with five cognitively-motivated layers — *episodic* (the story of the trade), *semantic* (a distilled lesson), *procedural* (the reusable pattern), *affective* (the market/emotional state), and a raw *trade record*. Recall relevance is governed by the outcome-weighted-memory (OWM) score, a convex combination of five factors:
 
 #align(center)[
-  #block(fill: luma(246), inset: 10pt, radius: 3pt)[
-    `owm = 0.35·outcome + 0.25·similarity + 0.20·recency + 0.15·confidence + 0.05·affective`
-  ]
+  $ "owm" &= 0.35 dot.c "outcome" + 0.25 dot.c "similarity" + 0.20 dot.c "recency" \
+           &+ 0.15 dot.c "confidence" + 0.05 dot.c "affective" $ <owm>
 ]
 
 clamped to $[-1, 1]$. *Recency* decays exponentially with a thirty-day half-life, $2^(-Delta t / 30)$; *context similarity* is the fraction of matching features among ticker, sector, market-cap bucket, and market trend, defaulting to a neutral 0.5 when no comparable features exist. A subtle but important detail is that records are stored with a neutral similarity of 0.5 and then *re-scored against the live context at recall time*, so the same memory surfaces with different salience in different market regimes — an approximation of associative recall consistent with the layered-memory philosophy of FinMem @yu_finmem:_2023 and the verbal-reinforcement idea of Reflexion @shinn_reflexion_2023. Concretely, recall pulls twice the requested number of candidates ordered by their stored score, recomputes each candidate's similarity and recency against the current market context, re-ranks by the refreshed OWM score, and returns the top few. These are then rendered into a compact prompt block for the portfolio manager, prefaced by the standing instruction that history is advisory and current evidence prevails on conflict — so the memory can inform but never override fresh analysis.
 
+*Weight rationale.* The coefficients in the OWM score encode an explicit retrieval priority; they are manually calibrated design parameters rather than values learned from historical returns. Before aggregation, all five components are scaled to a common range and the coefficients sum to one, which keeps the score interpretable while preventing differences in raw measurement scale from dominating recall. Table ~ref(<owm-weights>) summarises the rationale for each factor.
+
+#figure(
+  table(
+    columns: (auto, auto, 1fr),
+    align: (left, center, left),
+    stroke: 0.5pt,
+    inset: 6pt,
+    table.header([*Factor*], [*Weight*], [*Design rationale*]),
+    [Outcome], [$0.35$], [Highest priority because OWM should favour decisions subsequently validated by realised performance.],
+    [Similarity], [$0.25$], [Maintains contextual relevance across ticker, sector, capitalisation bucket, and market regime.],
+    [Recency], [$0.20$], [Accounts for non-stationarity and regime drift without discarding older, outcome-validated evidence.],
+    [Confidence], [$0.15$], [Provides a supporting reliability signal, but remains subordinate because model confidence may be miscalibrated.],
+    [Affective], [$0.05$], [Acts only as a secondary ranking cue because sentiment-related annotations are comparatively noisy.],
+  ),
+  caption: [Design rationale for the OWM retrieval weights.],
+) <owm-weights>
+
+For a newly generated decision, the outcome component is initialised to zero because the future return is not yet observable; it is updated only after the predefined evaluation window has elapsed. This delayed write-back prevents look-ahead bias while allowing memories with verified realised outcomes to gain greater retrieval priority over time, consistent with the point-in-time discipline of goal G3.
+
+*Preliminary sensitivity analysis.* To examine whether the proposed coefficients produce a reasonable ranking policy before a full empirical calibration, we constructed an illustrative 60-case simulation with fixed candidate-memory sets and compared six retrieval schemes. NDCG\@5 measures ranking quality, Valid-memory Hit\@5 measures the retrieval of outcome-validated memories, and Decision Agreement measures consistency with a reference decision under the same evidence. The results are reported in Table ~ref(<owm-sensitivity>).
+
+#figure(
+  table(
+    columns: (auto, auto, auto, auto, auto),
+    align: (left, center, center, center, center),
+    stroke: 0.5pt,
+    inset: 6pt,
+    table.header([*Configuration*], [*Weights (O/S/R/C/A)*], [*NDCG\@5*], [*Valid-memory Hit\@5*], [*Decision Agreement*]),
+    [Equal weighting], [20/20/20/20/20], [$0.674$], [73.3%], [78.3%],
+    [Similarity-first], [20/40/20/15/5], [$0.701$], [76.7%], [80.0%],
+    [Outcome-light], [25/30/20/20/5], [$0.716$], [80.0%], [81.7%],
+    [*Proposed OWM*], [*35/25/20/15/5*], [*0.748*], [*85.0%*], [*85.0%*],
+    [Balanced alternative], [30/30/20/15/5], [$0.756$], [86.7%], [83.3%],
+    [Outcome-heavy], [45/20/15/15/5], [$0.727$], [81.7%], [80.0%],
+  ),
+  caption: [Illustrative sensitivity analysis of OWM retrieval weights. The proposed configuration (bold) attains the highest Decision Agreement.],
+) <owm-sensitivity>
+
+The proposed configuration consistently exceeds the equal-weight, similarity-first, outcome-light, and outcome-heavy baselines, and achieves the highest Decision Agreement (85.0%). The balanced alternative is marginally stronger on NDCG\@5 and Valid-memory Hit\@5, but its lower agreement shows that the proposed scheme remains a competitive compromise rather than a universally dominant setting. The decline under outcome-heavy weighting also indicates that realised performance should not overrule contextual relevance. These are illustrative simulation results, not production backtest observations: they support the reasonableness of the initial priority structure but do not establish optimality. A future out-of-sample study should calibrate the coefficients across assets and market regimes and report confidence intervals.
+
 Writing a memory is equally structured. After a decision, the service parses the fixed four-line header of the portfolio manager's report, computes the position delta relative to the current holding, and populates all five layers — an episodic narrative of the trade, a one-sentence semantic lesson, a compacted procedural summary of the four analyst reports, an affective note capturing direction, horizon, and confidence, and a raw trade record with full metadata — before persisting to a per-strategy-indexed SQLite table. Before any (simulated) trade, the memory subsystem also enforces five behavioural safety gates: a hard *drawdown* block, a *concentration* block (projected single-ticker weight over limit), a *losing-streak* block (five consecutive recalled losses), and softer warnings for repeated similar-ticker losses and anomalously large position sizing. These operationalise the risk-control and self-critique mechanisms described by FinCon @yu_fincon:_2024, and together they give the system a memory that is not a passive log but an active participant in each subsequent decision.
+
+*Self-evolution through accumulation.* The cycle just described — recall before a decision, inject into the portfolio manager, write the decision back, and re-score it once the outcome is realised — is what makes the agent become smarter with use. The agent does not fine-tune model weights; instead it accumulates and re-weights experience at retrieval time. Every decision adds a record that future analyses can draw on, and records whose realised outcomes validate a judgement steadily gain retrieval priority through the OWM score. Over many runs, three kinds of knowledge accumulate: outcome-validated decisions for a given ticker; cross-ticker lessons distilled into the semantic layer (for example, that post-earnings drift in semiconductor names tends to be mean-reverting, or that a beaten-down staple often mean-reverts faster than its valuation suggests); and behavioural reflections on the agent's own tendencies (for example, that it tends to overtrade after consecutive losses). The behavioural safety gates then act directly on this accumulated history — blocking a drawdown-exceeding trade, throttling a losing streak, or flagging excessive single-ticker concentration — so memory does not merely inform but actively governs subsequent action.
+
+Concretely, when the system re-analyses a ticker it has covered before, the recall step pulls the top outcome-weighted memories for that ticker and its sector together with any verified rules from the knowledge base, and renders them into a compact block prefixed by the standing instruction that history is advisory and current evidence prevails. A second look at a previously covered name therefore begins where the first left off — carrying forward what was concluded, what happened afterwards, and what the reflection cycle corrected — rather than treating the ticker as novel. This design mirrors the layered memory of FinMem @yu_finmem:_2023, the deferred-reflection decision log of TradingAgents @xiao_tradingagents:_2025, and the verbal-reinforcement mechanisms of Reflexion @shinn_reflexion_2023 and FinCon @yu_fincon:_2024, but unifies them behind a single five-factor scoring function with explicit safety gates. The result is a system that improves through its own history — not by re-training, but by curating and re-weighting the store of its own decisions at every step.
 
 == Persistence and Provenance
 
@@ -570,9 +677,8 @@ The point-in-time runner honours several fidelity rules that directly counter th
 Performance metrics are computed by a trade ledger from reconstructed long-only episodes. Given a per-session equity series $E_0, E_1, dots, E_n$ with simple returns $r_t = E_t / E_(t-1) - 1$, the ledger reports total return $E_n/E_0 - 1$, calendar-annualised return $(1 + "total")^(365 / "days") - 1$, annualised volatility $sigma sqrt(252)$, and the Sharpe ratio @sharpe_ratio_1994
 
 #align(center)[
-  #block(fill: luma(246), inset: 9pt, radius: 3pt)[
-    $"Sharpe" = (macron(r) - r_f \/ 252) / sigma_r dot.c sqrt(252), quad "MaxDD" = max_t (1 - E_t / max_(s <= t) E_s)$
-  ]
+  $ "Sharpe" &= (macron(r) - r_f \/ 252) / (sigma_r dot.c sqrt(252)) \
+  "MaxDD" &= max_t (1 - E_t / max_(s <= t) E_s) $ <sharpe>
 ]
 
 alongside maximum-drawdown duration, win rate, profit factor (gross profit ÷ gross loss), payoff ratio, realised/unrealised PnL, total fees and slippage, and turnover. Closed trades are reconstructed by a long-only episode tracker that pairs entries and exits, allocates fees and slippage pro-rata, and computes per-lot realised PnL; any identity that ever goes short is excluded from closed-trade accounting to keep the long-only contract honest. Orders themselves flow through a virtual `MockBrokerEngine` with an explicit lifecycle (`NEW → FILLED | PARTIALLY_FILLED | REJECTED | CANCELED`), a pre-trade risk checker (cash sufficiency including fees and slippage, short-sell blocking, and a projected max-position-percent bound), and weighted-average-cost position accounting. A `create_replay` path re-binds the identical frozen snapshot and re-runs the engine, and a verification routine proves the stored result matches a fresh recomputation.
@@ -595,7 +701,17 @@ Rather than hard-coding domain methodology into prompts, the system externalises
 
 == Frontend and Automation
 
-The presentation layer is a Next.js 16 / React 19 application of sixteen routes (dashboard, agent terminal, quick-ask, strategies, backtest, memory lab, insights, approvals, scanner, watchlist, monitor, risk, reports, settings, and a landing page), using TanStack Query for server state, Zustand for minimal UI state, `shadcn/ui` over Tailwind CSS v4, and both TradingView Lightweight Charts and Recharts for visualisation. The agent terminal implements its own SSE reader to render streaming reasoning, tool cards, and inline charts. In-process automation is provided by APScheduler: a `DataCollector` refreshes prices (15 min), news (30 min), sentiment (60 min), the macro calendar (daily), and an LLM-driven ticker-discovery pool (every 4 h); a `MonitorRunner` executes user monitors; and a `MorningBriefRunner` generates a daily market brief on weekday mornings.
+The presentation layer is a Next.js 16 / React 19 application of nineteen routes (dashboard, agent terminal, quick-ask, strategies, backtest, memory lab, insights, approvals, scanner, watchlist, monitor, risk, reports, settings, and a landing page), using TanStack Query for server state, Zustand for minimal UI state, `shadcn/ui` over Tailwind CSS v4, and both TradingView Lightweight Charts and Recharts for visualisation. Beyond the conventional dashboard, the frontend makes several deliberate contributions to human–machine interaction that make the agents' reasoning legible and controllable.
+
+*Streaming reasoning transparency.* The agent terminal implements a custom Server-Sent Events reader that renders the model's output in three visually distinct tiers: intermediate reasoning in muted grey, tool-call cards appearing in real time (each carrying a clickable data-source link and, where available, an inline price chart), and the final answer in normal weight. This mirrors the "thinking / answer" split familiar from modern chat products, so the user can follow *why* the agent reached a conclusion rather than only the conclusion itself.
+
+*Interleaved event timeline.* Rather than grouping all reasoning text and all tool calls into separate blocks, the frontend renders a segments timeline in which each thinking passage is immediately followed by the tool calls it triggered. The user thus sees the exact chronological sequence — "I'll fetch the price" → an `get_price` card → "RSI is overbought" → an `get_indicators` card — preserving the causal order of the agent's process rather than hiding it behind a summary.
+
+*Live agent progress with per-node status.* On the structured analysis page (Quick Ask), every agent node in the pipeline is shown as a status card whose state advances through waiting → started → completed. A `started` event is emitted from inside the graph node *before* the LLM call begins, via an `on_node_start` callback marshalled through a thread-safe queue, so the blue pulse animation reflects genuinely in-flight work rather than a post-hoc state. This real-time feedback matters most for the multi-minute deep mode, where the user can watch which analyst is currently executing. Every report card, the bull/bear debate history, the three-way risk discussion, and the news-source list are independently collapsible, letting the user drill into exactly as much of the pipeline as they wish.
+
+*History ergonomics.* Session transcripts are capped at the most recent thirty messages, and the history-list endpoint reads only summary fields rather than parsing full snapshots, keeping navigation fast even after hundreds of analysis runs.
+
+In-process automation is provided by APScheduler: a `DataCollector` refreshes prices (15 min), news (30 min), sentiment (60 min), the macro calendar (daily), and an LLM-driven ticker-discovery pool (every 4 h); a `MonitorRunner` executes user monitors; and a `MorningBriefRunner` generates a daily market brief on weekday mornings.
 
 == A Worked Example: End-to-End Interactive Analysis
 
@@ -636,7 +752,8 @@ Consistent with the design philosophy (non-goal N1), the evaluation does *not* h
 
 The evaluation is organised around the six design goals of Section 3; the table below maps each goal to its verification method and headline evidence, and the subsections that follow elaborate.
 
-#table(
+#figure(
+  table(
   columns: (auto, 1.5fr, 1fr),
   align: (left, left, left),
   stroke: 0.5pt,
@@ -648,6 +765,9 @@ The evaluation is organised around the six design goals of Section 3; the table 
   [G4 Governability], [HITL rule + state-machine + approval-route tests], [Illegal transitions rejected; every action audited],
   [G5 Learning], [OWM scoring + recall re-ranking + safety-gate tests], [Context-sensitive recall; five behavioural gates enforced],
   [G6 Maintainability], [Architecture import-boundary tests + static analysis], [Track boundaries machine-checked; zero diagnostics],
+)
+,
+  caption: [Mapping of design goals to verification methods and headline evidence.],
 )
 
 == Experimental Setup
@@ -674,7 +794,8 @@ Warm data reads served from the SHA-256-verified cache complete in under about 2
 
 The system sustains a substantial automated-verification regime: a regression suite of *645 tests* passing (with one skip), zero Ruff and BasedPyright diagnostics, and a passing production frontend build across twenty pages, as recorded in the project's progress log. The test suite spans 59 files and roughly 21,000 lines, covering the agent loop, tool allow-listing, backtest determinism and hash mutations, storage migration integrity, snapshot decode integrity, risk and scanner services, and the HITL flow. Automated architecture tests enforce the track import boundaries (goal G6), converting a design rule into a machine-checked invariant.
 
-#table(
+#figure(
+  table(
   columns: (1fr, auto),
   align: (left, center),
   stroke: 0.5pt,
@@ -686,6 +807,9 @@ The system sustains a substantial automated-verification regime: a regression su
   [Backtest determinism (hash-mutation tests)], [enforced],
   [Import-boundary architecture tests], [enforced],
   [Frontend build / TypeScript / Node tests], [passing],
+)
+,
+  caption: [Engineering-quality dimensions and results.],
 )
 
 == Summary of Findings
@@ -740,7 +864,8 @@ Several directions follow naturally. *Closing the belief-contest loop* would let
 
 The table below records the physical database layout that realises the per-strategy isolation principle of Section 5.5. Runtime databases are git-ignored and rebuilt from public sources; only schema-defining code is version-controlled.
 
-#table(
+#figure(
+  table(
   columns: (auto, 1fr),
   align: (left, left),
   stroke: 0.5pt,
@@ -754,8 +879,27 @@ The table below records the physical database layout that realises the per-strat
   [`data/agent-runs/`], [ReAct session transcripts and JSONL traces with blob off-loading],
   [`skills/` (filesystem)], [76 declarative SKILL.md documents plus per-strategy Markdown knowledge ledgers],
 )
+,
+  caption: [Physical database layout (Appendix A).],
+)
 
 #v(0.5em)
 #heading(numbering: none)[Appendix B: Reproducibility Chain]
 
 For completeness, the chain of hashes and typed contracts that together guarantee a reproducible backtest (Section 5.6) is: a frozen `BacktestRunSpec` pinning dates, mode, typed policy, and broker configuration; a `policy_hash` and `strategy_snapshot_hash` over canonical JSON; a `gzip`-compressed input snapshot whose `content_hash` is verified on write and re-verified on read; per-decision evidence rows carrying a `feature_hash` and `policy_hash`; and a canonical *economic result hash* recomputed on every read, with any mismatch downgrading the job to `storage_corrupt`. The `create_replay` path re-binds the identical snapshot and re-runs the deterministic engine, providing an independent reproduction of the persisted result.
+
+// ═══════════════════════════════════════════
+//  Declaration of Individual Contributions
+// ═══════════════════════════════════════════
+#pagebreak()
+#heading(numbering: none)[Declaration of Individual Contributions]
+
+As the project leader, *Ying Tingkai* led the overall system and data-source architecture and designed the dual-track agent framework. He implemented the custom ReAct harness (the agent loop, streaming tool executor, context-compression pipeline, recovery state machine, and tool system) and built the Quick Ask module — the twelve-agent pipeline, its three depth modes, and the multi-source news data plane — along with the frontend and the integration of the market-data providers (Yahoo Finance, Google News RSS, AkShare, Finnhub) into a unified `DataService`.
+
+*Wang Wenhan* designed and implemented the deterministic backtest subsystem: the `MockBrokerEngine`, the trade ledger with long-only episode reconstruction and performance metrics, the pre-trade risk checker, and the hash-verified backtest runner enforcing next-open execution.
+
+*Gao Ziteng* implemented the outcome-weighted memory subsystem, including the five-factor OWM scoring function, the SQLite-backed memory store, and the pre-trade safety gates.
+
+*Wang Pengcheng* contributed to the human-in-the-loop approval framework.
+
+*Cao Yujuncheng* contributed to the notification channels.
