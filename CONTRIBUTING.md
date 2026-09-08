@@ -1,6 +1,6 @@
-# Contributing to QuantDebate
+# Contributing to QuanTable
 
-Thank you for your interest in contributing to QuantDebate. This guide covers development setup, coding standards, and the pull request process.
+Thank you for your interest in contributing to QuanTable. This guide covers development setup, coding standards, and the pull request process.
 
 ## Development Setup
 
@@ -14,8 +14,8 @@ Thank you for your interest in contributing to QuantDebate. This guide covers de
 ### Backend
 
 ```bash
-git clone https://github.com/KaiOnCode/QuantDebate.git
-cd QuantDebate
+git clone https://github.com/KaiOnCode/QuanTable.git
+cd QuanTable
 cp properties.env.example properties.env
 # Edit properties.env with your API credentials
 
@@ -111,7 +111,7 @@ docs: update architecture diagram for dual-track design
 
 ## Reporting Issues
 
-Use the [GitHub Issues](https://github.com/KaiOnCode/QuantDebate/issues) page. When reporting a bug:
+Use the [GitHub Issues](https://github.com/KaiOnCode/QuanTable/issues) page. When reporting a bug:
 
 1. Describe the expected behavior and actual behavior.
 2. Include steps to reproduce.
@@ -120,8 +120,8 @@ Use the [GitHub Issues](https://github.com/KaiOnCode/QuantDebate/issues) page. W
 
 ## Security
 
-If you discover a security vulnerability, please see [SECURITY.md](SECURITY.md) for responsible disclosure instructions. Do not open a public issue for security vulnerabilities.
+If you discover a security vulnerability, please see [SECURITY.md](SECURITY.md) for responsible disclosure instructions. Do not open a public issue for security vulnerabilities. Do not open a public issue for security vulnerabilities.
 
 ## License
 
-By contributing to QuantDebate, you agree that your contributions will be licensed under the MIT License.
+By contributing to QuanTable, you agree that your contributions will be licensed under the MIT License.

@@ -219,7 +219,7 @@ frontend/.next/
 
 # Claude Code (personal state, not project-level)
 .claude/
-CLAUDE.md
+**/CLAUDE.md
 
 # Sensitive config
 properties.env

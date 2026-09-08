@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://github.com/KaiOnCode/QuantDebate">
+  <a href="https://github.com/KaiOnCode/QuanTable">
     <img src="https://img.shields.io/badge/version-0.1.0-blue?style=flat-square" alt="Version" />
   </a>
   <a href="LICENSE">
@@ -15,11 +15,11 @@
   <a href="README.md">English</a> | <b>简体中文</b>
 </p>
 
-<h1 align="center">QuantDebate</h1>
+<h1 align="center">QuanTable</h1>
 
 <p align="center">
-  基于多智能体推理的量化分析框架<br/>
-  以辩论驱动的 LLM 投资决策系统
+  AI 驱动的量化研究工作台<br/>
+  多智能体辩论、金融分析与投资推理 -- 一站式完成
 </p>
 
 <p align="center">
@@ -34,9 +34,11 @@
 
 ## 项目简介
 
-QuantDebate 是一个研究型平台，多个 LLM 智能体协作分析股票并产出投资决策。与单模型直接给出买卖建议不同，本系统编排了一场结构化的辩论：分析师提供数据证据，多头与空头研究员进行正反对弈，风险委员会评估下行场景，最终由投资组合经理做出决定。
+QuanTable 是一个研究工作台，多个 LLM 智能体协作分析股票并产出投资决策。与单模型直接给出买卖建议不同，本系统编排了一场结构化的辩论：分析师提供数据证据，多头与空头研究员进行正反对弈，风险委员会评估下行场景，最终由投资组合经理做出决定。
 
 系统内置两条智能体流水线，共享同一套数据层和工具基础设施。自建的 ReAct 引擎处理单股深度分析，支持流式执行和自动错误恢复。基于 LangGraph 的 12 智能体流水线在四个分析阶段中进行多智能体辩论，提供三种深度模式。
+
+你可以把它想象成一个工作台：输入一个股票代码，工作台就会自动组建分析师团队、发起辩论、完成风险审查，最终给出投资结论。
 
 本项目为香港大学 COMP7705 毕业设计作品。
 
@@ -102,13 +104,13 @@ QuantDebate 是一个研究型平台，多个 LLM 智能体协作分析股票并
 
 **Quick Ask** -- 一键结构化分析，通过 12 智能体 LangGraph 流水线执行。选择快速、标准或深度模式来控制分析深度和辩论强度。
 
-**数据层** -- 多源数据采集，覆盖 Yahoo Finance、Google News RSS、AkShare、Finnhub，支持数据源自动回退。SQLite 缓存带 SHA256 完整性校验。APScheduler 定时采集价格、新闻、情绪和宏观数据。
+**数据工作台** -- 多源数据采集，覆盖 Yahoo Finance、Google News RSS、AkShare、Finnhub，支持数据源自动回退。SQLite 缓存带 SHA256 完整性校验。APScheduler 定时采集价格、新闻、情绪和宏观数据。
 
 **记忆系统** -- 跨会话持久化记忆，OWM 五因子评分。交易前安全检查，在决策前注入历史经验教训。上下文压缩机制在长会话中保留关键发现。
 
 **技能库** -- 76 份 SKILL.md 文档，涵盖 10 个类别（技术分析、基本面、宏观、风险管理等），智能体动态加载以指导分析方法论。
 
-**前端** -- 16 页 Next.js 16 应用，使用 shadcn/ui 和 TailwindCSS v4。包含智能体终端、Quick Ask、回测、晨间简报、股票扫描、记忆查看器和审批管理。
+**前端界面** -- 16 页 Next.js 16 应用，使用 shadcn/ui 和 TailwindCSS v4。包含智能体终端、Quick Ask、回测、晨间简报、股票扫描、记忆查看器和审批管理。
 
 **回测引擎** -- MockBrokerEngine，次日开盘执行，哈希校验可复现，VaR/CVaR 风险分析，PDF 报告生成。
 
@@ -143,8 +145,8 @@ QuantDebate 是一个研究型平台，多个 LLM 智能体协作分析股票并
 ### 1. 克隆并配置
 
 ```bash
-git clone https://github.com/KaiOnCode/QuantDebate.git
-cd QuantDebate
+git clone https://github.com/KaiOnCode/QuanTable.git
+cd QuanTable
 cp properties.env.example properties.env
 ```
 
@@ -173,7 +175,7 @@ npm install
 npm run dev
 ```
 
-### 4. 打开应用
+### 4. 打开工作台
 
 访问 `http://localhost:3000`：
 
@@ -185,7 +187,7 @@ npm run dev
 ## 项目结构
 
 ```
-QuantDebate/
+QuanTable/
 +-- agent/                  # 自建 ReAct 引擎（活跃开发）
 |   +-- loop.py             #   25 轮迭代 ReAct 循环引擎
 |   +-- state.py            #   AgentLoopState + TransitionType
@@ -250,4 +252,4 @@ MIT 许可证 -- 详见 [LICENSE](LICENSE)。
 
 ---
 
-**免责声明**: QuantDebate 是用于教育和研究目的的研究型软件，不构成投资建议，不持有资金，不执行真实交易。过往业绩不代表未来表现。使用风险自负。
+**免责声明**: QuanTable 是用于教育和研究目的的研究型软件，不构成投资建议，不持有资金，不执行真实交易。过往业绩不代表未来表现。使用风险自负。

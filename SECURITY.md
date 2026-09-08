@@ -11,20 +11,20 @@
 If you discover a security vulnerability, please report it responsibly:
 
 1. Do NOT open a public issue.
-2. Use the [GitHub Security Advisory](https://github.com/KaiOnCode/QuantDebate/security/advisories/new) to report privately.
+2. Use the [GitHub Security Advisory](https://github.com/KaiOnCode/QuanTable/security/advisories/new) to report privately.
 3. Include steps to reproduce, potential impact, and any suggested fixes.
 
 We will acknowledge your report within 5 business days and work with you to resolve the issue.
 
 ## Scope
 
-This policy applies to the [KaiOnCode/QuantDebate](https://github.com/KaiOnCode/QuantDebate) repository.
+This policy applies to the [KaiOnCode/QuanTable](https://github.com/KaiOnCode/QuanTable) repository.
 
 ## Key Security Considerations
 
 ### API Keys and Credentials
 
-QuantDebate stores API keys in `properties.env`, which is gitignored. Never commit real API keys to the repository. The `properties.env.example` file contains only placeholder values.
+QuanTable stores API keys in `properties.env`, which is gitignored. Never commit real API keys to the repository. The `properties.env.example` file contains only placeholder values.
 
 ### Agent Tool Execution
 
@@ -40,7 +40,7 @@ Market data is fetched from third-party providers (Yahoo Finance, AkShare, Finnh
 
 ## Official Channels
 
-QuantDebate is an open-source research tool. We will never ask for cryptocurrency payments, wallet connections, or "verification" of any kind. The only official channel is this GitHub repository.
+QuanTable is an open-source research tool. We will never ask for cryptocurrency payments, wallet connections, or "verification" of any kind. The only official channel is this GitHub repository.
 
 ## Disclosure
 

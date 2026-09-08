@@ -1,5 +1,5 @@
 [project]
-name = "quant-debate"
+name = "quantable"
 version = "0.1.0"
 description = "Multi-agent quantitative analysis framework with debate-driven investment reasoning"
 readme = "README.md"
@@ -57,10 +57,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/KaiOnCode/QuantDebate"
-Repository = "https://github.com/KaiOnCode/QuantDebate"
-Issues = "https://github.com/KaiOnCode/QuantDebate/issues"
-Documentation = "https://github.com/KaiOnCode/QuantDebate/tree/main/docs"
+Homepage = "https://github.com/KaiOnCode/QuanTable"
+Repository = "https://github.com/KaiOnCode/QuanTable"
+Issues = "https://github.com/KaiOnCode/QuanTable/issues"
+Documentation = "https://github.com/KaiOnCode/QuanTable/tree/main/docs"
 
 [dependency-groups]
 dev = [

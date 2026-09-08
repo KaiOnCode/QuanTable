@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://github.com/KaiOnCode/QuantDebate">
+  <a href="https://github.com/KaiOnCode/QuanTable">
     <img src="https://img.shields.io/badge/version-0.1.0-blue?style=flat-square" alt="Version" />
   </a>
   <a href="LICENSE">
@@ -15,11 +15,11 @@
   <b>English</b> | <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-<h1 align="center">QuantDebate</h1>
+<h1 align="center">QuanTable</h1>
 
 <p align="center">
-  A multi-agent framework for reasoning-based quantitative analysis.<br/>
-  Debate-driven investment decisions powered by LLM agents.
+  Your AI-powered quantitative research workbench.<br/>
+  Multi-agent debate, financial analysis, and investment reasoning -- all in one place.
 </p>
 
 <p align="center">
@@ -32,11 +32,13 @@
 
 ---
 
-## What is QuantDebate
+## What is QuanTable
 
-QuantDebate is a research platform where multiple LLM agents collaborate to analyze stocks and produce investment decisions. Instead of asking a single model for a buy/sell recommendation, it orchestrates a structured debate: analysts present evidence, bull and bear researchers argue opposing cases, a risk committee evaluates downside scenarios, and a portfolio manager makes the final call.
+QuanTable is a research workbench where multiple LLM agents collaborate to analyze stocks and produce investment decisions. Instead of asking a single model for a buy/sell recommendation, it orchestrates a structured debate: analysts present evidence, bull and bear researchers argue opposing cases, a risk committee evaluates downside scenarios, and a portfolio manager makes the final call.
 
 The system ships with two agent pipelines that share the same data layer and tool infrastructure. A custom ReAct harness handles single-stock deep dives with streaming execution and automatic error recovery. A LangGraph 12-agent pipeline runs multi-agent debate across four analysis stages, producing structured investment memos with three depth modes.
+
+Think of it as a workbench -- you bring a ticker, and the bench assembles the analysts, the debate, the risk review, and the final verdict for you.
 
 This project was built as a final year project at the University of Hong Kong (COMP7705).
 
@@ -102,7 +104,7 @@ The three depth modes control debate intensity:
 
 **Quick Ask** -- One-click structured analysis via the 12-agent LangGraph pipeline. Select fast, standard, or deep mode to control analysis depth and debate intensity.
 
-**Data Layer** -- Multi-source ingestion from Yahoo Finance, Google News RSS, AkShare, and Finnhub with provider fallback. SQLite-backed caching with SHA256 integrity verification. APScheduler-based periodic collection for prices, news, sentiment, and macro data.
+**Data Workbench** -- Multi-source ingestion from Yahoo Finance, Google News RSS, AkShare, and Finnhub with provider fallback. SQLite-backed caching with SHA256 integrity verification. APScheduler-based periodic collection for prices, news, sentiment, and macro data.
 
 **Memory System** -- Cross-session persistent memory with OWM 5-factor scoring. Pre-trade safety checks that inject historical lessons before decisions. Context compression that preserves key findings across long analysis sessions.
 
@@ -143,8 +145,8 @@ The three depth modes control debate intensity:
 ### 1. Clone and configure
 
 ```bash
-git clone https://github.com/KaiOnCode/QuantDebate.git
-cd QuantDebate
+git clone https://github.com/KaiOnCode/QuanTable.git
+cd QuanTable
 cp properties.env.example properties.env
 ```
 
@@ -173,7 +175,7 @@ npm install
 npm run dev
 ```
 
-### 4. Open the app
+### 4. Open the workbench
 
 Navigate to `http://localhost:3000`:
 
@@ -185,7 +187,7 @@ Navigate to `http://localhost:3000`:
 ## Project Structure
 
 ```
-QuantDebate/
+QuanTable/
 +-- agent/                  # Custom ReAct harness (ACTIVE)
 |   +-- loop.py             #   25-iteration ReAct loop engine
 |   +-- state.py            #   AgentLoopState + TransitionType
@@ -250,4 +252,4 @@ MIT License -- see [LICENSE](LICENSE) for details.
 
 ---
 
-**Disclaimer**: QuantDebate is research software for educational purposes. It does not constitute investment advice, does not hold funds, and does not execute real trades. Past performance does not guarantee future results. Use at your own risk.
+**Disclaimer**: QuanTable is research software for educational purposes. It does not constitute investment advice, does not hold funds, and does not execute real trades. Past performance does not guarantee future results. Use at your own risk.
