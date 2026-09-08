@@ -1,6 +1,6 @@
 """HITL Rule Engine.
 
-评估 PM 决策是否需要人工审批.
+Evaluates whether a PM decision requires human approval.
 """
 
 from __future__ import annotations
@@ -9,9 +9,9 @@ from hitl.models import HITLRuleConfig, PMDecision
 
 
 class HITLRuleEngine:
-    """根据配置规则评估 PM 决策是否需要人工审批.
+    """Evaluates PM decisions against configured rules to determine if human approval is needed.
 
-    使用示例:
+    Example:
         >>> config = HITLRuleConfig(position_change_threshold_pct=20)
         >>> engine = HITLRuleEngine(config)
         >>> decision = PMDecision(action="BUY", target_position_pct=60, confidence=0.8)
@@ -28,21 +28,21 @@ class HITLRuleEngine:
         decision: PMDecision,
         current_position_pct: float = 0.0,
     ) -> tuple[bool, list[str]]:
-        """评估决策是否需要审批.
+        """Evaluate whether a decision needs approval.
 
         Args:
-            decision: PM 的决策输出
-            current_position_pct: 当前该票的持仓百分比 (0-100)
+            decision: PM output decision
+            current_position_pct: Current position percentage for this ticker (0-100)
 
         Returns:
             (needs_approval, triggered_rule_names)
-            - needs_approval: True 表示至少一条规则被触发
-            - triggered_rule_names: 被触发的规则名称列表
+            - needs_approval: True if at least one rule was triggered
+            - triggered_rule_names: List of triggered rule names
         """
         if not self.config.enabled:
             return False, []
 
-        # HOLD 且无目标仓位 → 无需审批
+        # HOLD with zero target position -- no approval needed
         if decision.is_noop:
             return False, []
 
@@ -60,18 +60,18 @@ class HITLRuleEngine:
         return len(triggered) > 0, triggered
 
     def _check_position_change(self, decision: PMDecision, current_pct: float) -> bool:
-        """仓位变化是否超过阈值.
+        """Check if position change exceeds threshold.
 
-        例: 当前 10%, 目标 60% → 变化 50% > 阈值 20% → 触发
+        Example: current 10%, target 60% -> change 50% > threshold 20% -> triggered
         """
         change = abs(decision.target_position_pct - current_pct)
-        # 忽略微小变化（浮点精度）
+        # Ignore negligible changes (floating point precision)
         return change > self.config.position_change_threshold_pct + 1e-6
 
     def _check_confidence(self, decision: PMDecision) -> bool:
-        """置信度是否低于阈值."""
+        """Check if confidence is below threshold."""
         return decision.confidence < self.config.min_confidence_threshold - 1e-6
 
     def _check_concentration(self, decision: PMDecision) -> bool:
-        """单票目标仓位是否过高."""
+        """Check if single-ticker target position is too high."""
         return decision.target_position_pct > self.config.max_single_ticker_pct + 1e-6

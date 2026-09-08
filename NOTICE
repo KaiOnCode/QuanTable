@@ -1,0 +1,21 @@
+QuantDebate
+Copyright (c) 2026 Kai
+
+This product includes software developed for the COMP7705 Final Year Project
+at the University of Hong Kong.
+
+This product uses the following open-source libraries:
+
+- LangGraph (MIT License) - Agent orchestration framework
+- LangChain Core (MIT License) - LLM application framework
+- FastAPI (MIT License) - Backend web framework
+- Next.js (MIT License) - Frontend framework
+- shadcn/ui (MIT License) - UI component library
+- Pydantic (MIT License) - Data validation
+- Yahoo Finance (yfinance) - Market data
+- AkShare - Financial data
+- Finnhub - Market data
+- TailwindCSS (MIT License) - CSS framework
+
+See LICENSE file for the full MIT License text.
+See individual package licenses in pyproject.toml and frontend/package.json.

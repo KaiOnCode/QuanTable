@@ -7,46 +7,45 @@ import pandas as pd
 
 def _is_us_stock(ticker: str) -> bool:
     """
-    一个简单的启发式方法来检测美股 (如 'AAPL', 'MSFT')。
-    A股通常是数字 (如 '600519', '000001')。
+    Simple heuristic to detect US stocks (e.g. 'AAPL', 'MSFT').
+    A-share tickers are typically numeric (e.g. '600519', '000001').
     """
     return ticker.isalpha() and ticker.isupper()
 
 
 def _get_akshare_a_symbol(ticker: str) -> str:
     """
-    (V3) 根据A股代码规则转换为 AkShare 需要的后缀。
+    Convert A-share ticker to AkShare-required suffix format.
     """
     if ticker.startswith("6"):
         return f"{ticker}.SH"
     if ticker.startswith("00") or ticker.startswith("30"):
         return f"{ticker}.SZ"
-    # 默认兜底
-    return f"{ticker}.SH"
+    return f"{ticker}.SH"  # default fallback
 
 
 def _map_akshare_to_spec(report: pd.Series, is_us: bool) -> Dict[str, Any]:
     """
-    将 AkShare 的数据行 (pd.Series) 映射到 agent_design v1.0 规范。
+    Map AkShare data row (pd.Series) to agent_design v1.0 spec.
 
-    V4 修复：
-    1. A 股列名基于 A 股文档 ("EPSJB", "XSMLL" 等)。
-    2. 美股列名基于美股文档 ("BASIC_EPS", "GROSS_PROFIT_RATIO" 等)。
-    3. 美股 TTM 估值 (PE, PB, PS) 在此接口中不存在，映射为 None。
+    V4 fixes:
+    1. A-share column names based on A-share docs ("EPSJB", "XSMLL", etc.).
+    2. US stock column names based on US docs ("BASIC_EPS", "GROSS_PROFIT_RATIO", etc.).
+    3. US TTM valuations (PE, PB, PS) not available in this endpoint, mapped to None.
     """
 
-    # V4 修正：(A股列名, 美股列名)
+    # Column name mapping: (A-share column, US stock column)
     MAP_KEYS = {
-        # TTM 估值 (A股保留猜测；美股此接口不提供)
+        # TTM valuations (A-share guess; US endpoint does not provide these)
         "pe": ("PE_TTM", None),
         "pb": ("PB_TTM", None),
         "ps": ("PS_TTM", None),
         "ev_ebitda": ("EVEBITDA_TTM", None),
-        # 基础指标 (A股/美股均已确认)
+        # Core metrics (confirmed for both A-share and US)
         "eps": ("EPSJB", "BASIC_EPS"),
         "gross_margin": ("XSMLL", "GROSS_PROFIT_RATIO"),
-        "op_margin": ("OPERATING_PROFIT_MARGIN", None),  # A股保留猜测；美股不提供
-        # 增长指标 (A股/美股均已确认)
+        "op_margin": ("OPERATING_PROFIT_MARGIN", None),  # A-share guess; US not provided
+        # Growth metrics (confirmed for both A-share and US)
         "eps_yoy": ("PARENTNETPROFITTZ", "BASIC_EPS_YOY"),
         "rev_yoy": ("TOTALOPERATEREVETZ", "OPERATE_INCOME_YOY"),
         "net_debt_to_ebitda": (None, None),
@@ -60,7 +59,7 @@ def _map_akshare_to_spec(report: pd.Series, is_us: bool) -> Dict[str, Any]:
             return val if pd.notna(val) else None
         return None
 
-    # 按照 agent_design v1.0 规范构建字典
+    # Build dictionary per agent_design v1.0 spec
     data = {
         "ttm": {
             "pe": get_val("pe"),
@@ -76,7 +75,7 @@ def _map_akshare_to_spec(report: pd.Series, is_us: bool) -> Dict[str, Any]:
         "sector_bench": {"pe": get_val("sector_pe")},
     }
 
-    # 清理空字典
+    # Remove empty sub-dicts
     data["ttm"] = {k: v for k, v in data["ttm"].items() if v is not None}
     data["growth"] = {k: v for k, v in data["growth"].items() if v is not None}
     data["balance"] = {k: v for k, v in data["balance"].items() if v is not None}
@@ -89,22 +88,22 @@ def _map_akshare_to_spec(report: pd.Series, is_us: bool) -> Dict[str, Any]:
 
 def df_get_fundamentals_pit(ticker: str, end_date: str) -> Dict[str, Any]:
     """
-    V4 修复版：
-    1. (A股) V3 逻辑已正确 (e.g., "600519.SH", "按报告期")。
-    2. (美股) V4 添加 indicator="累计季报"。
-    3. (美股) V4 保持 .O 的重试逻辑。
+    V4 fixed version:
+    1. (A-share) V3 logic is correct (e.g. "600519.SH", indicator="按报告期").
+    2. (US stock) V4 adds indicator="累计季报".
+    3. (US stock) V4 retains .O retry logic.
     """
     try:
         end_date_dt = pd.to_datetime(end_date.split("T")[0])
         is_us = _is_us_stock(ticker)
 
-        # AkShare 文档确认，日期列均为 'REPORT_DATE'
+        # AkShare confirms date column is always 'REPORT_DATE'
         date_col = "REPORT_DATE"
 
         if is_us:
-            # --- 美股路径 ---
-            # V4 修复：添加 indicator="累计季报"
-            # "累计季报" 提供了 Q1, HY1, Q3, 年报, 最适合 PIT 分析
+            # --- US stock path ---
+            # V4 fix: add indicator="累计季报"
+            # "累计季报" provides Q1, HY1, Q3, annual -- best for PIT analysis
             indicator = "累计季报"
             symbol = ticker
             try:
@@ -112,50 +111,50 @@ def df_get_fundamentals_pit(ticker: str, end_date: str) -> Dict[str, Any]:
                     symbol=symbol, indicator=indicator
                 )
                 if df is None or df.empty:
-                    print(f"[akshare] 尝试 {ticker}.O (NASDAQ)...")
-                    symbol = f"{ticker}.O"  # 尝试纳斯达克后缀
+                    print(f"[akshare] Trying {ticker}.O (NASDAQ)...")
+                    symbol = f"{ticker}.O"  # try NASDAQ suffix
                     df = ak.stock_financial_us_analysis_indicator_em(
                         symbol=symbol, indicator=indicator
                     )
             except Exception as e:
-                print(f"[akshare] 尝试 {symbol} (indicator={indicator}) 时出错: {e}")
+                print(f"[akshare] Error trying {symbol} (indicator={indicator}): {e}")
                 df = None
         else:
-            # --- A股路径 (V3 逻辑已正确) ---
+            # --- A-share path (V3 logic is correct) ---
             symbol = _get_akshare_a_symbol(ticker)
-            print(f"[akshare] 转换A股代码: {ticker} -> {symbol}")
+            print(f"[akshare] Converting A-share code: {ticker} -> {symbol}")
             indicator = "按报告期"
             df = ak.stock_financial_analysis_indicator_em(
                 symbol=symbol, indicator=indicator
             )
 
-        # 检查 None
+        # Check None
         if df is None:
             print(
-                f"[akshare] AkShare 为 {symbol} (indicator={indicator}) 返回了 None。"
+                f"[akshare] AkShare returned None for {symbol} (indicator={indicator})."
             )
             return {}
 
-        # 检查 empty 和 日期列
+        # Check empty and date column
         if df.empty or date_col not in df.columns:
-            print(f"[akshare] 未找到 {symbol} 的财务数据或 {date_col} 日期列。")
+            print(f"[akshare] No financial data or {date_col} column for {symbol}.")
             return {}
 
-        # 3. Point-in-Time (PIT) 逻辑
+        # Point-in-Time (PIT) logic
         df[date_col] = pd.to_datetime(df[date_col])
         df_pit = df[df[date_col] <= end_date_dt].copy()
 
         if df_pit.empty:
-            print(f"[akshare] 在 {end_date} 之前未找到 {symbol} 的历史财报。")
+            print(f"[akshare] No historical filings for {symbol} before {end_date}.")
             return {}
 
-        # 4. 获取最新的那条报告
+        # Get the most recent report
         df_pit = df_pit.sort_values(by=date_col, ascending=False)
         latest_report: pd.Series = df_pit.iloc[0]
 
-        # 5. 映射到 agent_design 规范
+        # Map to agent_design spec
         return _map_akshare_to_spec(latest_report, is_us)
 
     except Exception as e:
-        print(f"[akshare] 获取 {ticker} 在 {end_date} 的基本面数据时出错: {e}")
+        print(f"[akshare] Error fetching fundamentals for {ticker} at {end_date}: {e}")
         return {}

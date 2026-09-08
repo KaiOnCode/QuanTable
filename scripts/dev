@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# scripts/dev — Start both backend and frontend in development mode.
+#
+# Usage:
+#   ./scripts/dev           # Start both backend and frontend
+#   ./scripts/dev backend   # Start backend only
+#   ./scripts/dev frontend  # Start frontend only
+
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+
+cleanup() {
+    echo "Shutting down..."
+    kill "$BACKEND_PID" "$FRONTEND_PID" 2>/dev/null || true
+    wait "$BACKEND_PID" "$FRONTEND_PID" 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
+
+start_backend() {
+    echo "[dev] Starting FastAPI backend on port 8000..."
+    cd "$ROOT_DIR"
+    PYTHONPATH=. uv run uvicorn server.main:app --host 0.0.0.0 --port 8000 --reload &
+    BACKEND_PID=$!
+}
+
+start_frontend() {
+    echo "[dev] Starting Next.js frontend on port 3000..."
+    cd "$ROOT_DIR/frontend"
+    npm run dev &
+    FRONTEND_PID=$!
+}
+
+case "${1:-all}" in
+    backend)
+        start_backend
+        echo "[dev] Backend running at http://localhost:8000"
+        echo "[dev] API docs at http://localhost:8000/docs"
+        wait
+        ;;
+    frontend)
+        start_frontend
+        echo "[dev] Frontend running at http://localhost:3000"
+        wait
+        ;;
+    all)
+        start_backend
+        start_frontend
+        echo "[dev] Backend running at http://localhost:8000"
+        echo "[dev] Frontend running at http://localhost:3000"
+        echo "[dev] API docs at http://localhost:8000/docs"
+        echo "[dev] Press Ctrl+C to stop"
+        wait
+        ;;
+    *)
+        echo "Usage: $0 [backend|frontend|all]"
+        exit 1
+        ;;
+esac

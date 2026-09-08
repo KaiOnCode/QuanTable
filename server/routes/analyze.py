@@ -480,7 +480,7 @@ def _parse_pm_report(report: str, action: str) -> tuple[str, float, str]:
 
     # Try to extract confidence from report text
     confidence = 0.5  # default
-    # Look for patterns like "置信度: 0.70" or "confidence: 0.65"
+    # Look for patterns like "confidence: 0.70" (Chinese: "置信度: 0.70")
     conf_match = re.search(
         r"(?:置信度|confidence)[:\s]*([0-9]*\.?[0-9]+)", report, re.IGNORECASE
     )

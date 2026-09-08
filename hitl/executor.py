@@ -1,7 +1,7 @@
 """HITL Executor.
 
-审批通过/修改后的后续处理.
-注意: 当前版本只记录结果，不调用 Broker（由 Gap C 负责）.
+Post-approval processing.
+Note: current version only logs results; actual trade execution is handled by the Broker module.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ logger = logging.getLogger("hitl.executor")
 
 
 class ExecutionResult(BaseModel):
-    """执行结果."""
+    """Execution result."""
 
     executed: bool
     action: str | None = None
@@ -26,19 +26,19 @@ class ExecutionResult(BaseModel):
 
 
 class HITLExecutor:
-    """将审批结果转为可执行的决策.
+    """Converts approval results into executable decisions.
 
-    当前仅做记录和日志，实际交易执行由外部 Broker 模块接管.
+    Currently only logs; actual trade execution is delegated to an external Broker module.
     """
 
     def process_approval_result(self, request: ApprovalRequest) -> ExecutionResult:
-        """处理审批结果，返回最终应执行的决策参数.
+        """Process approval result and return final execution parameters.
 
         Args:
-            request: 已审批（approved/modified）或已拒绝的审批请求
+            request: Approved, modified, or rejected approval request
 
         Returns:
-            ExecutionResult: 包含是否执行、执行参数等信息
+            ExecutionResult with execution flag, parameters, and message
         """
         if request.status == ApprovalStatus.REJECTED:
             logger.info(
@@ -102,7 +102,7 @@ class HITLExecutor:
                 message=f"Modified by {request.reviewer}: {request.reviewer_notes}",
             )
 
-        # PENDING / AUTO_PASSED 不应进入此处
+        # PENDING / AUTO_PASSED should not reach here
         logger.warning(
             "[HITL] Approval %s has unexpected status %s. No execution.",
             request.id,
@@ -114,7 +114,7 @@ class HITLExecutor:
         )
 
     def to_event_payload(self, request: ApprovalRequest) -> dict[str, Any]:
-        """将审批结果转为事件日志的 payload（供 ContextStore 记录）."""
+        """Convert approval result to event log payload (for ContextStore)."""
         result = self.process_approval_result(request)
         return {
             "approval_id": request.id,

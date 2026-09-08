@@ -8,73 +8,73 @@ if TYPE_CHECKING:
 
 class PortfolioManager:
     """
-    负责维护当前的持仓状态和风险限额。
-    这是一个有状态的类，供 DataService 调用。
+    Manages current position state and risk limits.
+    This is a stateful class called by DataService.
 
-    它管理两种模式:
-    1. 咨询模式 (Advisory): 默认状态，不提供仓位建议。
-    2. 仓位模式 (Sizing): 当用户提供了具体的风险参数时。
+    It manages two modes:
+    1. Advisory mode (default): does not provide position sizing suggestions.
+    2. Sizing mode: activated when the user provides specific risk parameters.
     """
 
     def __init__(self):
-        # 1. 维护持仓状态
+        # 1. Maintain position state
         self._positions: Dict[str, Dict[str, Any]] = {}
 
-        # 2. 维护风险限额
-        #    默认使用“中性默认/咨询模式”的配置
+        # 2. Maintain risk limits
+        #    Default: neutral defaults / advisory mode
         self._risk_limits = self.get_advisory_defaults()
 
     def get_advisory_defaults(self) -> Dict[str, Any]:
         """
-        返回“中性默认”配置，用于咨询模式
+        Return "neutral default" configuration for advisory mode.
         """
         return {
-            "max_pos_pct": 1.0,  # 占位
-            "max_drawdown_pct": 1.0,  # 占位
+            "max_pos_pct": 1.0,  # placeholder
+            "max_drawdown_pct": 1.0,  # placeholder
             "meta": {"ignore_in_analysis": True, "advisory": True},
         }
 
     def get_position(self, ticker: str) -> Dict[str, Any]:
         """
-        获取指定 ticker 的持仓。
-        - 如果未找到，返回规范要求的“中性默认”。
-        - 如果找到，返回真实持仓并附上 meta (ignore=false)。
+        Get position for a given ticker.
+        - If not found, return spec-required "neutral default".
+        - If found, return real position with meta (ignore=false).
         """
         now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         position_data = self._positions.get(ticker)
 
         if not position_data:
-            # 返回“中性默认” (Neutral Default)
+            # Return neutral default
             return {
                 "side": "flat",
                 "qty_pct": 0.0,
                 "avg_cost": None,
                 "meta": {
-                    "ignore_in_analysis": True,  # 忽略对分析的影响
+                    "ignore_in_analysis": True,
                     "asof": now_iso,
                 },
             }
 
-        # 否则，返回真实持仓
+        # Return real position
         real_position = position_data.copy()
         real_position["meta"] = {
-            "ignore_in_analysis": False,  # 这是一个真实持仓，必须分析
+            "ignore_in_analysis": False,
             "asof": now_iso,
         }
         return real_position
 
     def get_risk_limits(self) -> Dict[str, Any]:
         """
-        获取风险限额。
-        (它会根据当前模式返回“中性默认”或“客户指定”的限额)
+        Get risk limits.
+        Returns neutral defaults (advisory) or user-specified limits (sizing).
         """
         return self._risk_limits
 
-    # --- 模式切换方法 ---
+    # --- Mode switching ---
 
     def update_position(self, ticker: str, side: str, qty_pct: float, avg_cost: float):
         """
-        供外部（如回测模块或用户输入）更新持仓。
+        Update position externally (e.g. from backtest module or user input).
         """
         if qty_pct == 0 or side == "flat":
             if ticker in self._positions:
@@ -91,7 +91,7 @@ class PortfolioManager:
 
     def sync_from_broker(self, broker: "BrokerGateway"):
         """
-        从 broker 的公共账户/持仓接口刷新当前状态。
+        Sync current state from broker's account/positions API.
         """
         account = broker.get_account()
         next_positions: Dict[str, Dict[str, Any]] = {}
@@ -111,16 +111,15 @@ class PortfolioManager:
 
     def update_risk_limits(self, max_pos_pct: float, max_drawdown_pct: float):
         """
-        供外部更新风险限额。
-        调用此方法会使系统进入“仓位模式 (Sizing Mode)”。
-        (对应您说的“问客户最大能接受的亏损”)
+        Update risk limits externally.
+        Calling this method switches the system to Sizing Mode.
         """
         self._risk_limits = {
             "max_pos_pct": max_pos_pct,
-            "max_drawdown_pct": max_drawdown_pct,  # 这就是客户能接受的最大亏损
+            "max_drawdown_pct": max_drawdown_pct,
             "meta": {
-                "ignore_in_analysis": False,  # 必须分析
-                "advisory": False,  # 必须进行 sizing
+                "ignore_in_analysis": False,
+                "advisory": False,
             },
         }
         print(
@@ -129,7 +128,7 @@ class PortfolioManager:
 
     def reset_to_advisory_mode(self):
         """
-        将会话重置回“咨询模式”。
+        Reset session back to Advisory Mode.
         """
         self._risk_limits = self.get_advisory_defaults()
         print("[PortfolioManager] Reset to Advisory Mode.")

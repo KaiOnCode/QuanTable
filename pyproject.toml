@@ -1,9 +1,34 @@
 [project]
-name = "intellifin-assistant"
+name = "quant-debate"
 version = "0.1.0"
-description = "Multi-agent stock analysis system based on LangGraph"
+description = "Multi-agent quantitative analysis framework with debate-driven investment reasoning"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
+license = "MIT"
+authors = [
+    {name = "Kai"},
+]
+keywords = [
+    "quantitative",
+    "multi-agent",
+    "llm",
+    "trading",
+    "debate",
+    "langgraph",
+    "finance",
+    "deepseek",
+    "react-agent",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Operating System :: OS Independent",
+]
 dependencies = [
     "akshare>=1.13.0",
     "apscheduler>=3.11.3",
@@ -31,6 +56,12 @@ dependencies = [
     "yfinance>=0.2.66",
 ]
 
+[project.urls]
+Homepage = "https://github.com/KaiOnCode/QuantDebate"
+Repository = "https://github.com/KaiOnCode/QuantDebate"
+Issues = "https://github.com/KaiOnCode/QuantDebate/issues"
+Documentation = "https://github.com/KaiOnCode/QuantDebate/tree/main/docs"
+
 [dependency-groups]
 dev = [
     "basedpyright",
@@ -54,3 +85,6 @@ testpaths = ["test"]
 
 [tool.ruff]
 target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]

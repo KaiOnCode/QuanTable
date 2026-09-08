@@ -12,7 +12,7 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 
 
-# ── Enums ────────────────────────────────────────────────
+# -- Enums ----------------------------------------------------------------
 
 
 class ApprovalStatus(str, Enum):
@@ -24,50 +24,50 @@ class ApprovalStatus(str, Enum):
     AUTO_PASSED = "auto_passed"
 
 
-# ── Rule Configuration ───────────────────────────────────
+# -- Rule Configuration ----------------------------------------------------
 
 
 class HITLRuleConfig(BaseModel):
-    """策略级别的 HITL 规则配置.
+    """Strategy-level HITL rule configuration.
 
-    所有阈值均为百分比 (0-100 或 0.0-1.0).
+    All thresholds are percentages (0-100 or 0.0-1.0).
     """
 
     enabled: bool = True
 
-    # 触发规则阈值
+    # Trigger rule thresholds
     position_change_threshold_pct: float = Field(
         default=20.0,
         ge=0,
         le=100,
-        description="仓位变化超过此百分比时触发审批",
+        description="Trigger approval when position change exceeds this percentage",
     )
     min_confidence_threshold: float = Field(
         default=0.5,
         ge=0,
         le=1,
-        description="置信度低于此值时触发审批",
+        description="Trigger approval when confidence falls below this threshold",
     )
     max_single_ticker_pct: float = Field(
         default=30.0,
         ge=0,
         le=100,
-        description="单票目标仓位超过此百分比时触发审批",
+        description="Trigger approval when single-ticker target position exceeds this percentage",
     )
 
-    # 超时配置
+    # Timeout configuration
     approval_timeout_minutes: int = Field(
         default=120,
         ge=1,
-        description="审批超时时间（分钟）",
+        description="Approval timeout in minutes",
     )
 
 
-# ── PM Decision ──────────────────────────────────────────
+# -- PM Decision -----------------------------------------------------------
 
 
 class PMDecision(BaseModel):
-    """Portfolio Manager 的输出决策."""
+    """Portfolio Manager output decision."""
 
     action: Literal["BUY", "SELL", "HOLD"] = "HOLD"
     target_position_pct: float = Field(default=0.0, ge=0, le=100)
@@ -76,15 +76,15 @@ class PMDecision(BaseModel):
 
     @property
     def is_noop(self) -> bool:
-        """是否为无操作（HOLD 且目标仓位为 0）."""
+        """True if HOLD with zero target position (no-op)."""
         return self.action == "HOLD" and self.target_position_pct == 0
 
 
-# ── Approval Request ─────────────────────────────────────
+# -- Approval Request ------------------------------------------------------
 
 
 class ApprovalRequest(BaseModel):
-    """审批请求 — PM 决策后生成，等待人工审核."""
+    """Approval request -- generated after PM decision, awaiting human review."""
 
     id: str
     strategy_id: str
@@ -93,51 +93,51 @@ class ApprovalRequest(BaseModel):
     session_id: str
     ticker: str
 
-    # 原始 PM 决策
+    # Original PM decision
     original_action: Literal["BUY", "SELL", "HOLD"]
     original_target_position_pct: float
     original_confidence: float
     pm_report: str = ""
 
-    # 触发原因
+    # Trigger reasons
     triggered_rules: list[str] = Field(default_factory=list)
     approval_reason: str = ""
 
-    # 状态
+    # Status
     status: ApprovalStatus = ApprovalStatus.PENDING
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     timeout_at: Optional[datetime] = None
     decided_at: Optional[datetime] = None
 
-    # 审批结果（填写后）
+    # Approval result (filled after human review)
     reviewer: str = ""
     reviewer_notes: str = ""
     modified_action: Optional[Literal["BUY", "SELL", "HOLD"]] = None
     modified_target_position_pct: Optional[float] = None
 
     def is_expired(self) -> bool:
-        """检查是否已超时."""
+        """Check if this request has timed out."""
         if self.timeout_at is None:
             return False
         return datetime.now(timezone.utc) > self.timeout_at
 
     def to_dict(self) -> dict[str, Any]:
-        """转为可序列化的 dict（用于数据库存储）."""
+        """Convert to serializable dict (for database storage)."""
         return self.model_dump(mode="json")
 
 
-# ── Approval Decision (human input) ──────────────────────
+# -- Approval Decision (human input) ---------------------------------------
 
 
 class ApprovalDecision(BaseModel):
-    """人工审批的输入."""
+    """Human approval input."""
 
     approval_id: str
     reviewer: str
     decision: Literal["approve", "reject", "modify"]
     notes: Optional[str] = None
 
-    # 仅当 decision == "modify" 时有效
+    # Only valid when decision == "modify"
     modified_action: Optional[Literal["BUY", "SELL", "HOLD"]] = None
     modified_target_position_pct: Optional[float] = None
 

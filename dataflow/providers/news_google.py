@@ -17,11 +17,10 @@ from tenacity import (
     wait_exponential,
 )
 
-# 使用标准日志记录模块作为备用
 logger = logging.getLogger(__name__)
 
 
-# --- 日期解析辅助函数 ---
+# --- Date parsing helpers ---
 def parse_relative_date_to_iso(date_str: str) -> str:
     now = datetime.now()
     dt = now
@@ -48,12 +47,12 @@ def parse_relative_date_to_iso(date_str: str) -> str:
                 except ValueError:
                     dt = now
     except Exception as e:
-        logger.warning(f"无法解析日期字符串: '{date_str}'. 回退到当前时间. 错误: {e}")
+        logger.warning(f"Cannot parse date string: '{date_str}'. Falling back to now. Error: {e}")
         dt = now
     return dt.isoformat() + "Z"
 
 
-# --- 辅助函数 ---
+# --- Helper functions ---
 def is_rate_limited(response):
     return response.status_code == 429
 
@@ -70,35 +69,35 @@ def is_rate_limited(response):
 def make_request(url, headers):
     time.sleep(random.uniform(2, 6))
     response = requests.get(url, headers=headers, timeout=(10, 30))
-    # 检查状态码，如果不是200，也抛出异常以触发重试
+    # Raise on non-200 to trigger retry
     response.raise_for_status()
     return response
 
 
-# --- 核心功能函数 (最终版) ---
+# --- Core functions ---
 def get_company_news(
     ticker_or_query: str,
     days: int = 7,
     lang: str = "en",
-    # 更改：添加可选的 end_date 参数 (ISO 格式字符串)
+    # Accept optional end_date parameter (ISO format string)
     end_date: Optional[str] = None,
 ) -> List[Dict]:
     query = urllib.parse.quote_plus(f"{ticker_or_query} stock")
 
-    # 更改：解析 end_date
+    # Parse end_date
     end_date_dt: datetime
     if end_date:
         try:
             end_date_dt = datetime.fromisoformat(end_date.rstrip("Z"))
         except ValueError:
-            logger.warning(f"无法解析 news end_date: {end_date}. 回退到当前时间。")
+            logger.warning(f"Cannot parse news end_date: {end_date}. Falling back to now.")
             end_date_dt = datetime.now()
     else:
         end_date_dt = datetime.now()
 
     start_date_dt = end_date_dt - timedelta(days=days)
 
-    # 谷歌搜索使用 "MM/DD/YYYY" 格式
+    # Google search uses "MM/DD/YYYY" format
     start_date_str = start_date_dt.strftime("%m/%d/%Y")
     end_date_str = end_date_dt.strftime("%m/%d/%Y")
 
@@ -116,7 +115,7 @@ def get_company_news(
 
     news_results = []
     page = 0
-    MAX_PAGES = 3  # 限制最多抓取3页，防止过多请求
+    MAX_PAGES = 3  # Limit to 3 pages to avoid excessive requests
 
     while page < MAX_PAGES:
         offset = page * 10
@@ -139,13 +138,13 @@ def get_company_news(
                 "Our systems have detected unusual traffic" in response.text
                 or "Before you continue" in response.text
             ):
-                logger.error("!!! Google 拦截了请求 (CAPTCHA) !!! 停止抓取。")
+                logger.error("Google blocked the request (CAPTCHA). Stopping scrape.")
                 break
 
-            results_on_page = soup.select("div.n0jPhd, div.SoaBEf")  # 合并主要的选择器
+            results_on_page = soup.select("div.n0jPhd, div.SoaBEf")
 
             if not results_on_page:
-                logger.warning("在页面上找不到任何新闻条目。")
+                logger.warning("No news entries found on page.")
                 break
 
             for el in results_on_page:
@@ -181,25 +180,25 @@ def get_company_news(
                         }
                     )
                 except Exception as e:
-                    logger.warning(f"处理单个结果条目时出错: {e}", exc_info=False)
+                    logger.warning(f"Error processing single result entry: {e}", exc_info=False)
                     continue
 
             next_link = soup.find("a", id="pnnext")
             if not next_link:
-                logger.info("找不到 '下一页' 链接。")
+                logger.info("No 'next page' link found.")
                 break
             page += 1
 
         except requests.exceptions.HTTPError as e:
             logger.error(
-                f"HTTP 错误: {e.response.status_code}. Google 可能已屏蔽。停止抓取。"
+                f"HTTP error: {e.response.status_code}. Google may have blocked. Stopping scrape."
             )
             break
         except Exception as e:
-            logger.error(f"抓取期间发生意外错误: {e}", exc_info=True)
+            logger.error(f"Unexpected error during scrape: {e}", exc_info=True)
             break
 
     logger.info(
-        f"抓取完成。共找到 {len(news_results)} 条新闻 (查询: {ticker_or_query})"
+        f"Scrape complete. Found {len(news_results)} articles (query: {ticker_or_query})"
     )
     return news_results
