@@ -1,0 +1,4 @@
+# Keep local Goal-mode evidence available for explicit Codex references even
+# though Git ignores the directory.
+!.omo/
+!.omo/**
