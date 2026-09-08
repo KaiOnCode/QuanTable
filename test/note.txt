@@ -1,0 +1,8 @@
+1.agent的prompt需要添加：负数代表做空持仓，如果是做空输出负数百分比。
+添加后：当前持仓百分比为 {current_position_pct}，负数代表做空持仓，请综合所有报告，用json格式输出股票 {ticker} 在当前分析日期 {date} 下的最终动作,目标仓位百分比，如果是做空输出负数百分比,以及人类可读的中文报告。json格式：{output_parser.get_format_instructions()}"
+2.可以尝试将agent策略调为更加风险
+3.测试流程：A.ticker_download作用是添加测试股票的相关数据，获取该股票给定时间内数据，下载后第一行数据为空和股票代码，删除即可。
+          B.trade作用是模拟交易，可以模拟交易给定时间给定的股票
+          C.eva作用是作图展示与指数相比的收益图
+4.文件中已经跑了两个结果分别是goog_test1, goog_test2.分别验证在牛市和熊市下agent的表现，eva.py可以利用portfolio_daily.csv（注意文件读取的位置）做出和标普500以及纳斯达克的对比图。
+这两个结果里面的agent_decisions.csv中，one_sentence和pm_reason相同是因为最开始正则写错了（已经更正）。大家后面再运行trade.py想看看其他股票或时间段就会有正确的pm_reason了
