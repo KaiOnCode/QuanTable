@@ -1,0 +1,90 @@
+[project]
+name = "quant-debate"
+version = "0.1.0"
+description = "Multi-agent quantitative analysis framework with debate-driven investment reasoning"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = "MIT"
+authors = [
+    {name = "Kai"},
+]
+keywords = [
+    "quantitative",
+    "multi-agent",
+    "llm",
+    "trading",
+    "debate",
+    "langgraph",
+    "finance",
+    "deepseek",
+    "react-agent",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "akshare>=1.13.0",
+    "apscheduler>=3.11.3",
+    "beautifulsoup4>=4.14.2",
+    "fastapi>=0.136.3",
+    "fpdf2>=2.7.9",
+    "jinja2>=3.1,<4",
+    "langchain-core>=1.0.4",
+    "langchain-openai>=1.0.2",
+    "langgraph>=1.0.2",
+    "langgraph-checkpoint>=3.0.1",
+    "langgraph-prebuilt>=1.0.2",
+    "markdown-it-py[plugins]>=4.2,<5",
+    "numpy>=2.2.6",
+    "pandas>=2.3.3",
+    "pandas-ta>=0.4.71b0",
+    "plotly>=6.4.0",
+    "pydantic>=2.12.4",
+    "pydantic-settings>=2.13.1",
+    "python-dotenv>=1.2.1",
+    "requests>=2.32.5",
+    "tenacity>=9.1.2",
+    "uvicorn[standard]>=0.48.0",
+    "weasyprint>=69,<70",
+    "yfinance>=0.2.66",
+]
+
+[project.urls]
+Homepage = "https://github.com/KaiOnCode/QuantDebate"
+Repository = "https://github.com/KaiOnCode/QuantDebate"
+Issues = "https://github.com/KaiOnCode/QuantDebate/issues"
+Documentation = "https://github.com/KaiOnCode/QuantDebate/tree/main/docs"
+
+[dependency-groups]
+dev = [
+    "basedpyright",
+    "matplotlib",
+    "playwright>=1.58.0",
+    "pytest",
+    "ruff",
+]
+
+[tool.uv]
+package = false
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+
+[tool.pytest.ini_options]
+addopts = ["--import-mode=importlib"]
+python_files = ["test_*.py"]
+testpaths = ["test"]
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
