@@ -1,0 +1,38 @@
+---
+config:
+  layout: dagre
+  themeVariables:
+    fontSize: 26px
+---
+graph LR
+    START(["START"])
+
+    MA["Market</br>Analyst"]
+    NA["News</br>Analyst"]
+    FA["Fundamentals</br>Analyst"]
+    RA["Risk</br>Analyst"]
+    PM["PM</br>Agent"]
+
+    HITL["HITL</br>Review"]:::planned
+    BM["Broker</br>Mock"]:::planned
+    NF["Notification"]:::planned
+    CS[("Context Store</br>(SQLite)")]:::planned
+
+    START --> MA
+    START --> NA
+    START --> FA
+
+    MA --> RA
+    NA --> RA
+    FA --> RA
+
+    RA --> PM
+    PM -.-> HITL
+    HITL -- approve --> BM
+    HITL -. alert .-> NF
+    BM -. feedback .-> START
+
+    CS <-.-> RA
+    CS <-.-> PM
+
+    classDef planned stroke-dasharray: 5 5
