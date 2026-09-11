@@ -52,7 +52,7 @@ dependencies = [
     "requests>=2.32.5",
     "tenacity>=9.1.2",
     "uvicorn[standard]>=0.48.0",
-    "weasyprint>=69,<70",
+    "weasyprint>=69,<71",
     "yfinance>=0.2.66",
 ]
 
